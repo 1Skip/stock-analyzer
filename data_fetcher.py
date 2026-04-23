@@ -158,6 +158,9 @@ POPULAR_CN_STOCKS = [
     {'code': '601288', 'name': '农业银行'},
 ]
 
+# 股票名称映射表（用于快速查找）
+CN_STOCK_NAMES = {stock['code']: stock['name'] for stock in POPULAR_CN_STOCKS}
+
 POPULAR_US_STOCKS = [
     'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX',
     'AMD', 'INTC', 'CRM', 'ADBE', 'PYPL', 'UBER', 'BABA', 'JD',
