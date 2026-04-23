@@ -288,27 +288,30 @@ def analyze_stock_page():
 
     with col1:
         symbol = st.text_input("股票代码", value=st.session_state.stock_symbol,
-                               help="A股如: 000001, 600519 | 美股如: AAPL, TSLA")
+                               help="A股如: 000001, 600519 | 美股如: AAPL, TSLA",
+                               key="stock_symbol_input")
 
     with col2:
         market = st.selectbox("市场", options=["CN", "US", "HK"],
                              index=["CN", "US", "HK"].index(st.session_state.stock_market),
-                             format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x])
+                             format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
+                             key="stock_market_select")
 
     with col3:
         # 默认使用3个月数据，加载更快
         period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y"],
-                             index=["1mo", "3mo", "6mo", "1y"].index(st.session_state.stock_period))
+                             index=["1mo", "3mo", "6mo", "1y"].index(st.session_state.stock_period),
+                             key="stock_period_select")
 
     if st.button("🔍 开始分析", type="primary", use_container_width=True):
-        # 保存当前查询状态到 session state
-        st.session_state.stock_symbol = symbol
-        st.session_state.stock_market = market
-        st.session_state.stock_period = period
+        # 保存当前输入值到 session state
+        st.session_state.stock_symbol = st.session_state.stock_symbol_input
+        st.session_state.stock_market = st.session_state.stock_market_select
+        st.session_state.stock_period = st.session_state.stock_period_select
         st.session_state.last_analyzed = {
-            'symbol': symbol,
-            'market': market,
-            'period': period
+            'symbol': st.session_state.stock_symbol_input,
+            'market': st.session_state.stock_market_select,
+            'period': st.session_state.stock_period_select
         }
 
         # 使用进度条显示加载状态
@@ -451,8 +454,19 @@ def hot_stocks_page():
     """热门股票页面"""
     st.markdown('<h1 class="main-header">🔥 热门股票排行</h1>', unsafe_allow_html=True)
 
-    market = st.selectbox("选择市场", options=["CN", "US"], index=0,
-                         format_func=lambda x: {"CN": "A股", "US": "美股"}[x])
+    # 使用 session state 保存热门股票页面状态
+    if 'hot_market' not in st.session_state:
+        st.session_state.hot_market = "CN"
+    if 'hot_data' not in st.session_state:
+        st.session_state.hot_data = None
+
+    market = st.selectbox("选择市场", options=["CN", "US"],
+                         index=["CN", "US"].index(st.session_state.hot_market),
+                         format_func=lambda x: {"CN": "A股", "US": "美股"}[x],
+                         key="hot_market_select")
+
+    # 同步到 session state
+    st.session_state.hot_market = market
 
     if st.button("刷新数据", type="primary"):
         with st.spinner("正在获取热门股票..."):
@@ -536,9 +550,20 @@ def recommended_stocks_page():
     """推荐股票页面"""
     st.markdown('<h1 class="main-header">⭐ 智能推荐股票</h1>', unsafe_allow_html=True)
 
+    # 使用 session state 保存推荐页面状态
+    if 'rec_num_stocks' not in st.session_state:
+        st.session_state.rec_num_stocks = 10
+    if 'rec_results' not in st.session_state:
+        st.session_state.rec_results = None
+
     st.info("基于MACD、RSI、KDJ、布林带等多因子技术分析，自动筛选优质股票")
 
-    num_stocks = st.slider("推荐数量", min_value=5, max_value=20, value=10)
+    num_stocks = st.slider("推荐数量", min_value=5, max_value=20,
+                          value=st.session_state.rec_num_stocks,
+                          key="rec_num_slider")
+
+    # 同步到 session state
+    st.session_state.rec_num_stocks = num_stocks
 
     if st.button("生成推荐", type="primary"):
         with st.spinner("正在分析股票池，请稍候..."):
