@@ -597,54 +597,54 @@ def get_cached_short_term_stocks(num_stocks):
     return recommender.get_short_term_recommendations(num_stocks=num_stocks)
 
 @st.cache_data(ttl=600, show_spinner=False)
-def get_cached_long_term_stocks(num_stocks):
-    """获取长线推荐股票（基于长期趋势）"""
+def get_cached_sector_stocks(sector_name, num_stocks):
+    """获取板块短线推荐股票"""
     recommender = StockRecommender()
-    return recommender.get_long_term_recommendations(num_stocks=num_stocks)
+    return recommender.get_sector_short_term_recommendations(sector_name, num_stocks=num_stocks)
 
 def recommended_stocks_page():
-    """推荐股票页面"""
-    st.markdown('<h1 class="main-header">⭐ 智能推荐股票</h1>', unsafe_allow_html=True)
+    """推荐股票页面 - 短线龙头股推荐"""
+    st.markdown('<h1 class="main-header">⭐ 短线龙头股推荐</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存推荐页面状态
-    if 'rec_strategy' not in st.session_state:
-        st.session_state.rec_strategy = "短线"
+    if 'rec_sector' not in st.session_state:
+        st.session_state.rec_sector = "全部"
     if 'rec_num_stocks' not in st.session_state:
-        st.session_state.rec_num_stocks = 10
+        st.session_state.rec_num_stocks = 5
 
-    def on_strategy_change():
-        st.session_state.rec_strategy = st.session_state.rec_strategy_radio
+    def on_sector_change():
+        st.session_state.rec_sector = st.session_state.rec_sector_select
 
     def on_num_stocks_change():
         st.session_state.rec_num_stocks = st.session_state.rec_num_slider
 
-    st.info("基于MACD、RSI、KDJ、布林带等多因子技术分析，自动筛选优质股票")
+    st.info("基于MACD、RSI、KDJ等技术指标，筛选各板块短线龙头股")
 
-    # 选择投资策略
-    strategy_index = ["短线", "长线"].index(st.session_state.rec_strategy)
-    strategy = st.radio("投资策略", options=["短线", "长线"],
-                       index=strategy_index,
-                       horizontal=True,
-                       key="rec_strategy_radio",
-                       on_change=on_strategy_change)
+    # 板块选择
+    sector_options = ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    sector_index = sector_options.index(st.session_state.rec_sector)
+    sector = st.selectbox("选择板块", options=sector_options,
+                         index=sector_index,
+                         key="rec_sector_select",
+                         on_change=on_sector_change)
 
-    num_stocks = st.slider("推荐数量", min_value=5, max_value=20,
+    num_stocks = st.slider("推荐数量", min_value=3, max_value=8,
                           value=st.session_state.rec_num_stocks,
                           key="rec_num_slider",
                           on_change=on_num_stocks_change)
 
     # 从 session state 读取当前值
-    strategy = st.session_state.rec_strategy
+    sector = st.session_state.rec_sector
     num_stocks = st.session_state.rec_num_stocks
 
     if st.button("生成推荐", type="primary"):
-        with st.spinner(f"正在分析{strategy}股票池，请稍候..."):
-            if strategy == "短线":
+        with st.spinner(f"正在分析{sector}板块，请稍候..."):
+            if sector == "全部":
                 recommended = get_cached_short_term_stocks(num_stocks)
                 display_recommendation_list(recommended, "短线推荐")
             else:
-                recommended = get_cached_long_term_stocks(num_stocks)
-                display_recommendation_list(recommended, "长线推荐")
+                recommended = get_cached_sector_stocks(sector, num_stocks)
+                display_recommendation_list(recommended, f"{sector} 短线龙头股")
 
 def main():
     """主函数"""

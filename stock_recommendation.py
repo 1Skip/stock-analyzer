@@ -13,6 +13,50 @@ warnings.filterwarnings('ignore')
 # 导入热门股票列表
 from data_fetcher import POPULAR_CN_STOCKS, POPULAR_US_STOCKS
 
+# 板块股票定义 - 短线龙头股
+SECTOR_STOCKS = {
+    "苹果概念": [
+        {'code': '002475', 'name': '立讯精密'},  # AirPods主力供应商
+        {'code': '300433', 'name': '蓝思科技'},  # 玻璃盖板龙头
+        {'code': '601231', 'name': '环旭电子'},  # SiP模组龙头
+        {'code': '002241', 'name': '歌尔股份'},  # 声学组件龙头
+        {'code': '603501', 'name': '韦尔股份'},  # 摄像头芯片
+        {'code': '000725', 'name': '京东方A'},   # 显示屏供应商
+        {'code': '002600', 'name': '领益智造'},  # 精密功能件
+        {'code': '300136', 'name': '信维通信'},  # 射频天线
+    ],
+    "特斯拉概念": [
+        {'code': '002594', 'name': '比亚迪'},    # 新能源汽车对标
+        {'code': '300750', 'name': '宁德时代'},  # 动力电池龙头
+        {'code': '002050', 'name': '三花智控'},  # 热管理系统
+        {'code': '600885', 'name': '宏发股份'},  # 继电器龙头
+        {'code': '603305', 'name': '旭升集团'},  # 特斯拉零部件
+        {'code': '002101', 'name': '广东鸿图'},  # 压铸零部件
+        {'code': '300124', 'name': '汇川技术'},  # 电机电控
+        {'code': '603596', 'name': '伯特利'},    # 汽车制动系统
+    ],
+    "电力": [
+        {'code': '600900', 'name': '长江电力'},  # 水电龙头
+        {'code': '600011', 'name': '华能国际'},  # 火电龙头
+        {'code': '600795', 'name': '国电电力'},  # 大型发电集团
+        {'code': '601985', 'name': '中国核电'},  # 核电运营
+        {'code': '003816', 'name': '中国广核'},  # 核电双巨头之一
+        {'code': '600023', 'name': '浙能电力'},  # 区域电力龙头
+        {'code': '600886', 'name': '国投电力'},  # 水电+火电
+        {'code': '600027', 'name': '华电国际'},  # 大型发电企业
+    ],
+    "算力租赁": [
+        {'code': '603019', 'name': '中科曙光'},  # AI服务器龙头
+        {'code': '000938', 'name': '中核科技'},  # 算力基础设施
+        {'code': '300212', 'name': '易华录'},    # 数据湖+算力
+        {'code': '600756', 'name': '浪潮软件'},  # 服务器相关
+        {'code': '000977', 'name': '浪潮信息'},  # 服务器龙头
+        {'code': '300383', 'name': '光环新网'},  # IDC+云计算
+        {'code': '300738', 'name': '奥飞数据'},  # IDC服务商
+        {'code': '603881', 'name': '数据港'},    # 数据中心运营
+    ],
+}
+
 
 class StockRecommender:
     """股票推荐器"""
@@ -283,20 +327,22 @@ class StockRecommender:
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
-    def get_long_term_recommendations(self, num_stocks=10):
+    def get_sector_short_term_recommendations(self, sector_name, num_stocks=5):
         """
-        获取长线推荐股票（基于长期趋势指标）
-        - 使用6个月数据
-        - 更注重趋势指标（MACD、均线权重更高）
-        - 追求稳定趋势机会
+        获取指定板块的短线龙头股推荐
         """
-        results = []
+        if sector_name not in SECTOR_STOCKS:
+            return []
 
-        for stock in POPULAR_CN_STOCKS[:25]:
+        results = []
+        sector_stocks = SECTOR_STOCKS[sector_name]
+
+        for stock in sector_stocks:
             try:
-                analysis = self._analyze_long_term(stock['code'], market='CN')
-                if analysis and analysis['score'] >= 45:  # 降低阈值
+                analysis = self._analyze_short_term(stock['code'], market='CN')
+                if analysis and analysis['score'] >= 35:  # 板块推荐阈值更低
                     analysis['name'] = stock['name']
+                    analysis['sector'] = sector_name
                     results.append(analysis)
             except Exception as e:
                 continue
@@ -418,130 +464,6 @@ class StockRecommender:
                 'kdj_k': round(latest['kdj_k'], 1),
                 'kdj_d': round(latest['kdj_d'], 1),
                 'kdj_j': round(latest['kdj_j'], 1),
-            }
-        }
-
-    def _analyze_long_term(self, symbol, market='CN'):
-        """
-        长线分析 - 使用更长的周期和趋势跟踪指标权重
-        """
-        from data_fetcher import StockDataFetcher
-        from technical_indicators import TechnicalIndicators
-
-        fetcher = StockDataFetcher()
-        data = fetcher.get_stock_data(symbol, period='6mo', interval='1d', market=market)
-
-        if data is None or len(data) < 60:
-            return None
-
-        df = TechnicalIndicators.calculate_all(data)
-        signals = TechnicalIndicators.get_signals(df)
-
-        if 'error' in signals:
-            return None
-
-        latest = df.iloc[-1]
-
-        # 长线评分系统 - 更注重趋势和稳定性
-        score = 50
-
-        # MACD评分（长线权重提高）- 趋势指标最重要
-        if "金叉" in signals['macd']:
-            score += 25
-        elif "多头" in signals['macd']:
-            score += 15
-        elif "死叉" in signals['macd']:
-            score -= 20
-        elif "空头" in signals['macd']:
-            score -= 10
-
-        # RSI评分（长线权重降低）- 避免极端值即可
-        rsi = latest['rsi']
-        if rsi < 30:
-            score += 10  # 超卖提供买入机会
-        elif rsi > 70:
-            score -= 10  # 超买注意风险
-
-        # KDJ评分（长线权重适中）
-        if "强烈买入" in signals['kdj']:
-            score += 15
-        elif "金叉" in signals['kdj']:
-            score += 10
-        elif "强烈卖出" in signals['kdj']:
-            score -= 15
-        elif "死叉" in signals['kdj']:
-            score -= 10
-
-        # 布林带评分（长线权重适中）
-        if "反弹" in signals['boll']:
-            score += 10
-        elif "偏多" in signals['boll']:
-            score += 5
-        elif "回调" in signals['boll']:
-            score -= 10
-
-        # 长期均线系统评分（长线权重提高）
-        if 'ma20' in df.columns and 'ma60' in df.columns:
-            if latest['ma20'] > latest['ma60']:
-                score += 20
-                # 多头排列确认
-                if len(df) > 1:
-                    prev = df.iloc[-2]
-                    if prev['ma20'] <= prev['ma60']:
-                        score += 20  # 金叉形成，长线买入信号
-            else:
-                score -= 15
-
-        # 价格相对长期均线位置
-        if latest['close'] > latest['ma60']:
-            score += 10
-        else:
-            score -= 10
-
-        # 趋势持续性评分
-        if len(df) > 20:
-            price_trend = (latest['close'] - df.iloc[-20]['close']) / df.iloc[-20]['close'] * 100
-            if price_trend > 10:  # 上升趋势
-                score += 10
-            elif price_trend > 5:
-                score += 5
-            elif price_trend < -10:  # 下降趋势
-                score -= 10
-            elif price_trend < -5:
-                score -= 5
-
-        score = max(0, min(100, score))
-
-        if score >= 80:
-            rating = "强烈买入"
-        elif score >= 65:
-            rating = "买入"
-        elif score >= 50:
-            rating = "持有"
-        elif score >= 35:
-            rating = "减持"
-        else:
-            rating = "卖出"
-
-        return {
-            'symbol': symbol,
-            'score': round(score, 1),
-            'rating': rating,
-            'signals': signals,
-            'latest_price': latest['close'],
-            'strategy': '长线',
-            'indicators': {
-                'macd': round(latest['macd'], 3),
-                'macd_signal': round(latest['macd_signal'], 3),
-                'rsi': round(latest['rsi'], 1),
-                'kdj_k': round(latest['kdj_k'], 1),
-                'kdj_d': round(latest['kdj_d'], 1),
-                'kdj_j': round(latest['kdj_j'], 1),
-                'boll_upper': round(latest['boll_upper'], 2),
-                'boll_mid': round(latest['boll_mid'], 2),
-                'boll_lower': round(latest['boll_lower'], 2),
-                'ma20': round(latest['ma20'], 2),
-                'ma60': round(latest['ma60'], 2),
             }
         }
 
