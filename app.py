@@ -273,21 +273,44 @@ def analyze_stock_page():
     """个股分析页面"""
     st.markdown('<h1 class="main-header">📊 股票技术分析</h1>', unsafe_allow_html=True)
 
+    # 使用 session state 保存查询状态
+    if 'stock_symbol' not in st.session_state:
+        st.session_state.stock_symbol = "000001"
+    if 'stock_market' not in st.session_state:
+        st.session_state.stock_market = "CN"
+    if 'stock_period' not in st.session_state:
+        st.session_state.stock_period = "3mo"
+    if 'last_analyzed' not in st.session_state:
+        st.session_state.last_analyzed = None
+
     # 输入区域
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        symbol = st.text_input("股票代码", value="000001", help="A股如: 000001, 600519 | 美股如: AAPL, TSLA")
+        symbol = st.text_input("股票代码", value=st.session_state.stock_symbol,
+                               help="A股如: 000001, 600519 | 美股如: AAPL, TSLA")
 
     with col2:
-        market = st.selectbox("市场", options=["CN", "US", "HK"], index=0,
+        market = st.selectbox("市场", options=["CN", "US", "HK"],
+                             index=["CN", "US", "HK"].index(st.session_state.stock_market),
                              format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x])
 
     with col3:
         # 默认使用3个月数据，加载更快
-        period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y"], index=1)
+        period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y"],
+                             index=["1mo", "3mo", "6mo", "1y"].index(st.session_state.stock_period))
 
     if st.button("🔍 开始分析", type="primary", use_container_width=True):
+        # 保存当前查询状态到 session state
+        st.session_state.stock_symbol = symbol
+        st.session_state.stock_market = market
+        st.session_state.stock_period = period
+        st.session_state.last_analyzed = {
+            'symbol': symbol,
+            'market': market,
+            'period': period
+        }
+
         # 使用进度条显示加载状态
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -433,13 +456,19 @@ def hot_stocks_page():
 
     if st.button("刷新数据", type="primary"):
         with st.spinner("正在获取热门股票..."):
+            # 清除缓存，强制重新获取
+            get_cached_hot_stocks.clear()
             data = get_cached_hot_stocks(market)
-            recommender = StockRecommender()
 
             if market == "CN":
                 hot = data.get('hot', [])
                 gainers = data.get('gainers', [])
                 losers = data.get('losers', [])
+
+                # 调试信息
+                if not hot:
+                    st.warning("暂无热门股票数据，请稍后重试")
+                    return
 
                 # 热门股票
                 st.subheader("📈 热门股票 TOP 20")
@@ -456,6 +485,8 @@ def hot_stocks_page():
                         '热度分数': 'Score'
                     })
                     st.dataframe(df_hot, use_container_width=True)
+                else:
+                    st.info("暂无热门股票数据")
 
                 # 涨幅榜
                 st.subheader("📊 涨幅榜 TOP 10")
@@ -469,6 +500,8 @@ def hot_stocks_page():
                         '换手率': 'Turnover%'
                     })
                     st.dataframe(df_gainers, use_container_width=True)
+                else:
+                    st.info("暂无涨幅榜数据")
 
                 # 跌幅榜
                 st.subheader("📉 跌幅榜 TOP 10")
@@ -482,12 +515,16 @@ def hot_stocks_page():
                         '换手率': 'Turnover%'
                     })
                     st.dataframe(df_losers, use_container_width=True)
+                else:
+                    st.info("暂无跌幅榜数据")
 
             else:
                 hot = data.get('hot', [])
                 df_hot = pd.DataFrame(hot)
                 if not df_hot.empty:
                     st.dataframe(df_hot, use_container_width=True)
+                else:
+                    st.info("暂无美股热门数据")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_recommended_stocks(num_stocks):
