@@ -274,7 +274,7 @@ class StockRecommender:
         for stock in POPULAR_CN_STOCKS[:25]:
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis and analysis['score'] >= 55:
+                if analysis and analysis['score'] >= 40:  # 降低阈值
                     analysis['name'] = stock['name']
                     results.append(analysis)
             except Exception as e:
@@ -295,7 +295,7 @@ class StockRecommender:
         for stock in POPULAR_CN_STOCKS[:25]:
             try:
                 analysis = self._analyze_long_term(stock['code'], market='CN')
-                if analysis and analysis['score'] >= 60:
+                if analysis and analysis['score'] >= 45:  # 降低阈值
                     analysis['name'] = stock['name']
                     results.append(analysis)
             except Exception as e:
@@ -534,6 +534,12 @@ class StockRecommender:
                 'macd': round(latest['macd'], 3),
                 'macd_signal': round(latest['macd_signal'], 3),
                 'rsi': round(latest['rsi'], 1),
+                'kdj_k': round(latest['kdj_k'], 1),
+                'kdj_d': round(latest['kdj_d'], 1),
+                'kdj_j': round(latest['kdj_j'], 1),
+                'boll_upper': round(latest['boll_upper'], 2),
+                'boll_mid': round(latest['boll_mid'], 2),
+                'boll_lower': round(latest['boll_lower'], 2),
                 'ma20': round(latest['ma20'], 2),
                 'ma60': round(latest['ma60'], 2),
             }

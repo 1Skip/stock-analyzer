@@ -82,7 +82,13 @@ class StockDataFetcher:
             elif market == "CN":
                 # A股使用yfinance
                 if '.' not in symbol:
+                    # 先尝试上海交易所
                     ticker = yf.Ticker(f"{symbol}.SS")
+                    info = ticker.info
+                    if info and info.get('shortName'):
+                        return info
+                    # 再尝试深圳交易所
+                    ticker = yf.Ticker(f"{symbol}.SZ")
                 else:
                     ticker = yf.Ticker(symbol)
             else:
@@ -94,6 +100,28 @@ class StockDataFetcher:
         except Exception as e:
             print(f"获取股票信息失败 {symbol}: {str(e)}")
             return {}
+
+    def get_stock_name(self, symbol, market="US"):
+        """获取股票名称，优先使用映射表，其次从yfinance获取"""
+        # A股优先使用本地映射表
+        if market == "CN":
+            # 先查映射表
+            name = CN_STOCK_NAMES_EXTENDED.get(symbol)
+            if name:
+                return name
+
+        # 从yfinance获取
+        try:
+            info = self.get_stock_info(symbol, market)
+            # 尝试多个可能的字段
+            name = info.get('shortName') or info.get('longName') or info.get('symbol')
+            if name:
+                return name
+        except:
+            pass
+
+        # 如果都失败了，返回代码本身
+        return symbol
 
     def get_realtime_quote(self, symbol, market="US"):
         """获取实时行情"""
@@ -188,6 +216,15 @@ CN_STOCK_NAMES_EXTENDED = {
     '601229': '上海银行', '600999': '招商证券', '000768': '中航西飞', '600893': '航发动力',
     '000768': '中航西飞', '600372': '中航电子', '600760': '中航沈飞', '601238': '广汽集团',
     '601633': '长城汽车', '600104': '上汽集团', '000625': '长安汽车', '601127': '赛力斯',
+    # 半导体/电子
+    '603501': '韦尔股份', '603986': '兆易创新', '688981': '中芯国际', '688012': '中微公司',
+    '600584': '长电科技', '002049': '紫光国微', '300782': '卓胜微', '603160': '汇顶科技',
+    # 医药
+    '603392': '万泰生物', '300122': '智飞生物', '300142': '沃森生物', '600196': '复星医药',
+    # 其他热门
+    '603920': '世运电路', '300999': '金龙鱼', '688111': '金山办公', '603288': '海天味业',
+    '300413': '芒果超媒', '002027': '分众传媒', '002352': '顺丰控股', '002120': '韵达股份',
+    '601899': '紫金矿业', '601899': '紫金矿业', '002460': '赣锋锂业', '002466': '天齐锂业',
 }
 
 POPULAR_US_STOCKS = [
