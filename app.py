@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 import time
 
 # 导入原有模块
-from data_fetcher import StockDataFetcher
+from data_fetcher import StockDataFetcher, CN_STOCK_NAMES
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 
@@ -326,10 +326,11 @@ def analyze_stock_page():
         # 显示基本信息
         st.divider()
 
-        # 股票标题
-        stock_name = ""
-        if market == "CN" and info:
-            stock_name = info.get('股票简称', symbol)
+        # 股票标题 - 优先使用映射表，其次从info获取
+        stock_name = symbol
+        if market == "CN":
+            # A股优先使用本地映射表
+            stock_name = CN_STOCK_NAMES.get(symbol, symbol)
         elif info:
             stock_name = info.get('shortName', symbol)
 
