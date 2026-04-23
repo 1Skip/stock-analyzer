@@ -27,3 +27,13 @@ ENV/
 .vscode/
 *.log
 .DS_Store
+
+# GitHub token and sensitive files
+.github_token
+*.token
+update_github.py
+update_github.bat
+update.json
+*.b64
+*.b64.clean
+*.b64.oneline
