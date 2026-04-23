@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 import time
 
 # 导入原有模块
-from data_fetcher import StockDataFetcher, CN_STOCK_NAMES
+from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 
@@ -273,46 +273,44 @@ def analyze_stock_page():
     """个股分析页面"""
     st.markdown('<h1 class="main-header">📊 股票技术分析</h1>', unsafe_allow_html=True)
 
-    # 使用 session state 保存查询状态
-    if 'stock_symbol' not in st.session_state:
-        st.session_state.stock_symbol = "000001"
-    if 'stock_market' not in st.session_state:
-        st.session_state.stock_market = "CN"
-    if 'stock_period' not in st.session_state:
-        st.session_state.stock_period = "3mo"
-    if 'last_analyzed' not in st.session_state:
-        st.session_state.last_analyzed = None
+    # 使用 session state 保存查询状态 - 初始化
+    if 'analyze_symbol' not in st.session_state:
+        st.session_state.analyze_symbol = "000001"
+    if 'analyze_market' not in st.session_state:
+        st.session_state.analyze_market = "CN"
+    if 'analyze_period' not in st.session_state:
+        st.session_state.analyze_period = "3mo"
 
     # 输入区域
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        symbol = st.text_input("股票代码", value=st.session_state.stock_symbol,
+        symbol = st.text_input("股票代码",
+                               value=st.session_state.analyze_symbol,
                                help="A股如: 000001, 600519 | 美股如: AAPL, TSLA",
-                               key="stock_symbol_input")
+                               key="analyze_symbol_input")
+        # 实时同步到 session state
+        st.session_state.analyze_symbol = symbol
 
     with col2:
+        market_index = ["CN", "US", "HK"].index(st.session_state.analyze_market)
         market = st.selectbox("市场", options=["CN", "US", "HK"],
-                             index=["CN", "US", "HK"].index(st.session_state.stock_market),
+                             index=market_index,
                              format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
-                             key="stock_market_select")
+                             key="analyze_market_select")
+        # 实时同步到 session state
+        st.session_state.analyze_market = market
 
     with col3:
         # 默认使用3个月数据，加载更快
+        period_index = ["1mo", "3mo", "6mo", "1y"].index(st.session_state.analyze_period)
         period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y"],
-                             index=["1mo", "3mo", "6mo", "1y"].index(st.session_state.stock_period),
-                             key="stock_period_select")
+                             index=period_index,
+                             key="analyze_period_select")
+        # 实时同步到 session state
+        st.session_state.analyze_period = period
 
     if st.button("🔍 开始分析", type="primary", use_container_width=True):
-        # 保存当前输入值到 session state
-        st.session_state.stock_symbol = st.session_state.stock_symbol_input
-        st.session_state.stock_market = st.session_state.stock_market_select
-        st.session_state.stock_period = st.session_state.stock_period_select
-        st.session_state.last_analyzed = {
-            'symbol': st.session_state.stock_symbol_input,
-            'market': st.session_state.stock_market_select,
-            'period': st.session_state.stock_period_select
-        }
 
         # 使用进度条显示加载状态
         progress_bar = st.progress(0)
@@ -355,8 +353,8 @@ def analyze_stock_page():
         # 股票标题 - 优先使用映射表，其次从info获取
         stock_name = symbol
         if market == "CN":
-            # A股优先使用本地映射表
-            stock_name = CN_STOCK_NAMES.get(symbol, symbol)
+            # A股优先使用本地扩展映射表
+            stock_name = CN_STOCK_NAMES_EXTENDED.get(symbol, symbol)
         elif info:
             stock_name = info.get('shortName', symbol)
 
@@ -457,15 +455,13 @@ def hot_stocks_page():
     # 使用 session state 保存热门股票页面状态
     if 'hot_market' not in st.session_state:
         st.session_state.hot_market = "CN"
-    if 'hot_data' not in st.session_state:
-        st.session_state.hot_data = None
 
+    market_index = ["CN", "US"].index(st.session_state.hot_market)
     market = st.selectbox("选择市场", options=["CN", "US"],
-                         index=["CN", "US"].index(st.session_state.hot_market),
+                         index=market_index,
                          format_func=lambda x: {"CN": "A股", "US": "美股"}[x],
                          key="hot_market_select")
-
-    # 同步到 session state
+    # 实时同步到 session state
     st.session_state.hot_market = market
 
     if st.button("刷新数据", type="primary"):
@@ -546,63 +542,90 @@ def get_cached_recommended_stocks(num_stocks):
     recommender = StockRecommender()
     return recommender.get_recommended_stocks_cn(num_stocks=num_stocks)
 
+def display_recommendation_list(recommended, strategy_name):
+    """显示推荐列表"""
+    if not recommended:
+        st.warning(f"暂无{strategy_name}推荐股票")
+        return
+
+    st.success(f"{strategy_name}：为您推荐以下 {len(recommended)} 只股票")
+
+    # 显示推荐列表
+    for i, stock in enumerate(recommended, 1):
+        with st.container():
+            st.markdown(f"""
+            <div class="stock-card">
+                <h4>#{i} {stock['symbol']} {stock['name']}</h4>
+                <p><strong>综合评分:</strong> {stock['score']}/100 |
+                <strong>建议:</strong> {stock['rating']} |
+                <strong>当前价:</strong> {stock['latest_price']:.2f}</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 显示详细指标
+            cols = st.columns(4)
+            with cols[0]:
+                st.write("**MACD:**", f"{stock['indicators']['macd']:.3f}")
+                st.caption(stock['signals']['macd'])
+            with cols[1]:
+                st.write("**RSI:**", f"{stock['indicators']['rsi']}")
+                st.caption(stock['signals']['rsi'])
+            with cols[2]:
+                st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.1f} D:{stock['indicators']['kdj_d']:.1f}")
+                st.caption(stock['signals']['kdj'])
+            with cols[3]:
+                st.write("**布林带:**", f"{stock['indicators']['boll_lower']:.1f}-{stock['indicators']['boll_upper']:.1f}")
+                st.caption(stock['signals']['boll'])
+
+            st.divider()
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_short_term_stocks(num_stocks):
+    """获取短线推荐股票（基于短期技术指标）"""
+    recommender = StockRecommender()
+    return recommender.get_short_term_recommendations(num_stocks=num_stocks)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_long_term_stocks(num_stocks):
+    """获取长线推荐股票（基于长期趋势）"""
+    recommender = StockRecommender()
+    return recommender.get_long_term_recommendations(num_stocks=num_stocks)
+
 def recommended_stocks_page():
     """推荐股票页面"""
     st.markdown('<h1 class="main-header">⭐ 智能推荐股票</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存推荐页面状态
+    if 'rec_strategy' not in st.session_state:
+        st.session_state.rec_strategy = "短线"
     if 'rec_num_stocks' not in st.session_state:
         st.session_state.rec_num_stocks = 10
-    if 'rec_results' not in st.session_state:
-        st.session_state.rec_results = None
 
     st.info("基于MACD、RSI、KDJ、布林带等多因子技术分析，自动筛选优质股票")
+
+    # 选择投资策略
+    strategy_index = ["短线", "长线"].index(st.session_state.rec_strategy)
+    strategy = st.radio("投资策略", options=["短线", "长线"],
+                       index=strategy_index,
+                       horizontal=True,
+                       key="rec_strategy_radio")
+    # 实时同步到 session state
+    st.session_state.rec_strategy = strategy
 
     num_stocks = st.slider("推荐数量", min_value=5, max_value=20,
                           value=st.session_state.rec_num_stocks,
                           key="rec_num_slider")
-
-    # 同步到 session state
+    # 实时同步到 session state
     st.session_state.rec_num_stocks = num_stocks
 
     if st.button("生成推荐", type="primary"):
-        with st.spinner("正在分析股票池，请稍候..."):
-            recommended = get_cached_recommended_stocks(num_stocks)
-
-            if not recommended:
-                st.warning("暂无推荐股票，请稍后重试")
-                return
-
-            st.success(f"根据技术分析，为您推荐以下 {len(recommended)} 只股票")
-
-            # 显示推荐列表
-            for i, stock in enumerate(recommended, 1):
-                with st.container():
-                    st.markdown(f"""
-                    <div class="stock-card">
-                        <h4>#{i} {stock['symbol']} {stock['name']}</h4>
-                        <p><strong>综合评分:</strong> {stock['score']}/100 |
-                        <strong>建议:</strong> {stock['rating']} |
-                        <strong>当前价:</strong> {stock['latest_price']:.2f}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    # 显示详细指标
-                    cols = st.columns(4)
-                    with cols[0]:
-                        st.write("**MACD:**", f"{stock['indicators']['macd']:.3f}")
-                        st.caption(stock['signals']['macd'])
-                    with cols[1]:
-                        st.write("**RSI:**", f"{stock['indicators']['rsi']}")
-                        st.caption(stock['signals']['rsi'])
-                    with cols[2]:
-                        st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.1f} D:{stock['indicators']['kdj_d']:.1f}")
-                        st.caption(stock['signals']['kdj'])
-                    with cols[3]:
-                        st.write("**布林带:**", f"{stock['indicators']['boll_lower']:.1f}-{stock['indicators']['boll_upper']:.1f}")
-                        st.caption(stock['signals']['boll'])
-
-                    st.divider()
+        with st.spinner(f"正在分析{strategy}股票池，请稍候..."):
+            if strategy == "短线":
+                recommended = get_cached_short_term_stocks(num_stocks)
+                display_recommendation_list(recommended, "短线推荐")
+            else:
+                recommended = get_cached_long_term_stocks(num_stocks)
+                display_recommendation_list(recommended, "长线推荐")
 
 def main():
     """主函数"""
