@@ -1,6 +1,6 @@
 """
-股票分析系统 - Web版本
-使用Streamlit构建
+股票分析系统 - Web版本 (优化版)
+使用Streamlit构建，带缓存加速
 """
 import streamlit as st
 import pandas as pd
@@ -8,11 +8,39 @@ import numpy as np
 from datetime import datetime, timedelta
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import time
 
 # 导入原有模块
 from data_fetcher import StockDataFetcher
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
+
+# 初始化缓存数据获取器
+fetcher = StockDataFetcher()
+
+@st.cache_data(ttl=300, show_spinner=False)
+def get_cached_stock_data(symbol, period, market):
+    """缓存股票数据获取"""
+    try:
+        return fetcher.get_stock_data(symbol, period=period, market=market)
+    except Exception as e:
+        return None
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_stock_info(symbol, market):
+    """缓存股票基本信息"""
+    try:
+        return fetcher.get_stock_info(symbol, market)
+    except Exception as e:
+        return {}
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_cached_realtime_quote(symbol, market):
+    """缓存实时行情"""
+    try:
+        return fetcher.get_realtime_quote(symbol, market)
+    except Exception as e:
+        return None
 
 # 页面配置
 st.set_page_config(
@@ -256,115 +284,144 @@ def analyze_stock_page():
                              format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x])
 
     with col3:
-        period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y", "2y"], index=3)
+        # 默认使用3个月数据，加载更快
+        period = st.selectbox("时间周期", options=["1mo", "3mo", "6mo", "1y"], index=1)
 
     if st.button("🔍 开始分析", type="primary", use_container_width=True):
-        with st.spinner("正在获取数据并计算指标..."):
-            fetcher = StockDataFetcher()
+        # 使用进度条显示加载状态
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-            # 获取基本信息
-            info = fetcher.get_stock_info(symbol, market)
+        status_text.text("⏳ 正在获取股票信息...")
+        progress_bar.progress(10)
 
-            # 获取实时行情
-            quote = fetcher.get_realtime_quote(symbol, market)
+        # 并行获取基本信息和实时行情
+        info = get_cached_stock_info(symbol, market)
+        progress_bar.progress(30)
 
-            # 获取历史数据
-            data = fetcher.get_stock_data(symbol, period=period, market=market)
+        status_text.text("⏳ 正在获取实时行情...")
+        quote = get_cached_realtime_quote(symbol, market)
+        progress_bar.progress(50)
 
-            if data is None or data.empty:
-                st.error(f"未能获取到 {symbol} 的数据，请检查代码是否正确")
-                return
+        status_text.text("⏳ 正在获取历史数据...")
+        data = get_cached_stock_data(symbol, period, market)
+        progress_bar.progress(70)
 
-            # 计算指标
-            data = TechnicalIndicators.calculate_all(data)
-            signals = TechnicalIndicators.get_signals(data)
+        if data is None or data.empty:
+            st.error(f"❌ 未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
+            progress_bar.empty()
+            status_text.empty()
+            return
 
-            # 显示基本信息
-            st.divider()
+        status_text.text("⏳ 正在计算技术指标...")
+        # 计算指标
+        data = TechnicalIndicators.calculate_all(data)
+        signals = TechnicalIndicators.get_signals(data)
+        progress_bar.progress(100)
 
-            # 股票标题
-            stock_name = ""
-            if market == "CN" and info:
-                stock_name = info.get('股票简称', symbol)
-            elif info:
-                stock_name = info.get('shortName', symbol)
+        # 清除进度条
+        progress_bar.empty()
+        status_text.empty()
 
-            st.header(f"{symbol} {stock_name}")
+        # 显示基本信息
+        st.divider()
 
-            # 实时行情卡片
-            if quote:
-                cols = st.columns(5)
-                with cols[0]:
-                    st.metric("最新价", f"{quote['price']:.2f}", f"{quote['change']:.2f}%")
-                with cols[1]:
-                    st.metric("最高", f"{quote['high']:.2f}")
-                with cols[2]:
-                    st.metric("最低", f"{quote['low']:.2f}")
-                with cols[3]:
-                    volume = quote['volume'] / 10000 if quote['volume'] > 10000 else quote['volume']
-                    unit = "万" if quote['volume'] > 10000 else ""
-                    st.metric("成交量", f"{volume:.0f}{unit}")
-                with cols[4]:
-                    st.metric("今开", f"{quote['open']:.2f}")
+        # 股票标题
+        stock_name = ""
+        if market == "CN" and info:
+            stock_name = info.get('股票简称', symbol)
+        elif info:
+            stock_name = info.get('shortName', symbol)
 
-            st.divider()
+        st.header(f"{symbol} {stock_name}")
 
-            # 显示交易信号
-            display_signals(signals)
-
-            st.divider()
-
-            # 显示指标数值
-            latest = data.iloc[-1]
-            cols = st.columns(4)
-
+        # 实时行情卡片
+        if quote:
+            cols = st.columns(5)
             with cols[0]:
-                st.subheader("MACD")
-                st.write(f"MACD: {latest['macd']:.3f}")
-                st.write(f"Signal: {latest['macd_signal']:.3f}")
-                st.write(f"Hist: {latest['macd_hist']:.3f}")
-
+                st.metric("最新价", f"{quote['price']:.2f}", f"{quote['change']:.2f}%")
             with cols[1]:
-                st.subheader("RSI(14)")
-                st.write(f"RSI: {latest['rsi']:.2f}")
-
+                st.metric("最高", f"{quote['high']:.2f}")
             with cols[2]:
-                st.subheader("KDJ")
-                st.write(f"K: {latest['kdj_k']:.2f}")
-                st.write(f"D: {latest['kdj_d']:.2f}")
-                st.write(f"J: {latest['kdj_j']:.2f}")
-
+                st.metric("最低", f"{quote['low']:.2f}")
             with cols[3]:
-                st.subheader("布林带")
-                st.write(f"上轨: {latest['boll_upper']:.2f}")
-                st.write(f"中轨: {latest['boll_mid']:.2f}")
-                st.write(f"下轨: {latest['boll_lower']:.2f}")
-                st.write(f"带宽: {latest['boll_width']*100:.2f}%")
+                volume = quote['volume'] / 10000 if quote['volume'] > 10000 else quote['volume']
+                unit = "万" if quote['volume'] > 10000 else ""
+                st.metric("成交量", f"{volume:.0f}{unit}")
+            with cols[4]:
+                st.metric("今开", f"{quote['open']:.2f}")
 
-            st.divider()
+        st.divider()
 
-            # 绘制图表
-            tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
+        # 显示交易信号
+        display_signals(signals)
 
-            with tab1:
-                fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
-                st.plotly_chart(fig, use_container_width=True)
+        st.divider()
 
-            with tab2:
-                fig = plot_rsi_chart(data)
-                st.plotly_chart(fig, use_container_width=True)
+        # 显示指标数值
+        latest = data.iloc[-1]
+        cols = st.columns(4)
 
-            with tab3:
-                fig = plot_kdj_chart(data)
-                st.plotly_chart(fig, use_container_width=True)
+        with cols[0]:
+            st.subheader("MACD")
+            st.write(f"MACD: {latest['macd']:.3f}")
+            st.write(f"Signal: {latest['macd_signal']:.3f}")
+            st.write(f"Hist: {latest['macd_hist']:.3f}")
 
-            with tab4:
-                fig = plot_boll_chart(data)
-                st.plotly_chart(fig, use_container_width=True)
+        with cols[1]:
+            st.subheader("RSI(14)")
+            st.write(f"RSI: {latest['rsi']:.2f}")
 
-            # 显示原始数据
-            with st.expander("查看原始数据"):
-                st.dataframe(data.tail(20))
+        with cols[2]:
+            st.subheader("KDJ")
+            st.write(f"K: {latest['kdj_k']:.2f}")
+            st.write(f"D: {latest['kdj_d']:.2f}")
+            st.write(f"J: {latest['kdj_j']:.2f}")
+
+        with cols[3]:
+            st.subheader("布林带")
+            st.write(f"上轨: {latest['boll_upper']:.2f}")
+            st.write(f"中轨: {latest['boll_mid']:.2f}")
+            st.write(f"下轨: {latest['boll_lower']:.2f}")
+            st.write(f"带宽: {latest['boll_width']*100:.2f}%")
+
+        st.divider()
+
+        # 绘制图表
+        tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
+
+        with tab1:
+            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab2:
+            fig = plot_rsi_chart(data)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab3:
+            fig = plot_kdj_chart(data)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with tab4:
+            fig = plot_boll_chart(data)
+            st.plotly_chart(fig, use_container_width=True)
+
+        # 显示原始数据
+        with st.expander("查看原始数据"):
+            st.dataframe(data.tail(20))
+
+@st.cache_data(ttl=180, show_spinner=False)
+def get_cached_hot_stocks(market):
+    """缓存热门股票数据"""
+    recommender = StockRecommender()
+    if market == "CN":
+        return {
+            'hot': recommender.get_hot_stocks_cn(limit=20),
+            'gainers': recommender.get_top_gainers_cn(limit=10),
+            'losers': recommender.get_top_losers_cn(limit=10)
+        }
+    else:
+        return {'hot': recommender.get_hot_stocks_us(limit=20)}
 
 def hot_stocks_page():
     """热门股票页面"""
@@ -375,13 +432,16 @@ def hot_stocks_page():
 
     if st.button("刷新数据", type="primary"):
         with st.spinner("正在获取热门股票..."):
+            data = get_cached_hot_stocks(market)
             recommender = StockRecommender()
 
             if market == "CN":
-                # 热门股票
-                hot = recommender.get_hot_stocks_cn(limit=20)
-                st.subheader("📈 热门股票 TOP 20")
+                hot = data.get('hot', [])
+                gainers = data.get('gainers', [])
+                losers = data.get('losers', [])
 
+                # 热门股票
+                st.subheader("📈 热门股票 TOP 20")
                 df_hot = pd.DataFrame(hot)
                 if not df_hot.empty:
                     df_hot = df_hot.rename(columns={
@@ -398,7 +458,6 @@ def hot_stocks_page():
 
                 # 涨幅榜
                 st.subheader("📊 涨幅榜 TOP 10")
-                gainers = recommender.get_top_gainers_cn(limit=10)
                 df_gainers = pd.DataFrame(gainers)
                 if not df_gainers.empty:
                     df_gainers = df_gainers.rename(columns={
@@ -412,7 +471,6 @@ def hot_stocks_page():
 
                 # 跌幅榜
                 st.subheader("📉 跌幅榜 TOP 10")
-                losers = recommender.get_top_losers_cn(limit=10)
                 df_losers = pd.DataFrame(losers)
                 if not df_losers.empty:
                     df_losers = df_losers.rename(columns={
@@ -425,10 +483,16 @@ def hot_stocks_page():
                     st.dataframe(df_losers, use_container_width=True)
 
             else:
-                hot = recommender.get_hot_stocks_us(limit=20)
+                hot = data.get('hot', [])
                 df_hot = pd.DataFrame(hot)
                 if not df_hot.empty:
                     st.dataframe(df_hot, use_container_width=True)
+
+@st.cache_data(ttl=600, show_spinner=False)
+def get_cached_recommended_stocks(num_stocks):
+    """缓存推荐股票数据"""
+    recommender = StockRecommender()
+    return recommender.get_recommended_stocks_cn(num_stocks=num_stocks)
 
 def recommended_stocks_page():
     """推荐股票页面"""
@@ -440,8 +504,7 @@ def recommended_stocks_page():
 
     if st.button("生成推荐", type="primary"):
         with st.spinner("正在分析股票池，请稍候..."):
-            recommender = StockRecommender()
-            recommended = recommender.get_recommended_stocks_cn(num_stocks=num_stocks)
+            recommended = get_cached_recommended_stocks(num_stocks)
 
             if not recommended:
                 st.warning("暂无推荐股票，请稍后重试")
