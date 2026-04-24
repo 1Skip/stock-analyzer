@@ -187,7 +187,7 @@ class TechnicalIndicators:
         获取交易信号
         基于多个指标的综合分析
         """
-        if data is None or len(data) < 30:
+        if data is None or len(data) < 10:
             return {"error": "数据不足"}
 
         signals = {}
