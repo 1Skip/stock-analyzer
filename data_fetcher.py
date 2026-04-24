@@ -68,79 +68,84 @@ class StockDataFetcher:
         return data
 
     def _get_cn_stock_data_sina(self, symbol, period):
-        """使用新浪财经获取A股数据（国内访问最快）"""
+        """获取A股数据 - 优先使用yfinance，新浪财经作为备选"""
+        # 优先使用yfinance（数据更完整）
         try:
-            # 转换period为天数
+            data = self._get_cn_stock_data_yfinance(symbol, period)
+            if data is not None and len(data) >= 10:
+                return data
+        except Exception as e:
+            print(f"yfinance失败 {symbol}: {str(e)}")
+
+        # yfinance失败，尝试新浪财经
+        try:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
 
-            # 新浪财经接口
             url = f"https://quotes.sina.cn/cn/api/quotes.php?symbol={symbol}&scale=240&ma=5&datalen={days}"
-
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-
             response = requests.get(url, headers=headers, timeout=10)
 
             if response.status_code == 200:
                 import json
                 data = json.loads(response.text)
-
-                # 检查数据是否有效（至少要有10天数据）
                 if data and len(data) >= 10:
                     df = pd.DataFrame(data)
                     df['date'] = pd.to_datetime(df['day'])
                     df.set_index('date', inplace=True)
                     df.rename(columns={
-                        'open': 'open',
-                        'high': 'high',
-                        'low': 'low',
-                        'close': 'close',
-                        'volume': 'volume'
+                        'open': 'open', 'high': 'high', 'low': 'low',
+                        'close': 'close', 'volume': 'volume'
                     }, inplace=True)
-                    # 确保数据类型正确
                     for col in ['open', 'high', 'low', 'close', 'volume']:
                         if col in df.columns:
                             df[col] = pd.to_numeric(df[col], errors='coerce')
-                    # 删除无效数据
                     df = df.dropna(subset=['open', 'high', 'low', 'close'])
                     if len(df) >= 10:
                         return df
-                    print(f"新浪财经 {symbol} 有效数据不足: {len(df)} 天")
-                else:
-                    print(f"新浪财经 {symbol} 返回数据太少: {len(data) if data else 0} 条")
-
-            # 如果新浪财经失败或数据不足，使用yfinance备选
-            print(f"新浪财经 {symbol} 失败，尝试yfinance...")
-            return self._get_cn_stock_data_yfinance(symbol, period)
-
         except Exception as e:
-            print(f"新浪财经失败 {symbol}: {str(e)}，尝试yfinance...")
-            return self._get_cn_stock_data_yfinance(symbol, period)
+            print(f"新浪财经也失败 {symbol}: {str(e)}")
+
+        return None
 
     def _get_cn_stock_data_yfinance(self, symbol, period):
-        """使用yfinance获取A股数据（备选）"""
-        try:
-            if '.' not in symbol:
-                # 上海交易所
-                symbol_yf = f"{symbol}.SS"
-                ticker = yf.Ticker(symbol_yf)
-                data = ticker.history(period=period)
+        """使用yfinance获取A股数据"""
+        import time
+        max_retries = 2
 
-                if data.empty:
-                    # 深圳交易所
+        for attempt in range(max_retries):
+            try:
+                if '.' not in symbol:
+                    # 先尝试深圳交易所
                     symbol_yf = f"{symbol}.SZ"
                     ticker = yf.Ticker(symbol_yf)
                     data = ticker.history(period=period)
-            else:
-                ticker = yf.Ticker(symbol)
-                data = ticker.history(period=period)
 
-            return data
-        except Exception as e:
-            print(f"yfinance获取失败 {symbol}: {str(e)}")
-            return None
+                    if data.empty or len(data) < 10:
+                        # 再尝试上海交易所
+                        symbol_yf = f"{symbol}.SS"
+                        ticker = yf.Ticker(symbol_yf)
+                        data = ticker.history(period=period)
+                else:
+                    ticker = yf.Ticker(symbol)
+                    data = ticker.history(period=period)
+
+                if not data.empty and len(data) >= 10:
+                    # 标准化列名
+                    data.columns = [col.lower().replace(' ', '_') for col in data.columns]
+                    return data
+
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+
+            except Exception as e:
+                print(f"yfinance尝试 {attempt+1} 失败 {symbol}: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+
+        return None
 
     def get_stock_info(self, symbol, market="US"):
         """获取股票基本信息"""
