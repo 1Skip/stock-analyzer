@@ -172,12 +172,15 @@ def plot_rsi_chart(data):
     """绘制RSI图表"""
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(x=data.index, y=data['rsi'], name='RSI(14)', line=dict(color='purple', width=2)))
+    # 显示6日、12日、24日RSI
+    fig.add_trace(go.Scatter(x=data.index, y=data['rsi_6'], name='RSI(6)', line=dict(color='red', width=2)))
+    fig.add_trace(go.Scatter(x=data.index, y=data['rsi_12'], name='RSI(12)', line=dict(color='orange', width=2)))
+    fig.add_trace(go.Scatter(x=data.index, y=data['rsi_24'], name='RSI(24)', line=dict(color='purple', width=2)))
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买(70)")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖(30)")
 
     fig.update_layout(
-        title="RSI指标 (相对强弱指数)",
+        title="RSI指标 (6日/12日/24日)",
         height=400,
         yaxis_range=[0, 100],
         hovermode='x unified'
@@ -478,8 +481,10 @@ def analyze_stock_page():
             st.write(f"Hist: {latest['macd_hist']:.3f}")
 
         with cols[1]:
-            st.subheader("RSI(14)")
-            st.write(f"RSI: {latest['rsi']:.2f}")
+            st.subheader("RSI")
+            st.write(f"RSI(6): {latest['rsi_6']:.2f}")
+            st.write(f"RSI(12): {latest['rsi_12']:.2f}")
+            st.write(f"RSI(24): {latest['rsi_24']:.2f}")
 
         with cols[2]:
             st.subheader("KDJ")
@@ -836,7 +841,7 @@ def compare_stocks_page():
                             '最新价': f"{latest['close']:.2f}",
                             '涨跌幅': f"{change_pct:.2f}%",
                             '成交量': f"{latest['volume']/10000:.0f}万",
-                            'RSI(14)': f"{latest['rsi']:.1f}",
+                            'RSI(6)': f"{latest['rsi_6']:.1f}",
                             'MACD': f"{latest['macd']:.3f}",
                             'KDJ-K': f"{latest['kdj_k']:.1f}",
                             '布林位置': '上轨附近' if latest['close'] > latest['boll_upper'] * 0.98 else '中轨附近' if latest['close'] > latest['boll_mid'] * 0.98 else '下轨附近'

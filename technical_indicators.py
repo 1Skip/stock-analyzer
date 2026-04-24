@@ -55,32 +55,33 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
-    def calculate_rsi(data, period=14):
+    def calculate_rsi(data, periods=[6, 12, 24]):
         """
         计算RSI指标 (相对强弱指数)
         RSI = 100 - (100 / (1 + RS))
         RS = 平均上涨 / 平均下跌
+        默认计算6日、12日、24日RSI
         """
         df = data.copy()
 
-        # 计算价格变化
-        delta = df['close'].diff()
+        for period in periods:
+            # 计算价格变化
+            delta = df['close'].diff()
 
-        # 分离上涨和下跌
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
+            # 分离上涨和下跌
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
 
-        # 计算平均上涨和平均下跌
-        avg_gain = gain.rolling(window=period, min_periods=1).mean()
-        avg_loss = loss.rolling(window=period, min_periods=1).mean()
+            # 使用指数移动平均计算RSI (Wilder's method)
+            avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
 
-        # 使用指数移动平均计算RSI (Wilder's method)
-        avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-        avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            # 计算RS和RSI
+            rs = avg_gain / avg_loss
+            df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
 
-        # 计算RS和RSI
-        rs = avg_gain / avg_loss
-        df['rsi'] = 100 - (100 / (1 + rs))
+        # 保留rsi字段用于兼容（使用RSI6作为默认RSI）
+        df['rsi'] = df['rsi_6']
 
         # 添加RSI信号线 (70超买, 30超卖)
         df['rsi_overbought'] = 70
