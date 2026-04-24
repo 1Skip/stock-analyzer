@@ -1,9 +1,11 @@
 """
-股票数据获取模块 - 使用AKShare作为主要数据源（更准确）
+股票数据获取模块 - 获取真实股票数据
+支持A股、港股、美股
+使用新浪财经作为主要A股数据源（国内访问快且稳定）
 """
 import yfinance as yf
-import akshare as ak
 import pandas as pd
+import requests
 from datetime import datetime, timedelta
 import time
 import random
@@ -36,14 +38,16 @@ class StockDataFetcher:
         """获取股票历史数据 - 带重试机制"""
         cache_key = f"{symbol}_{period}_{interval}_{market}"
 
+        # 检查缓存，但缩短缓存时间到1分钟
         if cache_key in self.cache:
             cache_time, cache_data = self.cache[cache_key]
-            if datetime.now() - cache_time < timedelta(minutes=5):
+            if datetime.now() - cache_time < timedelta(minutes=1):
                 return cache_data
 
         def _fetch_data():
             if market == "CN":
-                return self._get_cn_stock_data_akshare(symbol, period)
+                # A股优先使用新浪财经
+                return self._get_cn_stock_data_sina(symbol, period)
             elif market == "HK":
                 ticker = yf.Ticker(f"{symbol}.HK")
                 return ticker.history(period=period, interval=interval)
@@ -63,79 +67,88 @@ class StockDataFetcher:
         self.cache[cache_key] = (datetime.now(), data)
         return data
 
-    def _get_cn_stock_data_akshare(self, symbol, period):
-        """使用AKShare获取A股数据（更准确）"""
+    def _get_cn_stock_data_sina(self, symbol, period):
+        """使用新浪财经获取A股数据（国内访问最快）"""
         try:
+            # 转换period为天数
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
 
-            df = ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=(datetime.now() - timedelta(days=days)).strftime("%Y%m%d"),
-                end_date=datetime.now().strftime("%Y%m%d"),
-                adjust="qfq"
-            )
+            # 新浪财经接口
+            url = f"https://quotes.sina.cn/cn/api/quotes.php?symbol={symbol}&scale=240&ma=5&datalen={days}"
 
-            if df.empty:
-                return None
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
 
-            df = df.rename(columns={
-                '日期': 'date', '开盘': 'open', '收盘': 'close', '最高': 'high',
-                '最低': 'low', '成交量': 'volume', '成交额': 'amount',
-                '振幅': 'amplitude', '涨跌幅': 'pct_change', '涨跌额': 'change', '换手率': 'turnover'
-            })
+            response = requests.get(url, headers=headers, timeout=10)
 
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            return df
+            if response.status_code == 200:
+                import json
+                data = json.loads(response.text)
+
+                if data and len(data) > 0:
+                    df = pd.DataFrame(data)
+                    df['date'] = pd.to_datetime(df['day'])
+                    df.set_index('date', inplace=True)
+                    df.rename(columns={
+                        'open': 'open',
+                        'high': 'high',
+                        'low': 'low',
+                        'close': 'close',
+                        'volume': 'volume'
+                    }, inplace=True)
+                    return df
+
+            # 如果新浪财经失败，使用yfinance备选
+            return self._get_cn_stock_data_yfinance(symbol, period)
 
         except Exception as e:
-            print(f"AKShare失败 {symbol}: {str(e)}")
+            print(f"新浪财经失败 {symbol}: {str(e)}")
             return self._get_cn_stock_data_yfinance(symbol, period)
 
     def _get_cn_stock_data_yfinance(self, symbol, period):
         """使用yfinance获取A股数据（备选）"""
-        if '.' not in symbol:
-            symbol_yf = f"{symbol}.SS"
-            ticker = yf.Ticker(symbol_yf)
-            data = ticker.history(period=period)
-            if data.empty:
-                symbol_yf = f"{symbol}.SZ"
+        try:
+            if '.' not in symbol:
+                # 上海交易所
+                symbol_yf = f"{symbol}.SS"
                 ticker = yf.Ticker(symbol_yf)
                 data = ticker.history(period=period)
-        else:
-            ticker = yf.Ticker(symbol)
-            data = ticker.history(period=period)
-        return data
+
+                if data.empty:
+                    # 深圳交易所
+                    symbol_yf = f"{symbol}.SZ"
+                    ticker = yf.Ticker(symbol_yf)
+                    data = ticker.history(period=period)
+            else:
+                ticker = yf.Ticker(symbol)
+                data = ticker.history(period=period)
+
+            return data
+        except Exception as e:
+            print(f"yfinance获取失败 {symbol}: {str(e)}")
+            return None
 
     def get_stock_info(self, symbol, market="US"):
         """获取股票基本信息"""
+        # A股直接返回映射表中的名称
+        if market == "CN":
+            name = CN_STOCK_NAMES_EXTENDED.get(symbol)
+            if name:
+                return {'shortName': name, 'symbol': symbol}
+
         def _fetch_info():
             if market == "HK":
                 ticker = yf.Ticker(f"{symbol}.HK")
                 return ticker.info
-            elif market == "CN":
-                name = CN_STOCK_NAMES_EXTENDED.get(symbol)
-                if name:
-                    return {'shortName': name, 'symbol': symbol}
-                if '.' not in symbol:
-                    ticker = yf.Ticker(f"{symbol}.SS")
-                    info = ticker.info
-                    if info and info.get('shortName'):
-                        return info
-                    ticker = yf.Ticker(f"{symbol}.SZ")
-                    return ticker.info
-                else:
-                    ticker = yf.Ticker(symbol)
-                    return ticker.info
             else:
                 ticker = yf.Ticker(symbol)
                 return ticker.info
 
         info = self._retry_with_backoff(_fetch_info)
         if info is None:
-            return {}
+            return {'shortName': symbol, 'symbol': symbol}
         return info
 
     def get_stock_name(self, symbol, market="US"):
@@ -144,6 +157,7 @@ class StockDataFetcher:
             name = CN_STOCK_NAMES_EXTENDED.get(symbol)
             if name:
                 return name
+
         try:
             info = self.get_stock_info(symbol, market)
             if info:
@@ -155,37 +169,80 @@ class StockDataFetcher:
         return symbol
 
     def get_realtime_quote(self, symbol, market="US"):
-        """获取实时行情 - A股使用AKShare"""
+        """获取实时行情 - A股使用新浪财经"""
         try:
             if market == "CN":
-                try:
-                    df = ak.stock_zh_a_spot_em()
-                    stock_row = df[df['代码'] == symbol]
-                    if not stock_row.empty:
-                        row = stock_row.iloc[0]
-                        return {
-                            'symbol': symbol, 'name': row.get('名称', symbol),
-                            'price': float(row.get('最新价', 0)), 'open': float(row.get('今开', 0)),
-                            'high': float(row.get('最高', 0)), 'low': float(row.get('最低', 0)),
-                            'volume': int(float(row.get('成交量', 0))),
-                            'prev_close': float(row.get('昨收', 0)), 'change': float(row.get('涨跌幅', 0))
-                        }
-                except Exception as e:
-                    print(f"AKShare实时行情失败: {e}")
+                # 使用新浪财经实时行情
+                url = f"https://hq.sinajs.cn/list=sz{symbol}"
+                headers = {
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
 
+                response = requests.get(url, headers=headers, timeout=5)
+
+                if response.status_code == 200:
+                    import re
+                    content = response.text
+                    match = re.search(r'"([^"]*)"', content)
+                    if match:
+                        data = match.group(1).split(',')
+                        if len(data) >= 33:
+                            return {
+                                'symbol': symbol,
+                                'name': data[0],
+                                'price': float(data[3]),
+                                'open': float(data[1]),
+                                'high': float(data[4]),
+                                'low': float(data[5]),
+                                'volume': int(float(data[8]) / 100),  # 转换为手
+                                'prev_close': float(data[2]),
+                                'change': float(data[32])  # 涨跌幅
+                            }
+
+                # 如果深圳失败，尝试上海
+                url = f"https://hq.sinajs.cn/list=sh{symbol}"
+                response = requests.get(url, headers=headers, timeout=5)
+
+                if response.status_code == 200:
+                    import re
+                    content = response.text
+                    match = re.search(r'"([^"]*)"', content)
+                    if match:
+                        data = match.group(1).split(',')
+                        if len(data) >= 33:
+                            return {
+                                'symbol': symbol,
+                                'name': data[0],
+                                'price': float(data[3]),
+                                'open': float(data[1]),
+                                'high': float(data[4]),
+                                'low': float(data[5]),
+                                'volume': int(float(data[8]) / 100),
+                                'prev_close': float(data[2]),
+                                'change': float(data[32])
+                            }
+
+                # 备选：使用yfinance
                 ticker = yf.Ticker(f"{symbol}.SS")
                 hist = ticker.history(period="5d")
                 info = ticker.info
+
                 if not hist.empty:
                     latest = hist.iloc[-1]
                     prev = hist.iloc[-2] if len(hist) > 1 else latest
                     return {
-                        'symbol': symbol, 'name': info.get('shortName', symbol),
-                        'price': latest['Close'], 'open': latest['Open'],
-                        'high': latest['High'], 'low': latest['Low'],
-                        'volume': latest['Volume'], 'prev_close': prev['Close'],
+                        'symbol': symbol,
+                        'name': info.get('shortName', symbol),
+                        'price': latest['Close'],
+                        'open': latest['Open'],
+                        'high': latest['High'],
+                        'low': latest['Low'],
+                        'volume': latest['Volume'],
+                        'prev_close': prev['Close'],
                         'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
                     }
+
             elif market == "HK":
                 ticker = yf.Ticker(f"{symbol}.HK")
                 hist = ticker.history(period="5d")
@@ -194,10 +251,14 @@ class StockDataFetcher:
                     latest = hist.iloc[-1]
                     prev = hist.iloc[-2] if len(hist) > 1 else latest
                     return {
-                        'symbol': symbol, 'name': info.get('shortName', symbol),
-                        'price': latest['Close'], 'open': latest['Open'],
-                        'high': latest['High'], 'low': latest['Low'],
-                        'volume': latest['Volume'], 'prev_close': prev['Close'],
+                        'symbol': symbol,
+                        'name': info.get('shortName', symbol),
+                        'price': latest['Close'],
+                        'open': latest['Open'],
+                        'high': latest['High'],
+                        'low': latest['Low'],
+                        'volume': latest['Volume'],
+                        'prev_close': prev['Close'],
                         'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
                     }
             else:
@@ -208,12 +269,17 @@ class StockDataFetcher:
                     latest = hist.iloc[-1]
                     prev = hist.iloc[-2] if len(hist) > 1 else latest
                     return {
-                        'symbol': symbol, 'name': info.get('shortName', symbol),
-                        'price': latest['Close'], 'open': latest['Open'],
-                        'high': latest['High'], 'low': latest['Low'],
-                        'volume': latest['Volume'], 'prev_close': prev['Close'],
+                        'symbol': symbol,
+                        'name': info.get('shortName', symbol),
+                        'price': latest['Close'],
+                        'open': latest['Open'],
+                        'high': latest['High'],
+                        'low': latest['Low'],
+                        'volume': latest['Volume'],
+                        'prev_close': prev['Close'],
                         'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
                     }
+
         except Exception as e:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
         return None
