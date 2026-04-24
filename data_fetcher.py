@@ -118,14 +118,27 @@ class StockDataFetcher:
         for attempt in range(max_retries):
             try:
                 if '.' not in symbol:
-                    # 先尝试深圳交易所
-                    symbol_yf = f"{symbol}.SZ"
+                    # 根据股票代码规则判断交易所
+                    # 600/601/603/688 开头是上海，000/002/300 开头是深圳
+                    if symbol.startswith(('600', '601', '603', '605', '688')):
+                        # 上海交易所
+                        symbol_yf = f"{symbol}.SS"
+                    elif symbol.startswith(('000', '001', '002', '003', '300', '301')):
+                        # 深圳交易所
+                        symbol_yf = f"{symbol}.SZ"
+                    else:
+                        # 未知，先尝试上海再尝试深圳
+                        symbol_yf = f"{symbol}.SS"
+
                     ticker = yf.Ticker(symbol_yf)
                     data = ticker.history(period=period)
 
+                    # 如果失败，尝试另一个交易所
                     if data.empty or len(data) < 10:
-                        # 再尝试上海交易所
-                        symbol_yf = f"{symbol}.SS"
+                        if symbol_yf.endswith('.SS'):
+                            symbol_yf = f"{symbol}.SZ"
+                        else:
+                            symbol_yf = f"{symbol}.SS"
                         ticker = yf.Ticker(symbol_yf)
                         data = ticker.history(period=period)
                 else:
