@@ -127,6 +127,13 @@ class TechnicalIndicators:
         """
         df = data.copy()
 
+        # 检查数据是否足够
+        if len(df) < n:
+            df['kdj_k'] = 50
+            df['kdj_d'] = 50
+            df['kdj_j'] = 50
+            return df
+
         # 计算N日内的最高价和最低价
         low_list = df['low'].rolling(window=n, min_periods=n).min()
         high_list = df['high'].rolling(window=n, min_periods=n).max()
@@ -134,25 +141,7 @@ class TechnicalIndicators:
         # 计算RSV
         rsv = (df['close'] - low_list) / (high_list - low_list) * 100
 
-        # 初始化K、D值
-        df['kdj_k'] = pd.Series(index=df.index, dtype=float)
-        df['kdj_d'] = pd.Series(index=df.index, dtype=float)
-        df['kdj_j'] = pd.Series(index=df.index, dtype=float)
-
-        # 计算K值
-        df.loc[df.index[n-1], 'kdj_k'] = rsv.iloc[n-1]
-        for i in range(n, len(df)):
-            df.loc[df.index[i], 'kdj_k'] = (2/3) * df['kdj_k'].iloc[i-1] + (1/3) * rsv.iloc[i]
-
-        # 计算D值
-        df.loc[df.index[n-1], 'kdj_d'] = df['kdj_k'].iloc[n-1]
-        for i in range(n, len(df)):
-            df.loc[df.index[i], 'kdj_d'] = (2/3) * df['kdj_d'].iloc[i-1] + (1/3) * df['kdj_k'].iloc[i]
-
-        # 计算J值
-        df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
-
-        # 使用平滑方法重新计算 (更简单的方法)
+        # 使用平滑方法计算KDJ (更稳定的方法)
         df['kdj_k'] = rsv.ewm(alpha=1/m1, adjust=False).mean()
         df['kdj_d'] = df['kdj_k'].ewm(alpha=1/m2, adjust=False).mean()
         df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
