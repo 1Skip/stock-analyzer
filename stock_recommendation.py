@@ -488,6 +488,8 @@ class StockRecommender:
                 'kdj_k': round(latest['kdj_k'], 1),
                 'kdj_d': round(latest['kdj_d'], 1),
                 'kdj_j': round(latest['kdj_j'], 1),
+                'boll_lower': round(latest['boll_lower'], 2),
+                'boll_upper': round(latest['boll_upper'], 2),
             }
         }
 

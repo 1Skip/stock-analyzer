@@ -633,7 +633,9 @@ def display_recommendation_list(recommended, strategy_name):
                 st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.1f} D:{stock['indicators']['kdj_d']:.1f}")
                 st.caption(stock['signals']['kdj'])
             with cols[3]:
-                st.write("**布林带:**", f"{stock['indicators']['boll_lower']:.1f}-{stock['indicators']['boll_upper']:.1f}")
+                boll_lower = stock['indicators'].get('boll_lower', 0)
+                boll_upper = stock['indicators'].get('boll_upper', 0)
+                st.write("**布林带:**", f"{boll_lower:.1f}-{boll_upper:.1f}")
                 st.caption(stock['signals']['boll'])
 
             st.divider()
