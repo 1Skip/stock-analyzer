@@ -152,36 +152,46 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
-        """获取股票名称，优先使用映射表，未找到时尝试网络获取"""
+        """获取股票名称，A股优先从新浪财经实时获取"""
         if market == "CN":
-            # 先查映射表
+            # 优先从新浪财经实时获取（最准确）
+            try:
+                # 先尝试深圳交易所
+                url = f"https://hq.sinajs.cn/list=sz{symbol}"
+                headers = {
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = requests.get(url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    import re
+                    match = re.search(r'"([^"]*)"', response.text)
+                    if match:
+                        data = match.group(1).split(',')
+                        if len(data) >= 1 and data[0]:
+                            return data[0]
+
+                # 再尝试上海交易所
+                url = f"https://hq.sinajs.cn/list=sh{symbol}"
+                response = requests.get(url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    import re
+                    match = re.search(r'"([^"]*)"', response.text)
+                    if match:
+                        data = match.group(1).split(',')
+                        if len(data) >= 1 and data[0]:
+                            return data[0]
+            except:
+                pass
+
+            # 备选：查映射表
             name = CN_STOCK_NAMES_EXTENDED.get(symbol)
             if name:
                 return name
-            # 映射表中没有，尝试从实时行情获取
-            try:
-                quote = self.get_realtime_quote(symbol, market)
-                if quote and quote.get('name'):
-                    # 缓存到映射表
-                    CN_STOCK_NAMES_EXTENDED[symbol] = quote['name']
-                    return quote['name']
-            except:
-                pass
-            # 尝试yfinance
-            try:
-                for suffix in ['.SS', '.SZ']:
-                    ticker = yf.Ticker(f"{symbol}{suffix}")
-                    info = ticker.info
-                    if info:
-                        name = info.get('shortName') or info.get('longName')
-                        if name:
-                            CN_STOCK_NAMES_EXTENDED[symbol] = name
-                            return name
-            except:
-                pass
+
             return symbol
 
-        # 美股/港股
+        # 美股/港股使用yfinance
         try:
             info = self.get_stock_info(symbol, market)
             if info:
