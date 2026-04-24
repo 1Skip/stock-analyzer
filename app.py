@@ -99,7 +99,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def plot_candlestick_chart(data, title="K线图"):
+def plot_candlestick_chart(data, title="K线图", has_realtime=False):
     """使用Plotly绘制K线图"""
     fig = make_subplots(
         rows=3, cols=1,
@@ -108,6 +108,12 @@ def plot_candlestick_chart(data, title="K线图"):
         row_heights=[0.6, 0.2, 0.2],
         subplot_titles=('价格', '成交量', 'MACD')
     )
+
+    # 如果有实时数据，标注最后一天
+    if has_realtime and len(data) > 1:
+        # 添加垂直线标注实时数据
+        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
+                      annotation_text="实时", annotation_position="top")
 
     # K线图
     fig.add_trace(
@@ -168,7 +174,7 @@ def plot_candlestick_chart(data, title="K线图"):
 
     return fig
 
-def plot_rsi_chart(data):
+def plot_rsi_chart(data, has_realtime=False):
     """绘制RSI图表"""
     fig = go.Figure()
 
@@ -179,6 +185,11 @@ def plot_rsi_chart(data):
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买(70)")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖(30)")
 
+    # 标注实时数据
+    if has_realtime and len(data) > 1:
+        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
+                      annotation_text="实时", annotation_position="top")
+
     fig.update_layout(
         title="RSI指标 (6日/12日/24日)",
         height=400,
@@ -188,7 +199,7 @@ def plot_rsi_chart(data):
 
     return fig
 
-def plot_kdj_chart(data):
+def plot_kdj_chart(data, has_realtime=False):
     """绘制KDJ图表"""
     fig = go.Figure()
 
@@ -198,6 +209,11 @@ def plot_kdj_chart(data):
     fig.add_hline(y=80, line_dash="dash", line_color="red")
     fig.add_hline(y=20, line_dash="dash", line_color="green")
 
+    # 标注实时数据
+    if has_realtime and len(data) > 1:
+        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
+                      annotation_text="实时", annotation_position="top")
+
     fig.update_layout(
         title="KDJ指标 (随机指标)",
         height=400,
@@ -206,7 +222,7 @@ def plot_kdj_chart(data):
 
     return fig
 
-def plot_boll_chart(data):
+def plot_boll_chart(data, has_realtime=False):
     """绘制布林带图表"""
     fig = go.Figure()
 
@@ -224,6 +240,11 @@ def plot_boll_chart(data):
         line=dict(color='rgba(255,255,255,0)'),
         name='布林带区间'
     ))
+
+    # 标注实时数据
+    if has_realtime and len(data) > 1:
+        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
+                      annotation_text="实时", annotation_position="top")
 
     fig.update_layout(
         title="布林带 (BOLL)",
@@ -406,8 +427,25 @@ def analyze_stock_page():
         if len(data) < 30:
             st.warning(f"⚠️ {symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
+        status_text.text("⏳ 正在合并实时数据...")
+        # 如果有实时行情，合并到历史数据中
+        if quote and data is not None and not data.empty:
+            from datetime import datetime
+            now = datetime.now()
+            # 创建实时数据行
+            realtime_row = pd.DataFrame({
+                'open': [quote['open']],
+                'high': [quote['high']],
+                'low': [quote['low']],
+                'close': [quote['price']],
+                'volume': [quote['volume']]
+            }, index=[now])
+            # 合并数据
+            data = pd.concat([data, realtime_row])
+            st.write(f"✅ 已合并实时数据，共 {len(data)} 天")
+
         status_text.text("⏳ 正在计算技术指标...")
-        # 计算指标
+        # 计算指标（包含实时数据）
         data = TechnicalIndicators.calculate_all(data)
         signals = TechnicalIndicators.get_signals(data)
         progress_bar.progress(100)
@@ -504,20 +542,28 @@ def analyze_stock_page():
         # 绘制图表
         tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
 
+        # 判断是否有实时数据（最后一行是否是今天）
+        from datetime import datetime
+        has_realtime = False
+        if len(data) > 0:
+            last_date = data.index[-1]
+            today = datetime.now().date()
+            has_realtime = last_date.date() == today
+
         with tab1:
-            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
+            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图", has_realtime)
             st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            fig = plot_rsi_chart(data)
+            fig = plot_rsi_chart(data, has_realtime)
             st.plotly_chart(fig, use_container_width=True)
 
         with tab3:
-            fig = plot_kdj_chart(data)
+            fig = plot_kdj_chart(data, has_realtime)
             st.plotly_chart(fig, use_container_width=True)
 
         with tab4:
-            fig = plot_boll_chart(data)
+            fig = plot_boll_chart(data, has_realtime)
             st.plotly_chart(fig, use_container_width=True)
 
         # 显示原始数据
