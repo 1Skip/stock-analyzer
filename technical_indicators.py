@@ -141,9 +141,30 @@ class TechnicalIndicators:
         # 计算RSV
         rsv = (df['close'] - low_list) / (high_list - low_list) * 100
 
-        # 使用平滑方法计算KDJ (更稳定的方法)
-        df['kdj_k'] = rsv.ewm(alpha=1/m1, adjust=False).mean()
-        df['kdj_d'] = df['kdj_k'].ewm(alpha=1/m2, adjust=False).mean()
+        # 使用标准KDJ递推公式计算
+        # K = 2/3 * 前一日K + 1/3 * 当日RSV
+        # D = 2/3 * 前一日D + 1/3 * 当日K
+        k_values = []
+        d_values = []
+
+        for i in range(len(df)):
+            if i < n - 1:
+                # 前n-1天无有效值
+                k_values.append(50)
+                d_values.append(50)
+            elif i == n - 1:
+                # 第n天，K和D都等于当日RSV
+                k_values.append(rsv.iloc[i])
+                d_values.append(rsv.iloc[i])
+            else:
+                # 递推公式
+                k = (2/3) * k_values[-1] + (1/3) * rsv.iloc[i]
+                d = (2/3) * d_values[-1] + (1/3) * k
+                k_values.append(k)
+                d_values.append(d)
+
+        df['kdj_k'] = k_values
+        df['kdj_d'] = d_values
         df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']
 
         return df
