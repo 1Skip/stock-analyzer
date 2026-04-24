@@ -604,6 +604,7 @@ def display_recommendation_list(recommended, strategy_name):
     """显示推荐列表"""
     if not recommended:
         st.warning(f"暂无{strategy_name}推荐股票")
+        st.info("💡 可能原因：\n1. 数据获取失败（网络问题）\n2. 股票分析返回None（数据不足）\n3. 请检查日志输出")
         return
 
     st.success(f"{strategy_name}：为您推荐以下 {len(recommended)} 只股票")
@@ -683,6 +684,14 @@ def recommended_stocks_page():
     # 从 session state 读取当前值
     sector = st.session_state.rec_sector
     num_stocks = st.session_state.rec_num_stocks
+
+    # 添加清除缓存按钮
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("🔄 清除缓存", type="secondary"):
+            get_cached_short_term_stocks.clear()
+            get_cached_sector_stocks.clear()
+            st.success("缓存已清除，请重新生成推荐")
 
     if st.button("生成推荐", type="primary"):
         with st.spinner(f"正在分析{sector}板块，请稍候..."):

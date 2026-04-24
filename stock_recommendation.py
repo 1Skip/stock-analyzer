@@ -318,12 +318,17 @@ class StockRecommender:
         for stock in POPULAR_CN_STOCKS[:25]:
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis and analysis["score"] >= 30:  # 降低阈值
+                if analysis:
                     analysis['name'] = stock['name']
                     results.append(analysis)
+                    print(f"短线分析 {stock['code']}: 评分={analysis['score']}")
+                else:
+                    print(f"短线分析 {stock['code']}: 返回None")
             except Exception as e:
+                print(f"短线分析 {stock['code']} 异常: {str(e)}")
                 continue
 
+        # 按评分排序，返回前num_stocks个
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
@@ -340,13 +345,18 @@ class StockRecommender:
         for stock in sector_stocks:
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis and analysis["score"] >= 25:  # 板块推荐阈值更低
+                if analysis:
                     analysis['name'] = stock['name']
                     analysis['sector'] = sector_name
                     results.append(analysis)
+                    print(f"板块{sector_name}分析 {stock['code']}: 评分={analysis['score']}")
+                else:
+                    print(f"板块{sector_name}分析 {stock['code']}: 返回None")
             except Exception as e:
+                print(f"板块{sector_name}分析 {stock['code']} 异常: {str(e)}")
                 continue
 
+        # 按评分排序，返回前num_stocks个
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
@@ -358,15 +368,29 @@ class StockRecommender:
         from technical_indicators import TechnicalIndicators
 
         fetcher = StockDataFetcher()
-        data = fetcher.get_stock_data(symbol, period='1mo', interval='1d', market=market)
-
-        if data is None or len(data) < 10:
+        try:
+            data = fetcher.get_stock_data(symbol, period='1mo', interval='1d', market=market)
+        except Exception as e:
+            print(f"获取股票 {symbol} 数据失败: {str(e)}")
             return None
 
-        df = TechnicalIndicators.calculate_all(data)
-        signals = TechnicalIndicators.get_signals(df)
+        if data is None:
+            print(f"股票 {symbol} 数据为None")
+            return None
+
+        if len(data) < 10:
+            print(f"股票 {symbol} 数据不足: {len(data)} 天")
+            return None
+
+        try:
+            df = TechnicalIndicators.calculate_all(data)
+            signals = TechnicalIndicators.get_signals(df)
+        except Exception as e:
+            print(f"股票 {symbol} 计算指标失败: {str(e)}")
+            return None
 
         if 'error' in signals:
+            print(f"股票 {symbol} 信号错误: {signals['error']}")
             return None
 
         latest = df.iloc[-1]
