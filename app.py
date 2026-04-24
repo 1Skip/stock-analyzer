@@ -99,7 +99,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def plot_candlestick_chart(data, title="K线图", has_realtime=False):
+def plot_candlestick_chart(data, title="K线图"):
     """使用Plotly绘制K线图"""
     fig = make_subplots(
         rows=3, cols=1,
@@ -153,13 +153,6 @@ def plot_candlestick_chart(data, title="K线图", has_realtime=False):
             row=3, col=1
         )
 
-    # 如果有实时数据，添加标注
-    if has_realtime and len(data) > 1:
-        last_time = data.index[-1]
-        fig.add_vline(x=last_time, line_width=2, line_dash="dash", line_color="red")
-        fig.add_annotation(x=last_time, y=1.05, text="实时", showarrow=False,
-                          xref="x", yref="paper", font=dict(color="red", size=12))
-
     fig.update_layout(
         title=title,
         xaxis_rangeslider_visible=False,
@@ -175,7 +168,7 @@ def plot_candlestick_chart(data, title="K线图", has_realtime=False):
 
     return fig
 
-def plot_rsi_chart(data, has_realtime=False):
+def plot_rsi_chart(data):
     """绘制RSI图表"""
     fig = go.Figure()
 
@@ -186,11 +179,6 @@ def plot_rsi_chart(data, has_realtime=False):
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买(70)")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖(30)")
 
-    # 标注实时数据
-    if has_realtime and len(data) > 1:
-        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
-                      annotation_text="实时", annotation_position="top")
-
     fig.update_layout(
         title="RSI指标 (6日/12日/24日)",
         height=400,
@@ -200,7 +188,7 @@ def plot_rsi_chart(data, has_realtime=False):
 
     return fig
 
-def plot_kdj_chart(data, has_realtime=False):
+def plot_kdj_chart(data):
     """绘制KDJ图表"""
     fig = go.Figure()
 
@@ -210,11 +198,6 @@ def plot_kdj_chart(data, has_realtime=False):
     fig.add_hline(y=80, line_dash="dash", line_color="red")
     fig.add_hline(y=20, line_dash="dash", line_color="green")
 
-    # 标注实时数据
-    if has_realtime and len(data) > 1:
-        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
-                      annotation_text="实时", annotation_position="top")
-
     fig.update_layout(
         title="KDJ指标 (随机指标)",
         height=400,
@@ -223,7 +206,7 @@ def plot_kdj_chart(data, has_realtime=False):
 
     return fig
 
-def plot_boll_chart(data, has_realtime=False):
+def plot_boll_chart(data):
     """绘制布林带图表"""
     fig = go.Figure()
 
@@ -241,11 +224,6 @@ def plot_boll_chart(data, has_realtime=False):
         line=dict(color='rgba(255,255,255,0)'),
         name='布林带区间'
     ))
-
-    # 标注实时数据
-    if has_realtime and len(data) > 1:
-        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
-                      annotation_text="实时", annotation_position="top")
 
     fig.update_layout(
         title="布林带 (BOLL)",
@@ -543,28 +521,20 @@ def analyze_stock_page():
         # 绘制图表
         tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
 
-        # 判断是否有实时数据（最后一行是否是今天）
-        from datetime import datetime
-        has_realtime = False
-        if len(data) > 0:
-            last_date = data.index[-1]
-            today = datetime.now().date()
-            has_realtime = last_date.date() == today
-
         with tab1:
-            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图", has_realtime)
+            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
             st.plotly_chart(fig, use_container_width=True)
 
         with tab2:
-            fig = plot_rsi_chart(data, has_realtime)
+            fig = plot_rsi_chart(data)
             st.plotly_chart(fig, use_container_width=True)
 
         with tab3:
-            fig = plot_kdj_chart(data, has_realtime)
+            fig = plot_kdj_chart(data)
             st.plotly_chart(fig, use_container_width=True)
 
         with tab4:
-            fig = plot_boll_chart(data, has_realtime)
+            fig = plot_boll_chart(data)
             st.plotly_chart(fig, use_container_width=True)
 
         # 显示原始数据
