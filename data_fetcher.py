@@ -87,7 +87,8 @@ class StockDataFetcher:
                 import json
                 data = json.loads(response.text)
 
-                if data and len(data) > 0:
+                # 检查数据是否有效（至少要有10天数据）
+                if data and len(data) >= 10:
                     df = pd.DataFrame(data)
                     df['date'] = pd.to_datetime(df['day'])
                     df.set_index('date', inplace=True)
@@ -98,13 +99,24 @@ class StockDataFetcher:
                         'close': 'close',
                         'volume': 'volume'
                     }, inplace=True)
-                    return df
+                    # 确保数据类型正确
+                    for col in ['open', 'high', 'low', 'close', 'volume']:
+                        if col in df.columns:
+                            df[col] = pd.to_numeric(df[col], errors='coerce')
+                    # 删除无效数据
+                    df = df.dropna(subset=['open', 'high', 'low', 'close'])
+                    if len(df) >= 10:
+                        return df
+                    print(f"新浪财经 {symbol} 有效数据不足: {len(df)} 天")
+                else:
+                    print(f"新浪财经 {symbol} 返回数据太少: {len(data) if data else 0} 条")
 
-            # 如果新浪财经失败，使用yfinance备选
+            # 如果新浪财经失败或数据不足，使用yfinance备选
+            print(f"新浪财经 {symbol} 失败，尝试yfinance...")
             return self._get_cn_stock_data_yfinance(symbol, period)
 
         except Exception as e:
-            print(f"新浪财经失败 {symbol}: {str(e)}")
+            print(f"新浪财经失败 {symbol}: {str(e)}，尝试yfinance...")
             return self._get_cn_stock_data_yfinance(symbol, period)
 
     def _get_cn_stock_data_yfinance(self, symbol, period):
