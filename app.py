@@ -363,6 +363,33 @@ def analyze_stock_page():
         data = get_cached_stock_data(symbol, period, market)
         progress_bar.progress(70)
 
+        # 调试信息
+        if data is None:
+            st.error(f"❌ 数据获取失败: {symbol} 返回 None")
+            # 尝试直接获取显示详细错误
+            with st.expander("查看调试信息"):
+                st.write("尝试直接获取数据...")
+                try:
+                    from data_fetcher import StockDataFetcher
+                    fetcher_debug = StockDataFetcher()
+                    # 尝试yfinance
+                    import yfinance as yf
+                    for suffix in ['.SS', '.SZ']:
+                        st.write(f"尝试 yfinance: {symbol}{suffix}")
+                        ticker = yf.Ticker(f"{symbol}{suffix}")
+                        hist = ticker.history(period=period)
+                        st.write(f"结果: {len(hist)} 条数据")
+                        if not hist.empty:
+                            st.write(hist.head())
+                            break
+                except Exception as e:
+                    st.error(f"调试获取失败: {str(e)}")
+            progress_bar.empty()
+            status_text.empty()
+            return
+        else:
+            st.write(f"✅ 获取到 {len(data)} 天数据")
+
         if data is None or data.empty:
             st.error(f"❌ 未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
             progress_bar.empty()
