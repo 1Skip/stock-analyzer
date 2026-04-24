@@ -14,6 +14,7 @@ import time
 from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
+from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
 
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
@@ -84,6 +85,16 @@ st.markdown("""
         padding: 1rem;
         margin: 0.5rem 0;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .watchlist-item {
+        background-color: #f8f9fa;
+        border-radius: 5px;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        border-left: 3px solid #1f77b4;
+    }
+    .stButton button {
+        border-radius: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -365,7 +376,26 @@ def analyze_stock_page():
         # 股票标题 - 使用增强的get_stock_name方法
         stock_name = fetcher.get_stock_name(symbol, market)
 
-        st.header(f"{symbol} {stock_name}")
+        # 标题和自选股按钮并排
+        col_title, col_watchlist = st.columns([3, 1])
+        with col_title:
+            st.header(f"{symbol} {stock_name}")
+        with col_watchlist:
+            # 自选股按钮
+            if is_in_watchlist(symbol, market):
+                if st.button("❌ 移除自选", key="remove_watchlist"):
+                    success, msg = remove_from_watchlist(symbol, market)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+            else:
+                if st.button("⭐ 加入自选", key="add_watchlist"):
+                    success, msg = add_to_watchlist(symbol, stock_name, market)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
 
         # 实时行情卡片
         if quote:
@@ -646,6 +676,120 @@ def recommended_stocks_page():
                 recommended = get_cached_sector_stocks(sector, num_stocks)
                 display_recommendation_list(recommended, f"{sector} 短线龙头股")
 
+def display_watchlist_sidebar():
+    """在侧边栏显示自选股列表"""
+    watchlist = get_watchlist()
+
+    if watchlist:
+        st.markdown("### ⭐ 自选股")
+        for item in watchlist:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                # 使用更简洁的按钮样式
+                display_text = f"{item['symbol']}"
+                if item['name'] and item['name'] != item['symbol']:
+                    display_text += f" · {item['name'][:4]}"
+                if st.button(display_text, key=f"wl_{item['symbol']}_{item['market']}", use_container_width=True):
+                    st.session_state.analyze_symbol = item['symbol']
+                    st.session_state.analyze_market = item['market']
+                    st.rerun()
+            with col2:
+                if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
+                    remove_from_watchlist(item['symbol'], item['market'])
+                    st.rerun()
+        st.markdown("---")
+
+
+def compare_stocks_page():
+    """股票对比页面"""
+    st.markdown('<h1 class="main-header">📊 股票对比分析</h1>', unsafe_allow_html=True)
+
+    st.info("同时对比多只股票的关键指标，最多支持5只股票")
+
+    # 输入股票列表
+    col1, col2 = st.columns(2)
+
+    with col1:
+        symbols_input = st.text_area(
+            "输入股票代码（每行一个，最多5个）",
+            value="600519\n000858\n600036",
+            help="输入A股股票代码，每行一个"
+        )
+
+    with col2:
+        market = st.selectbox("市场", ["CN"], index=0, format_func=lambda x: "A股")
+
+    if st.button("🔍 开始对比", type="primary"):
+        symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()][:5]
+
+        if len(symbols) < 2:
+            st.warning("请至少输入2只股票进行对比")
+            return
+
+        with st.spinner("正在获取对比数据..."):
+            comparison_data = []
+
+            for symbol in symbols:
+                try:
+                    data = get_cached_stock_data(symbol, "3mo", market)
+                    if data is not None and not data.empty:
+                        data = TechnicalIndicators.calculate_all(data)
+                        latest = data.iloc[-1]
+
+                        # 计算涨跌幅
+                        change_pct = ((latest['close'] - data.iloc[0]['close']) / data.iloc[0]['close']) * 100
+
+                        comparison_data.append({
+                            '代码': symbol,
+                            '名称': fetcher.get_stock_name(symbol, market),
+                            '最新价': f"{latest['close']:.2f}",
+                            '涨跌幅': f"{change_pct:.2f}%",
+                            '成交量': f"{latest['volume']/10000:.0f}万",
+                            'RSI(14)': f"{latest['rsi']:.1f}",
+                            'MACD': f"{latest['macd']:.3f}",
+                            'KDJ-K': f"{latest['kdj_k']:.1f}",
+                            '布林位置': '上轨附近' if latest['close'] > latest['boll_upper'] * 0.98 else '中轨附近' if latest['close'] > latest['boll_mid'] * 0.98 else '下轨附近'
+                        })
+                except Exception as e:
+                    st.error(f"获取 {symbol} 数据失败: {str(e)}")
+
+            if comparison_data:
+                # 显示对比表格
+                df = pd.DataFrame(comparison_data)
+                st.subheader("📊 关键指标对比")
+                st.dataframe(df, use_container_width=True)
+
+                # 显示价格走势图对比
+                st.subheader("📈 价格走势对比")
+                fig = go.Figure()
+
+                for symbol in symbols:
+                    try:
+                        data = get_cached_stock_data(symbol, "3mo", market)
+                        if data is not None:
+                            # 标准化价格（以第一天为基准100）
+                            normalized_price = (data['close'] / data['close'].iloc[0]) * 100
+                            fig.add_trace(go.Scatter(
+                                x=data.index,
+                                y=normalized_price,
+                                name=f"{symbol} ({fetcher.get_stock_name(symbol, market)})",
+                                mode='lines'
+                            ))
+                    except:
+                        continue
+
+                fig.update_layout(
+                    title="标准化价格走势对比（基准=100）",
+                    xaxis_title="日期",
+                    yaxis_title="相对价格",
+                    height=500,
+                    hovermode='x unified'
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("未能获取对比数据，请检查股票代码是否正确")
+
+
 def main():
     """主函数"""
     # 侧边栏导航
@@ -653,10 +797,13 @@ def main():
         st.title("📊 股票分析系统")
         st.markdown("---")
 
+        # 自选股列表
+        display_watchlist_sidebar()
+
         page = st.radio(
             "功能菜单",
-            options=["个股分析", "热门股票", "智能推荐"],
-            format_func=lambda x: {"个股分析": "📈 个股分析", "热门股票": "🔥 热门股票", "智能推荐": "⭐ 智能推荐"}[x]
+            options=["个股分析", "热门股票", "智能推荐", "股票对比"],
+            format_func=lambda x: {"个股分析": "📈 个股分析", "热门股票": "🔥 热门股票", "智能推荐": "⭐ 智能推荐", "股票对比": "📊 股票对比"}[x]
         )
 
         st.markdown("---")
@@ -667,6 +814,7 @@ def main():
         - 📈 MACD、RSI、KDJ、BOLL
         - 🔥 实时热门股票排行
         - ⭐ 智能股票推荐
+        - ⭐ 自选股管理
 
         **支持市场：**
         - A股 (中国市场)
@@ -684,6 +832,8 @@ def main():
         hot_stocks_page()
     elif page == "智能推荐":
         recommended_stocks_page()
+    elif page == "股票对比":
+        compare_stocks_page()
 
 if __name__ == "__main__":
     main()
