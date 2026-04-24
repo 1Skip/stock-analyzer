@@ -318,7 +318,7 @@ class StockRecommender:
         for stock in POPULAR_CN_STOCKS[:25]:
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis and analysis['score'] >= 40:  # 降低阈值
+                if analysis and analysis["score"] >= 30:  # 降低阈值
                     analysis['name'] = stock['name']
                     results.append(analysis)
             except Exception as e:
@@ -340,7 +340,7 @@ class StockRecommender:
         for stock in sector_stocks:
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis and analysis['score'] >= 35:  # 板块推荐阈值更低
+                if analysis and analysis["score"] >= 25:  # 板块推荐阈值更低
                     analysis['name'] = stock['name']
                     analysis['sector'] = sector_name
                     results.append(analysis)
