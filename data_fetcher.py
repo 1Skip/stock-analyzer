@@ -152,12 +152,36 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
-        """获取股票名称，优先使用映射表"""
+        """获取股票名称，优先使用映射表，未找到时尝试网络获取"""
         if market == "CN":
+            # 先查映射表
             name = CN_STOCK_NAMES_EXTENDED.get(symbol)
             if name:
                 return name
+            # 映射表中没有，尝试从实时行情获取
+            try:
+                quote = self.get_realtime_quote(symbol, market)
+                if quote and quote.get('name'):
+                    # 缓存到映射表
+                    CN_STOCK_NAMES_EXTENDED[symbol] = quote['name']
+                    return quote['name']
+            except:
+                pass
+            # 尝试yfinance
+            try:
+                for suffix in ['.SS', '.SZ']:
+                    ticker = yf.Ticker(f"{symbol}{suffix}")
+                    info = ticker.info
+                    if info:
+                        name = info.get('shortName') or info.get('longName')
+                        if name:
+                            CN_STOCK_NAMES_EXTENDED[symbol] = name
+                            return name
+            except:
+                pass
+            return symbol
 
+        # 美股/港股
         try:
             info = self.get_stock_info(symbol, market)
             if info:
@@ -297,7 +321,7 @@ CN_STOCK_NAMES_EXTENDED = {
     '600570': '恒生电子', '002230': '科大讯飞', '603986': '兆易创新', '300014': '亿纬锂能',
     '300433': '蓝思科技', '000063': '中兴通讯', '600009': '上海机场', '600048': '保利发展',
     '600309': '万华化学', '601066': '中信建投', '601211': '国泰君安', '600030': '中信证券',
-    '000027': '深圳能源', '600900': '长江电力', '601985': '中国核电'
+    '000027': '深圳能源', '600900': '长江电力', '601985': '中国核电', '603920': '雪天盐业'
 }
 
 POPULAR_US_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'AMD', 'INTC']
