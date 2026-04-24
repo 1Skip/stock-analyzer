@@ -11,7 +11,7 @@ from plotly.subplots import make_subplots
 import time
 
 # 导入原有模块
-from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED
+from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED, POPULAR_CN_STOCKS
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
@@ -695,11 +695,44 @@ def recommended_stocks_page():
 
     if st.button("生成推荐", type="primary"):
         with st.spinner(f"正在分析{sector}板块，请稍候..."):
+            # 调试模式 - 显示详细日志
+            debug_logs = []
+
             if sector == "全部":
-                recommended = get_cached_short_term_stocks(num_stocks)
+                # 直接调用而不使用缓存，以便获取调试信息
+                recommender = StockRecommender()
+                recommended = recommender.get_short_term_recommendations(num_stocks=num_stocks)
+
+                # 显示调试统计
+                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
+                if not recommended:
+                    st.error("未找到任何推荐股票，正在显示调试信息...")
+                    # 尝试获取一只股票的详细调试信息
+                    test_stock = POPULAR_CN_STOCKS[0]
+                    st.info(f"测试获取 {test_stock['code']} 的数据...")
+                    try:
+                        from data_fetcher import StockDataFetcher
+                        fetcher = StockDataFetcher()
+                        data = fetcher.get_stock_data(test_stock['code'], period='1mo', market='CN')
+                        if data is None:
+                            st.error(f"❌ {test_stock['code']} 数据获取失败 (None)")
+                        elif len(data) < 10:
+                            st.error(f"❌ {test_stock['code']} 数据不足: {len(data)} 天")
+                        else:
+                            st.success(f"✅ {test_stock['code']} 数据获取成功: {len(data)} 天")
+                            # 尝试计算指标
+                            from technical_indicators import TechnicalIndicators
+                            df = TechnicalIndicators.calculate_all(data)
+                            signals = TechnicalIndicators.get_signals(df)
+                            st.write("信号:", signals)
+                    except Exception as e:
+                        st.error(f"❌ 测试失败: {str(e)}")
+
                 display_recommendation_list(recommended, "短线推荐")
             else:
-                recommended = get_cached_sector_stocks(sector, num_stocks)
+                recommender = StockRecommender()
+                recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
+                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
                 display_recommendation_list(recommended, f"{sector} 短线龙头股")
 
 def display_watchlist_sidebar():
