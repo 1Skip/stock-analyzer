@@ -232,47 +232,56 @@ def plot_boll_chart(data):
 
 def display_signals(signals):
     """显示交易信号"""
+    # 处理错误情况
+    if 'error' in signals:
+        st.warning(f"⚠️ {signals['error']}")
+        return
+
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         st.subheader("MACD")
-        if "金叉" in signals['macd']:
-            st.markdown(f"<span class='buy-signal'>📈 {signals['macd']}</span>", unsafe_allow_html=True)
-        elif "死叉" in signals['macd']:
-            st.markdown(f"<span class='sell-signal'>📉 {signals['macd']}</span>", unsafe_allow_html=True)
+        macd_signal = signals.get('macd', '暂无数据')
+        if "金叉" in macd_signal:
+            st.markdown(f"<span class='buy-signal'>📈 {macd_signal}</span>", unsafe_allow_html=True)
+        elif "死叉" in macd_signal:
+            st.markdown(f"<span class='sell-signal'>📉 {macd_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {signals['macd']}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>➖ {macd_signal}</span>", unsafe_allow_html=True)
 
     with col2:
         st.subheader("RSI")
-        if "超卖" in signals['rsi']:
-            st.markdown(f"<span class='buy-signal'>🔵 {signals['rsi']}</span>", unsafe_allow_html=True)
-        elif "超买" in signals['rsi']:
-            st.markdown(f"<span class='sell-signal'>🔴 {signals['rsi']}</span>", unsafe_allow_html=True)
+        rsi_signal = signals.get('rsi', '暂无数据')
+        if "超卖" in rsi_signal:
+            st.markdown(f"<span class='buy-signal'>🔵 {rsi_signal}</span>", unsafe_allow_html=True)
+        elif "超买" in rsi_signal:
+            st.markdown(f"<span class='sell-signal'>🔴 {rsi_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>⚪ {signals['rsi']}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>⚪ {rsi_signal}</span>", unsafe_allow_html=True)
 
     with col3:
         st.subheader("KDJ")
-        if "买入" in signals['kdj'] or "超卖" in signals['kdj']:
-            st.markdown(f"<span class='buy-signal'>📈 {signals['kdj']}</span>", unsafe_allow_html=True)
-        elif "卖出" in signals['kdj'] or "超买" in signals['kdj']:
-            st.markdown(f"<span class='sell-signal'>📉 {signals['kdj']}</span>", unsafe_allow_html=True)
+        kdj_signal = signals.get('kdj', '暂无数据')
+        if "买入" in kdj_signal or "超卖" in kdj_signal:
+            st.markdown(f"<span class='buy-signal'>📈 {kdj_signal}</span>", unsafe_allow_html=True)
+        elif "卖出" in kdj_signal or "超买" in kdj_signal:
+            st.markdown(f"<span class='sell-signal'>📉 {kdj_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {signals['kdj']}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>➖ {kdj_signal}</span>", unsafe_allow_html=True)
 
     with col4:
         st.subheader("布林带")
-        if "反弹" in signals['boll'] or "偏多" in signals['boll']:
-            st.markdown(f"<span class='buy-signal'>📈 {signals['boll']}</span>", unsafe_allow_html=True)
-        elif "回调" in signals['boll'] or "偏空" in signals['boll']:
-            st.markdown(f"<span class='sell-signal'>📉 {signals['boll']}</span>", unsafe_allow_html=True)
+        boll_signal = signals.get('boll', '暂无数据')
+        if "反弹" in boll_signal or "偏多" in boll_signal:
+            st.markdown(f"<span class='buy-signal'>📈 {boll_signal}</span>", unsafe_allow_html=True)
+        elif "回调" in boll_signal or "偏空" in boll_signal:
+            st.markdown(f"<span class='sell-signal'>📉 {boll_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {signals['boll']}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>➖ {boll_signal}</span>", unsafe_allow_html=True)
 
     # 综合建议
     st.divider()
-    recommendation = signals['recommendation']
+    recommendation = signals.get('recommendation', '观望')
     if "买入" in recommendation:
         st.success(f"### 💡 综合建议: {recommendation}")
     elif "卖出" in recommendation:
@@ -360,11 +369,19 @@ def analyze_stock_page():
             status_text.empty()
             return
 
+        # 检查数据是否足够（至少需要30天数据）
+        if len(data) < 30:
+            st.warning(f"⚠️ {symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
+
         status_text.text("⏳ 正在计算技术指标...")
         # 计算指标
         data = TechnicalIndicators.calculate_all(data)
         signals = TechnicalIndicators.get_signals(data)
         progress_bar.progress(100)
+
+        # 检查是否有错误
+        if 'error' in signals:
+            st.warning(f"⚠️ 指标计算问题：{signals['error']}")
 
         # 清除进度条
         progress_bar.empty()
