@@ -109,12 +109,6 @@ def plot_candlestick_chart(data, title="K线图", has_realtime=False):
         subplot_titles=('价格', '成交量', 'MACD')
     )
 
-    # 如果有实时数据，标注最后一天
-    if has_realtime and len(data) > 1:
-        # 添加垂直线标注实时数据
-        fig.add_vline(x=data.index[-1], line_width=2, line_dash="dash", line_color="red",
-                      annotation_text="实时", annotation_position="top")
-
     # K线图
     fig.add_trace(
         go.Candlestick(
@@ -158,6 +152,13 @@ def plot_candlestick_chart(data, title="K线图", has_realtime=False):
             go.Bar(x=data.index, y=data['macd_hist'], name='MACD Hist', marker_color=colors_macd),
             row=3, col=1
         )
+
+    # 如果有实时数据，添加标注
+    if has_realtime and len(data) > 1:
+        last_time = data.index[-1]
+        fig.add_vline(x=last_time, line_width=2, line_dash="dash", line_color="red")
+        fig.add_annotation(x=last_time, y=1.05, text="实时", showarrow=False,
+                          xref="x", yref="paper", font=dict(color="red", size=12))
 
     fig.update_layout(
         title=title,
