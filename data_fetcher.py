@@ -68,16 +68,8 @@ class StockDataFetcher:
         return data
 
     def _get_cn_stock_data_sina(self, symbol, period):
-        """获取A股数据 - 优先使用yfinance，新浪财经作为备选"""
-        # 优先使用yfinance（数据更完整）
-        try:
-            data = self._get_cn_stock_data_yfinance(symbol, period)
-            if data is not None and len(data) >= 10:
-                return data
-        except Exception as e:
-            print(f"yfinance失败 {symbol}: {str(e)}")
-
-        # yfinance失败，尝试新浪财经
+        """获取A股数据 - 优先使用新浪财经，yfinance作为备选"""
+        # 优先使用新浪财经（数据更准确）
         try:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
@@ -106,7 +98,15 @@ class StockDataFetcher:
                     if len(df) >= 10:
                         return df
         except Exception as e:
-            print(f"新浪财经也失败 {symbol}: {str(e)}")
+            print(f"新浪财经失败 {symbol}: {str(e)}")
+
+        # 新浪财经失败，尝试yfinance
+        try:
+            data = self._get_cn_stock_data_yfinance(symbol, period)
+            if data is not None and len(data) >= 10:
+                return data
+        except Exception as e:
+            print(f"yfinance也失败 {symbol}: {str(e)}")
 
         return None
 
