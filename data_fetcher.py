@@ -1,7 +1,7 @@
 """
 股票数据获取模块 - 获取真实股票数据
 支持A股、港股、美股
-使用新浪财经作为主要A股数据源（国内访问快且稳定）
+使用 AKShare（同花顺/东方财富数据源）作为主要A股数据源
 """
 import yfinance as yf
 import pandas as pd
@@ -9,6 +9,14 @@ import requests
 from datetime import datetime, timedelta
 import time
 import random
+
+# 尝试导入 AKShare，如果失败则使用备选方案
+try:
+    import akshare as ak
+    AKSHARE_AVAILABLE = True
+except ImportError:
+    AKSHARE_AVAILABLE = False
+    print("AKShare 导入失败，将使用 yfinance 作为备选")
 
 
 class StockDataFetcher:
@@ -67,9 +75,68 @@ class StockDataFetcher:
         self.cache[cache_key] = (datetime.now(), data)
         return data
 
+    def _get_cn_stock_data_akshare(self, symbol, period):
+        """使用 AKShare 获取A股历史数据（同花顺/东方财富数据源）"""
+        if not AKSHARE_AVAILABLE:
+            return None
+
+        try:
+            # 转换period为天数
+            period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            days = period_days.get(period, 365)
+
+            # 使用 AKShare 获取历史数据
+            # stock_zh_a_hist 接口：symbol, period, start_date, end_date
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+
+            df = ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq"  # 前复权
+            )
+
+            if df is not None and not df.empty and len(df) >= 10:
+                # 标准化列名
+                df = df.rename(columns={
+                    '日期': 'date',
+                    '开盘': 'open',
+                    '收盘': 'close',
+                    '最高': 'high',
+                    '最低': 'low',
+                    '成交量': 'volume'
+                })
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+
+                # 确保数据类型正确
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+                df = df.dropna(subset=['open', 'high', 'low', 'close'])
+
+                if len(df) >= 10:
+                    return df
+
+        except Exception as e:
+            print(f"AKShare 获取失败 {symbol}: {str(e)}")
+
+        return None
+
     def _get_cn_stock_data_sina(self, symbol, period):
-        """获取A股数据 - 优先使用新浪财经，yfinance作为备选"""
-        # 优先使用新浪财经（数据更准确）
+        """获取A股数据 - 优先使用 AKShare（同花顺/东方财富数据），备选新浪财经和yfinance"""
+        # 第一优先：AKShare（同花顺/东方财富数据源）
+        try:
+            data = self._get_cn_stock_data_akshare(symbol, period)
+            if data is not None and len(data) >= 10:
+                return data
+        except Exception as e:
+            print(f"AKShare 失败 {symbol}: {str(e)}")
+
+        # 第二优先：新浪财经
         try:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
@@ -100,7 +167,7 @@ class StockDataFetcher:
         except Exception as e:
             print(f"新浪财经失败 {symbol}: {str(e)}")
 
-        # 新浪财经失败，尝试yfinance
+        # 备选：yfinance
         try:
             data = self._get_cn_stock_data_yfinance(symbol, period)
             if data is not None and len(data) >= 10:
@@ -182,11 +249,20 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
-        """获取股票名称，A股优先从新浪财经实时获取"""
+        """获取股票名称，A股优先从 AKShare 实时获取（东方财富数据）"""
         if market == "CN":
-            # 优先从新浪财经实时获取（最准确）
+            # 第一优先：AKShare 实时数据
+            if AKSHARE_AVAILABLE:
+                try:
+                    df = ak.stock_zh_a_spot_em()
+                    stock_row = df[df['代码'] == symbol]
+                    if not stock_row.empty:
+                        return stock_row.iloc[0]['名称']
+                except Exception as e:
+                    print(f"AKShare 获取名称失败: {str(e)}")
+
+            # 第二优先：新浪财经
             try:
-                # 先尝试深圳交易所
                 url = f"https://hq.sinajs.cn/list=sz{symbol}"
                 headers = {
                     'Referer': 'https://finance.sina.com.cn',
@@ -201,7 +277,6 @@ class StockDataFetcher:
                         if len(data) >= 1 and data[0]:
                             return data[0]
 
-                # 再尝试上海交易所
                 url = f"https://hq.sinajs.cn/list=sh{symbol}"
                 response = requests.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
@@ -233,10 +308,31 @@ class StockDataFetcher:
         return symbol
 
     def get_realtime_quote(self, symbol, market="US"):
-        """获取实时行情 - A股使用新浪财经"""
+        """获取实时行情 - A股优先使用 AKShare（同花顺/东方财富数据）"""
         try:
             if market == "CN":
-                # 使用新浪财经实时行情
+                # 第一优先：AKShare 实时行情（东方财富数据源）
+                if AKSHARE_AVAILABLE:
+                    try:
+                        df = ak.stock_zh_a_spot_em()
+                        stock_row = df[df['代码'] == symbol]
+                        if not stock_row.empty:
+                            row = stock_row.iloc[0]
+                            return {
+                                'symbol': symbol,
+                                'name': row['名称'],
+                                'price': float(row['最新价']),
+                                'open': float(row['今开']),
+                                'high': float(row['最高']),
+                                'low': float(row['最低']),
+                                'volume': int(float(row['成交量']) / 100),  # 转换为手
+                                'prev_close': float(row['昨收']),
+                                'change': float(row['涨跌幅'])
+                            }
+                    except Exception as e:
+                        print(f"AKShare 实时行情失败: {str(e)}")
+
+                # 第二优先：新浪财经实时行情
                 url = f"https://hq.sinajs.cn/list=sz{symbol}"
                 headers = {
                     'Referer': 'https://finance.sina.com.cn',
