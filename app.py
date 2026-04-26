@@ -19,25 +19,25 @@ from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def get_cached_stock_data(symbol, period, market):
-    """缓存股票数据获取"""
+    """缓存股票数据获取 - 30秒缓存确保数据新鲜"""
     try:
         return fetcher.get_stock_data(symbol, period=period, market=market)
     except Exception as e:
         return None
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False)
 def get_cached_stock_info(symbol, market):
-    """缓存股票基本信息"""
+    """缓存股票基本信息 - 30秒缓存"""
     try:
         return fetcher.get_stock_info(symbol, market)
     except Exception as e:
         return {}
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def get_cached_realtime_quote(symbol, market):
-    """缓存实时行情"""
+    """缓存实时行情 - 10秒缓存确保实时性"""
     try:
         return fetcher.get_realtime_quote(symbol, market)
     except Exception as e:
@@ -348,7 +348,17 @@ def analyze_stock_page():
     market = st.session_state.analyze_market
     period = st.session_state.analyze_period
 
-    if st.button("🔍 开始分析", type="primary", use_container_width=True):
+    col_analyze, col_clear = st.columns([4, 1])
+    with col_clear:
+        if st.button("🔄 刷新数据", type="secondary"):
+            get_cached_stock_data.clear()
+            get_cached_realtime_quote.clear()
+            get_cached_stock_info.clear()
+            st.success("已清除缓存，请重新分析")
+    with col_analyze:
+        analyze_clicked = st.button("🔍 开始分析", type="primary", use_container_width=True)
+
+    if analyze_clicked:
 
         # 使用进度条显示加载状态
         progress_bar = st.progress(0)
