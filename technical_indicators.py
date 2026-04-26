@@ -122,8 +122,8 @@ class TechnicalIndicators:
         """
         计算KDJ指标 (随机指标)
         RSV = (当日收盘价 - N日内最低价) / (N日内最高价 - N日内最低价) * 100
-        K = 2/3 * 前一日K + 1/3 * 当日RSV
-        D = 2/3 * 前一日D + 1/3 * 当日K
+        K = (m1-1)/m1 * 前一日K + 1/m1 * 当日RSV
+        D = (m2-1)/m2 * 前一日D + 1/m2 * 当日K
         J = 3K - 2D
         """
         df = data.copy()
@@ -142,25 +142,28 @@ class TechnicalIndicators:
         # 计算RSV
         rsv = (df['close'] - low_list) / (high_list - low_list) * 100
 
+        # 计算平滑系数
+        alpha_k = 1 / m1  # K的平滑系数
+        alpha_d = 1 / m2  # D的平滑系数
+
         # 使用标准KDJ递推公式计算
-        # K = 2/3 * 前一日K + 1/3 * 当日RSV
-        # D = 2/3 * 前一日D + 1/3 * 当日K
         k_values = []
         d_values = []
 
         for i in range(len(df)):
             if i < n - 1:
-                # 前n-1天无有效值
+                # 前n-1天无有效值，使用50作为初始值
                 k_values.append(50)
                 d_values.append(50)
             elif i == n - 1:
-                # 第n天，K和D都等于当日RSV
+                # 第n天，K和D都等于当日RSV（同花顺做法）
                 k_values.append(rsv.iloc[i])
                 d_values.append(rsv.iloc[i])
             else:
-                # 递推公式
-                k = (2/3) * k_values[-1] + (1/3) * rsv.iloc[i]
-                d = (2/3) * d_values[-1] + (1/3) * k
+                # 递推公式：K = (m1-1)/m1 * 前一日K + 1/m1 * RSV
+                k = (1 - alpha_k) * k_values[-1] + alpha_k * rsv.iloc[i]
+                # D = (m2-1)/m2 * 前一日D + 1/m2 * K
+                d = (1 - alpha_d) * d_values[-1] + alpha_d * k
                 k_values.append(k)
                 d_values.append(d)
 
