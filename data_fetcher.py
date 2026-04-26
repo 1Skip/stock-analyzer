@@ -9,6 +9,9 @@ import requests
 from datetime import datetime, timedelta
 import time
 import random
+import json
+import os
+from threading import Lock
 
 # 尝试导入 AKShare，如果失败则使用备选方案
 try:
@@ -20,62 +23,237 @@ except ImportError:
 
 
 class StockDataFetcher:
-    """股票数据获取器 - 带重试机制"""
+    """股票数据获取器 - 带重试机制、离线模式、健康检查"""
+
+    # 类级别的请求锁，防止重复请求
+    _request_locks = {}
+    _lock_mutex = Lock()
+
+    # 数据源健康状态缓存
+    _health_status = {
+        'akshare': {'healthy': True, 'last_check': None, 'fail_count': 0},
+        'sina': {'healthy': True, 'last_check': None, 'fail_count': 0},
+        'yfinance': {'healthy': True, 'last_check': None, 'fail_count': 0}
+    }
+
+    # 离线数据缓存文件路径
+    _offline_cache_file = os.path.join(os.path.dirname(__file__), '.stock_cache.json')
 
     def __init__(self):
         self.cache = {}
         self.max_retries = 3
         self.retry_delay = 1
+        # 用户手动指定的优先数据源
+        self.preferred_source = os.environ.get('STOCK_DATA_SOURCE', 'auto')
 
-    def _retry_with_backoff(self, func, *args, **kwargs):
-        """带指数退避的重试机制"""
+    def _get_request_lock(self, key):
+        """获取请求锁，防止重复请求"""
+        with self._lock_mutex:
+            if key not in self._request_locks:
+                self._request_locks[key] = Lock()
+            return self._request_locks[key]
+
+    def _update_health_status(self, source, success):
+        """更新数据源健康状态"""
+        status = self._health_status[source]
+        status['last_check'] = datetime.now().isoformat()
+
+        if success:
+            status['fail_count'] = max(0, status['fail_count'] - 1)
+            status['healthy'] = True
+        else:
+            status['fail_count'] += 1
+            # 连续失败3次标记为不健康
+            if status['fail_count'] >= 3:
+                status['healthy'] = False
+
+    def check_health(self):
+        """检查各数据源健康状态"""
+        return self._health_status.copy()
+
+    def _retry_with_backoff(self, func, source_name, *args, **kwargs):
+        """带指数退避和智能重试间隔的重试机制"""
+        # 如果数据源不健康且不是强制请求，快速失败
+        if source_name in self._health_status:
+            if not self._health_status[source_name]['healthy']:
+                fail_count = self._health_status[source_name]['fail_count']
+                # 随着失败次数增加，跳过更多尝试
+                if fail_count > 5 and random.random() < 0.5:
+                    print(f"{source_name} 数据源暂时跳过（连续失败{fail_count}次）")
+                    return None
+
         for attempt in range(self.max_retries):
             try:
                 result = func(*args, **kwargs)
                 if result is not None and (not isinstance(result, pd.DataFrame) or not result.empty):
+                    self._update_health_status(source_name, True)
                     return result
             except Exception as e:
-                print(f"尝试 {attempt + 1}/{self.max_retries} 失败: {str(e)}")
+                print(f"{source_name} 尝试 {attempt + 1}/{self.max_retries} 失败: {str(e)}")
+                self._update_health_status(source_name, False)
 
             if attempt < self.max_retries - 1:
-                delay = self.retry_delay * (2 ** attempt) + random.uniform(0, 0.5)
+                # 智能退避：失败次数越多，等待越长
+                base_delay = self.retry_delay * (2 ** attempt)
+                fail_penalty = min(self._health_status[source_name]['fail_count'] * 2, 10)
+                delay = base_delay + fail_penalty + random.uniform(0, 0.5)
                 time.sleep(delay)
         return None
 
-    def get_stock_data(self, symbol, period="1y", interval="1d", market="US"):
-        """获取股票历史数据 - 带重试机制"""
-        cache_key = f"{symbol}_{period}_{interval}_{market}"
+    def _save_offline_cache(self, symbol, data):
+        """保存离线缓存数据"""
+        try:
+            cache_data = {}
+            if os.path.exists(self._offline_cache_file):
+                with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
 
-        # 检查缓存，但缩短缓存时间到1分钟
-        if cache_key in self.cache:
-            cache_time, cache_data = self.cache[cache_key]
-            if datetime.now() - cache_time < timedelta(minutes=1):
-                return cache_data
+            # 只保存最近20个股票
+            if len(cache_data) > 20:
+                # 删除最早的条目
+                oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k].get('timestamp', 0))
+                del cache_data[oldest_key]
 
-        def _fetch_data():
-            if market == "CN":
-                # A股优先使用新浪财经
-                return self._get_cn_stock_data_sina(symbol, period)
-            elif market == "HK":
-                ticker = yf.Ticker(f"{symbol}.HK")
-                return ticker.history(period=period, interval=interval)
-            else:
-                ticker = yf.Ticker(symbol)
-                return ticker.history(period=period, interval=interval)
+            cache_data[symbol] = {
+                'timestamp': datetime.now().isoformat(),
+                'data': data.to_dict() if isinstance(data, pd.DataFrame) else data
+            }
 
-        data = self._retry_with_backoff(_fetch_data)
+            with open(self._offline_cache_file, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f, default=str)
+        except Exception as e:
+            print(f"保存离线缓存失败: {str(e)}")
 
-        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
-            print(f"未找到股票 {symbol} 的数据")
+    def _load_offline_cache(self, symbol, max_age_hours=24):
+        """加载离线缓存数据"""
+        try:
+            if not os.path.exists(self._offline_cache_file):
+                return None
+
+            with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            if symbol not in cache_data:
+                return None
+
+            cached = cache_data[symbol]
+            cached_time = datetime.fromisoformat(cached['timestamp'])
+            age = datetime.now() - cached_time
+
+            if age > timedelta(hours=max_age_hours):
+                return None
+
+            # 恢复DataFrame
+            df = pd.DataFrame.from_dict(cached['data'])
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+
+            df.attrs['data_source'] = f"离线缓存 ({age.days}天{age.seconds//3600}小时前)"
+            return df
+        except Exception as e:
+            print(f"加载离线缓存失败: {str(e)}")
             return None
 
-        if isinstance(data, pd.DataFrame):
-            data.columns = [col.lower().replace(' ', '_') for col in data.columns]
+    def get_stock_data(self, symbol, period="1y", interval="1d", market="US", use_cache=True):
+        """获取股票历史数据 - 带重试机制、数据源追踪、离线模式"""
+        cache_key = f"{symbol}_{period}_{interval}_{market}"
 
-        self.cache[cache_key] = (datetime.now(), data)
-        return data
+        # 使用锁防止重复请求
+        lock = self._get_request_lock(cache_key)
+        if not lock.acquire(blocking=False):
+            # 如果锁被占用，等待并返回缓存
+            lock.acquire()
+            lock.release()
+            if cache_key in self.cache:
+                _, result, source = self.cache[cache_key]
+                if isinstance(result, pd.DataFrame):
+                    result.attrs['data_source'] = source
+                return result
+        lock.release()
 
-    def _get_cn_stock_data_akshare(self, symbol, period):
+        with lock:
+            # 检查内存缓存
+            if use_cache and cache_key in self.cache:
+                cache_time, cache_data, cache_source = self.cache[cache_key]
+                if datetime.now() - cache_time < timedelta(minutes=1):
+                    if isinstance(cache_data, pd.DataFrame):
+                        cache_data.attrs['data_source'] = cache_source
+                    return cache_data
+
+            result = None
+            data_source = None
+            offline_mode = False
+
+            if market == "CN":
+                # A股数据获取，按优先级尝试不同数据源
+                sources_to_try = []
+
+                # 根据用户偏好或健康状态决定顺序
+                if self.preferred_source == 'akshare' or self.preferred_source == 'auto':
+                    if self._health_status['akshare']['healthy']:
+                        sources_to_try.append(('akshare', self._get_cn_stock_data_akshare))
+                if self.preferred_source == 'sina' or self.preferred_source == 'auto':
+                    if self._health_status['sina']['healthy']:
+                        sources_to_try.append(('sina', self._get_cn_stock_data_sina_fallback))
+                if self.preferred_source == 'yfinance' or self.preferred_source == 'auto':
+                    if self._health_status['yfinance']['healthy']:
+                        sources_to_try.append(('yfinance', self._get_cn_stock_data_yfinance))
+
+                # 尝试所有数据源
+                for source_name, source_func in sources_to_try:
+                    try:
+                        result = self._retry_with_backoff(source_func, source_name, symbol, period)
+                        if result is not None and len(result) >= 10:
+                            data_source = {
+                                'akshare': 'AKShare(同花顺/东方财富)',
+                                'sina': '新浪财经',
+                                'yfinance': 'Yahoo Finance'
+                            }.get(source_name, source_name)
+                            break
+                    except Exception as e:
+                        print(f"{source_name} 获取失败: {str(e)}")
+
+                # 所有在线源失败，尝试离线缓存
+                if result is None:
+                    result = self._load_offline_cache(symbol)
+                    if result is not None:
+                        data_source = result.attrs.get('data_source', '离线缓存')
+                        offline_mode = True
+
+            elif market == "HK":
+                result = self._retry_with_backoff(
+                    lambda s, p: yf.Ticker(f"{s}.HK").history(period=p, interval=interval),
+                    'yfinance', symbol, period
+                )
+                if result is not None and not result.empty:
+                    data_source = "Yahoo Finance"
+            else:
+                result = self._retry_with_backoff(
+                    lambda s, p: yf.Ticker(s).history(period=p, interval=interval),
+                    'yfinance', symbol, period
+                )
+                if result is not None and not result.empty:
+                    data_source = "Yahoo Finance"
+
+            if result is None or (isinstance(result, pd.DataFrame) and result.empty):
+                print(f"未找到股票 {symbol} 的数据")
+                return None
+
+            if isinstance(result, pd.DataFrame):
+                result.columns = [col.lower().replace(' ', '_') for col in result.columns]
+                # 添加数据源信息到DataFrame属性
+                result.attrs['data_source'] = data_source or "未知"
+                result.attrs['offline_mode'] = offline_mode
+
+                # 保存到离线缓存
+                if not offline_mode:
+                    self._save_offline_cache(symbol, result)
+
+            self.cache[cache_key] = (datetime.now(), result, data_source)
+            return result
+
+    def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
         """使用 AKShare 获取A股历史数据（同花顺/东方财富数据源）"""
         if not AKSHARE_AVAILABLE:
             return None
@@ -126,17 +304,8 @@ class StockDataFetcher:
 
         return None
 
-    def _get_cn_stock_data_sina(self, symbol, period):
-        """获取A股数据 - 优先使用 AKShare（同花顺/东方财富数据），备选新浪财经和yfinance"""
-        # 第一优先：AKShare（同花顺/东方财富数据源）
-        try:
-            data = self._get_cn_stock_data_akshare(symbol, period)
-            if data is not None and len(data) >= 10:
-                return data
-        except Exception as e:
-            print(f"AKShare 失败 {symbol}: {str(e)}")
-
-        # 第二优先：新浪财经
+    def _get_cn_stock_data_sina_fallback(self, symbol, period, **kwargs):
+        """获取A股数据 - 新浪财经（备选数据源，带超时）"""
         try:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
@@ -145,7 +314,8 @@ class StockDataFetcher:
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            response = requests.get(url, headers=headers, timeout=10)
+            # 设置8秒超时
+            response = requests.get(url, headers=headers, timeout=8)
 
             if response.status_code == 200:
                 import json
@@ -164,20 +334,16 @@ class StockDataFetcher:
                     df = df.dropna(subset=['open', 'high', 'low', 'close'])
                     if len(df) >= 10:
                         return df
+        except requests.exceptions.Timeout:
+            print(f"新浪财经请求超时 {symbol}")
+        except requests.exceptions.RequestException as e:
+            print(f"新浪财经网络错误 {symbol}: {str(e)}")
         except Exception as e:
             print(f"新浪财经失败 {symbol}: {str(e)}")
 
-        # 备选：yfinance
-        try:
-            data = self._get_cn_stock_data_yfinance(symbol, period)
-            if data is not None and len(data) >= 10:
-                return data
-        except Exception as e:
-            print(f"yfinance也失败 {symbol}: {str(e)}")
-
         return None
 
-    def _get_cn_stock_data_yfinance(self, symbol, period):
+    def _get_cn_stock_data_yfinance(self, symbol, period, **kwargs):
         """使用yfinance获取A股数据"""
         import time
         max_retries = 2
@@ -443,6 +609,61 @@ class StockDataFetcher:
         except Exception as e:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
         return None
+
+    @staticmethod
+    def fetch_multiple_stocks(symbols, period="3mo", market="CN", max_workers=5):
+        """
+        并发获取多只股票数据
+        用于股票对比和智能推荐页面
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        results = {}
+        fetcher = StockDataFetcher()
+
+        def fetch_single(symbol_info):
+            """获取单只股票数据"""
+            try:
+                if isinstance(symbol_info, dict):
+                    symbol = symbol_info['code']
+                    name = symbol_info.get('name', symbol)
+                else:
+                    symbol = symbol_info
+                    name = symbol
+
+                data = fetcher.get_stock_data(symbol, period=period, market=market)
+                if data is not None and len(data) >= 10:
+                    return symbol, {'data': data, 'name': name, 'success': True}
+                return symbol, {'data': None, 'name': name, 'success': False}
+            except Exception as e:
+                return symbol_info if isinstance(symbol_info, str) else symbol_info.get('code'), \
+                       {'data': None, 'name': symbol_info if isinstance(symbol_info, str) else symbol_info.get('name', ''), 'success': False, 'error': str(e)}
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single, symbol): symbol for symbol in symbols}
+
+            for future in as_completed(futures):
+                symbol, result = future.result()
+                results[symbol] = result
+
+        return results
+
+    def set_preferred_source(self, source):
+        """
+        设置优先数据源
+        source: 'auto', 'akshare', 'sina', 'yfinance'
+        """
+        valid_sources = ['auto', 'akshare', 'sina', 'yfinance']
+        if source in valid_sources:
+            self.preferred_source = source
+            # 同时设置环境变量，让其他实例也能感知
+            os.environ['STOCK_DATA_SOURCE'] = source
+            return True
+        return False
+
+    def get_preferred_source(self):
+        """获取当前优先数据源设置"""
+        return self.preferred_source
 
 
 # 股票名称映射表

@@ -381,25 +381,10 @@ def analyze_stock_page():
 
         # 调试信息
         if data is None:
-            st.error(f"❌ 数据获取失败: {symbol} 返回 None")
-            # 尝试直接获取显示详细错误
+            st.error(f"❌ 数据获取失败: {symbol}")
+            st.error("**可能原因：**\n1. 股票代码不存在或已退市\n2. 所有数据源暂时不可用\n3. 网络连接问题")
             with st.expander("查看调试信息"):
-                st.write("尝试直接获取数据...")
-                try:
-                    from data_fetcher import StockDataFetcher
-                    fetcher_debug = StockDataFetcher()
-                    # 尝试yfinance
-                    import yfinance as yf
-                    for suffix in ['.SS', '.SZ']:
-                        st.write(f"尝试 yfinance: {symbol}{suffix}")
-                        ticker = yf.Ticker(f"{symbol}{suffix}")
-                        hist = ticker.history(period=period)
-                        st.write(f"结果: {len(hist)} 条数据")
-                        if not hist.empty:
-                            st.write(hist.head())
-                            break
-                except Exception as e:
-                    st.error(f"调试获取失败: {str(e)}")
+                st.info("已尝试以下数据源：\n1. AKShare (同花顺/东方财富)\n2. 新浪财经\n3. Yahoo Finance")
             progress_bar.empty()
             status_text.empty()
             return
@@ -411,6 +396,19 @@ def analyze_stock_page():
             progress_bar.empty()
             status_text.empty()
             return
+
+        # 获取数据源信息
+        data_source = data.attrs.get('data_source', '未知')
+        offline_mode = data.attrs.get('offline_mode', False)
+        is_fallback = "AKShare" not in data_source and not offline_mode
+
+        # 显示数据源信息
+        if offline_mode:
+            st.error(f"📴 离线模式 | 数据源: {data_source} | 网络异常，显示缓存数据")
+        elif is_fallback:
+            st.warning(f"⚠️ 当前数据源: {data_source} | 同花顺数据源暂不可用，正在使用备选数据源")
+        else:
+            st.success(f"✅ 数据源: {data_source}")
 
         # 检查数据是否足够（至少需要30天数据）
         if len(data) < 30:
@@ -759,38 +757,56 @@ def recommended_stocks_page():
 
     if st.button("生成推荐", type="primary"):
         with st.spinner(f"正在分析{sector}板块，请稍候..."):
-            # 调试模式 - 显示详细日志
-            debug_logs = []
-
             if sector == "全部":
-                # 直接调用而不使用缓存，以便获取调试信息
-                recommender = StockRecommender()
-                recommended = recommender.get_short_term_recommendations(num_stocks=num_stocks)
+                # 使用并发获取加速
+                from data_fetcher import StockDataFetcher
 
-                # 显示调试统计
-                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
-                if not recommended:
-                    st.error("未找到任何推荐股票，正在显示调试信息...")
-                    # 尝试获取一只股票的详细调试信息
-                    test_stock = POPULAR_CN_STOCKS[0]
-                    st.info(f"测试获取 {test_stock['code']} 的数据...")
+                stocks_to_analyze = POPULAR_CN_STOCKS[:25]
+                stock_codes = [s['code'] for s in stocks_to_analyze]
+
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                status_text.text("正在并发获取股票数据...")
+
+                # 并发获取所有股票数据
+                results = StockDataFetcher.fetch_multiple_stocks(
+                    stocks_to_analyze, period='1mo', market='CN', max_workers=5
+                )
+
+                progress_bar.progress(50)
+                status_text.text("正在分析技术指标...")
+
+                recommended = []
+                for stock in stocks_to_analyze:
                     try:
-                        from data_fetcher import StockDataFetcher
-                        fetcher = StockDataFetcher()
-                        data = fetcher.get_stock_data(test_stock['code'], period='1mo', market='CN')
-                        if data is None:
-                            st.error(f"❌ {test_stock['code']} 数据获取失败 (None)")
-                        elif len(data) < 10:
-                            st.error(f"❌ {test_stock['code']} 数据不足: {len(data)} 天")
-                        else:
-                            st.success(f"✅ {test_stock['code']} 数据获取成功: {len(data)} 天")
-                            # 尝试计算指标
+                        result = results.get(stock['code'])
+                        if result and result['success']:
                             from technical_indicators import TechnicalIndicators
-                            df = TechnicalIndicators.calculate_all(data)
-                            signals = TechnicalIndicators.get_signals(df)
-                            st.write("信号:", signals)
+                            from stock_recommendation import StockRecommender
+
+                            df = TechnicalIndicators.calculate_all(result['data'])
+                            analysis = StockRecommender()._analyze_short_term(stock['code'], market='CN')
+                            if analysis:
+                                analysis['name'] = stock['name']
+                                recommended.append(analysis)
                     except Exception as e:
-                        st.error(f"❌ 测试失败: {str(e)}")
+                        continue
+
+                progress_bar.progress(100)
+                progress_bar.empty()
+                status_text.empty()
+
+                # 按评分排序
+                recommended.sort(key=lambda x: x['score'], reverse=True)
+                recommended = recommended[:num_stocks]
+
+                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票（分析了 {len(stocks_to_analyze)} 只）")
+                if not recommended:
+                    st.error("未找到符合条件的推荐股票")
+                    with st.expander("可能原因"):
+                        success_count = sum(1 for r in results.values() if r['success'])
+                        st.write(f"- 成功获取数据: {success_count}/{len(stocks_to_analyze)} 只")
+                        st.write("- 可能网络不稳定或股票代码有误")
 
                 display_recommendation_list(recommended, "短线推荐")
             else:
@@ -823,11 +839,78 @@ def display_watchlist_sidebar():
         st.markdown("---")
 
 
+def display_data_source_selector():
+    """显示数据源选择器"""
+    with st.expander("⚙️ 数据源设置"):
+        from data_fetcher import StockDataFetcher
+
+        fetcher = StockDataFetcher()
+        current_source = fetcher.get_preferred_source()
+
+        source_options = {
+            'auto': '自动选择 (推荐)',
+            'akshare': 'AKShare (同花顺/东方财富)',
+            'sina': '新浪财经',
+            'yfinance': 'Yahoo Finance'
+        }
+
+        selected = st.selectbox(
+            "优先数据源",
+            options=list(source_options.keys()),
+            index=list(source_options.keys()).index(current_source),
+            format_func=lambda x: source_options[x]
+        )
+
+        if selected != current_source:
+            fetcher.set_preferred_source(selected)
+            st.success(f"已切换到: {source_options[selected]}")
+            st.info("请重新获取数据以生效")
+
+def display_health_status():
+    """显示数据源健康状态"""
+    from data_fetcher import StockDataFetcher
+
+    fetcher = StockDataFetcher()
+    health = fetcher.check_health()
+
+    with st.expander("💓 数据源健康状态"):
+        for source, status in health.items():
+            source_names = {
+                'akshare': 'AKShare (同花顺)',
+                'sina': '新浪财经',
+                'yfinance': 'Yahoo Finance'
+            }
+
+            if status['healthy']:
+                icon = "✅"
+                color = "green"
+            else:
+                icon = "❌"
+                color = "red"
+
+            fail_info = f" (失败{status['fail_count']}次)" if status['fail_count'] > 0 else ""
+            st.markdown(f"{icon} **{source_names.get(source, source)}**{fail_info}")
+
+def display_data_source_status():
+    """显示数据源状态说明"""
+    with st.expander("📡 关于数据源"):
+        st.markdown("""
+        **数据源优先级：**
+        1. **AKShare (同花顺/东方财富)** - 主要数据源，数据最准确
+        2. **新浪财经** - 备选数据源
+        3. **Yahoo Finance** - 最终备选
+
+        **数据延迟：**
+        - A股：延迟约15分钟（交易所规定）
+        - 美股/港股：实时或延迟15分钟
+        """)
+
+
 def compare_stocks_page():
     """股票对比页面"""
     st.markdown('<h1 class="main-header">📊 股票对比分析</h1>', unsafe_allow_html=True)
 
-    st.info("同时对比多只股票的关键指标，最多支持5只股票")
+    st.info("同时对比多只股票的关键指标，最多支持5只股票（并发获取，速度更快）")
 
     # 输入股票列表
     col1, col2 = st.columns(2)
@@ -849,14 +932,30 @@ def compare_stocks_page():
             st.warning("请至少输入2只股票进行对比")
             return
 
-        with st.spinner("正在获取对比数据..."):
-            comparison_data = []
+        with st.spinner(f"正在并发获取 {len(symbols)} 只股票数据..."):
+            # 使用并发获取加速
+            from data_fetcher import StockDataFetcher
 
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+
+            # 准备股票列表
+            stocks_to_fetch = [{'code': s, 'name': s} for s in symbols]
+
+            status_text.text("并发获取股票数据...")
+            results = StockDataFetcher.fetch_multiple_stocks(
+                stocks_to_fetch, period='3mo', market=market, max_workers=5
+            )
+
+            progress_bar.progress(60)
+            status_text.text("计算技术指标...")
+
+            comparison_data = []
             for symbol in symbols:
-                try:
-                    data = get_cached_stock_data(symbol, "3mo", market)
-                    if data is not None and not data.empty:
-                        data = TechnicalIndicators.calculate_all(data)
+                result = results.get(symbol)
+                if result and result['success']:
+                    try:
+                        data = TechnicalIndicators.calculate_all(result['data'])
                         latest = data.iloc[-1]
 
                         # 计算涨跌幅
@@ -873,8 +972,14 @@ def compare_stocks_page():
                             'KDJ-K': f"{latest['kdj_k']:.1f}",
                             '布林位置': '上轨附近' if latest['close'] > latest['boll_upper'] * 0.98 else '中轨附近' if latest['close'] > latest['boll_mid'] * 0.98 else '下轨附近'
                         })
-                except Exception as e:
-                    st.error(f"获取 {symbol} 数据失败: {str(e)}")
+                    except Exception as e:
+                        st.error(f"处理 {symbol} 数据失败: {str(e)}")
+                else:
+                    st.warning(f"获取 {symbol} 数据失败")
+
+            progress_bar.progress(100)
+            progress_bar.empty()
+            status_text.empty()
 
             if comparison_data:
                 # 显示对比表格
@@ -887,9 +992,10 @@ def compare_stocks_page():
                 fig = go.Figure()
 
                 for symbol in symbols:
-                    try:
-                        data = get_cached_stock_data(symbol, "3mo", market)
-                        if data is not None:
+                    result = results.get(symbol)
+                    if result and result['success']:
+                        try:
+                            data = result['data']
                             # 标准化价格（以第一天为基准100）
                             normalized_price = (data['close'] / data['close'].iloc[0]) * 100
                             fig.add_trace(go.Scatter(
@@ -898,8 +1004,8 @@ def compare_stocks_page():
                                 name=f"{symbol} ({fetcher.get_stock_name(symbol, market)})",
                                 mode='lines'
                             ))
-                    except:
-                        continue
+                        except:
+                            continue
 
                 fig.update_layout(
                     title="标准化价格走势对比（基准=100）",
@@ -944,6 +1050,13 @@ def main():
         - 美股 (美国市场)
         - 港股 (香港市场)
         """)
+
+        st.markdown("---")
+
+        # 数据源设置和健康状态
+        display_data_source_selector()
+        display_health_status()
+        display_data_source_status()
 
         st.markdown("---")
         st.caption("⚠️ 风险提示：本系统仅供参考，不构成投资建议")
