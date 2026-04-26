@@ -150,19 +150,21 @@ class TechnicalIndicators:
         k_values = []
         d_values = []
 
+        # 同花顺初始值计算：前n-1天的K、D使用50
+        # 第n天开始，K和D使用RSV的3日EMA
         for i in range(len(df)):
             if i < n - 1:
-                # 前n-1天无有效值，使用50作为初始值
+                # 前n-1天无有效值
                 k_values.append(50)
                 d_values.append(50)
             elif i == n - 1:
-                # 第n天，K和D都等于当日RSV（同花顺做法）
+                # 第n天，K和D使用RSV的EMA（同花顺标准做法）
+                # 从第n天开始，K = RSV, D = RSV
                 k_values.append(rsv.iloc[i])
                 d_values.append(rsv.iloc[i])
             else:
-                # 递推公式：K = (m1-1)/m1 * 前一日K + 1/m1 * RSV
+                # 递推公式
                 k = (1 - alpha_k) * k_values[-1] + alpha_k * rsv.iloc[i]
-                # D = (m2-1)/m2 * 前一日D + 1/m2 * K
                 d = (1 - alpha_d) * d_values[-1] + alpha_d * k
                 k_values.append(k)
                 d_values.append(d)
