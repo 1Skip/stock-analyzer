@@ -244,16 +244,16 @@ class StockDataFetcher:
             offline_mode = False
 
             if market == "CN":
-                # A股数据获取，按优先级尝试不同数据源（新浪优先，直连稳定）
+                # A股数据获取，按优先级尝试不同数据源（AKShare 优先，数据最全）
                 sources_to_try = []
 
                 # 根据用户偏好或健康状态决定顺序
-                if self.preferred_source == 'sina' or self.preferred_source == 'auto':
-                    if self._health_status['sina']['healthy']:
-                        sources_to_try.append(('sina', self._get_cn_stock_data_sina_fallback))
                 if self.preferred_source == 'akshare' or self.preferred_source == 'auto':
                     if self._health_status['akshare']['healthy']:
                         sources_to_try.append(('akshare', self._get_cn_stock_data_akshare))
+                if self.preferred_source == 'sina' or self.preferred_source == 'auto':
+                    if self._health_status['sina']['healthy']:
+                        sources_to_try.append(('sina', self._get_cn_stock_data_sina_fallback))
                 if self.preferred_source == 'yfinance' or self.preferred_source == 'auto':
                     if self._health_status['yfinance']['healthy']:
                         sources_to_try.append(('yfinance', self._get_cn_stock_data_yfinance))
@@ -264,7 +264,7 @@ class StockDataFetcher:
                         result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
                             data_source = {
-                                'akshare': 'AKShare(同花顺/东方财富)',
+                                'akshare': 'AKShare（腾讯财经）',
                                 'sina': '新浪财经',
                                 'yfinance': 'Yahoo Finance'
                             }.get(source_name, source_name)
@@ -312,7 +312,7 @@ class StockDataFetcher:
             return result
 
     def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
-        """使用 AKShare 获取A股历史数据（同花顺/东方财富数据源）"""
+        """使用 AKShare 获取A股历史数据（腾讯财经数据源，直连稳定）"""
         if not AKSHARE_AVAILABLE:
             return None
 
@@ -321,33 +321,28 @@ class StockDataFetcher:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
 
-            # 使用 AKShare 获取历史数据
-            # stock_zh_a_hist 接口：symbol, period, start_date, end_date
+            # 判断交易所，构造 AKShare 所需前缀
+            if symbol.startswith(('600', '601', '603', '605', '688')):
+                ak_symbol = f"sh{symbol}"
+            else:
+                ak_symbol = f"sz{symbol}"
+
             end_date = datetime.now().strftime('%Y%m%d')
             start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
 
-            df = ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
+            # 使用 stock_zh_a_daily（直连稳定，不走东方财富 push2his 接口）
+            df = ak.stock_zh_a_daily(
+                symbol=ak_symbol,
                 start_date=start_date,
                 end_date=end_date,
-                adjust="qfq"  # 前复权
+                adjust="qfq"
             )
 
             if df is not None and not df.empty and len(df) >= 10:
-                # 标准化列名
-                df = df.rename(columns={
-                    '日期': 'date',
-                    '开盘': 'open',
-                    '收盘': 'close',
-                    '最高': 'high',
-                    '最低': 'low',
-                    '成交量': 'volume'
-                })
+                # stock_zh_a_daily 列名已是英文：date, open, high, low, close, volume
                 df['date'] = pd.to_datetime(df['date'])
                 df.set_index('date', inplace=True)
 
-                # 确保数据类型正确
                 for col in ['open', 'high', 'low', 'close', 'volume']:
                     if col in df.columns:
                         df[col] = pd.to_numeric(df[col], errors='coerce')

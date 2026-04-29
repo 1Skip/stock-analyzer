@@ -53,48 +53,117 @@ def get_cached_realtime_quote(symbol, market):
 # 页面配置
 st.set_page_config(
     page_title="股票分析系统",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# 自定义CSS样式（暗色/亮色主题兼容：使用半透明色和继承色）
+# 自定义CSS样式 — 苹果极简风（暗色/亮色主题兼容：使用半透明色和继承色）
 st.markdown("""
 <style>
+    /* ===== 全局字体 ===== */
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    /* ===== 极简标题 ===== */
     .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
+        font-size: 2rem;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        color: inherit;
+        margin-bottom: 1.5rem;
     }
-    .buy-signal {
-        color: #cc0000;
-        font-weight: bold;
-    }
-    .sell-signal {
-        color: #008844;
-        font-weight: bold;
-    }
-    .neutral-signal {
-        opacity: 0.7;
-    }
+
+    /* ===== 信号：仅颜色区分，不加粗 ===== */
+    .buy-signal { color: #cc0000; }
+    .sell-signal { color: #008844; }
+    .neutral-signal { opacity: 0.6; }
+
+    /* ===== 极简卡片 ===== */
     .stock-card {
-        background-color: rgba(128, 128, 128, 0.08);
-        border: 1px solid rgba(128, 128, 128, 0.2);
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 0.5rem 0;
+        background: rgba(128, 128, 128, 0.04);
+        border-radius: 14px;
+        padding: 1.25rem;
+        margin: 0.6rem 0;
     }
+
+    /* ===== 自选股条目 ===== */
     .watchlist-item {
-        background-color: rgba(128, 128, 128, 0.06);
-        border-radius: 5px;
+        background: rgba(128, 128, 128, 0.04);
+        border-radius: 8px;
         padding: 0.5rem;
         margin: 0.25rem 0;
-        border-left: 3px solid #1f77b4;
     }
+
+    /* ===== 按钮：苹果风格圆角 ===== */
     .stButton button {
-        border-radius: 5px;
+        border-radius: 12px !important;
+        font-weight: 500;
+        border: none;
+        transition: all 0.15s ease;
+    }
+
+    /* ===== 主按钮：深灰代替蓝色 ===== */
+    .stButton button[kind="primary"] {
+        background-color: #333;
+        color: #fff;
+    }
+    .stButton button[kind="secondary"] {
+        background-color: rgba(128, 128, 128, 0.1);
+        color: inherit;
+    }
+
+    /* ===== 侧边栏 ===== */
+    [data-testid="stSidebar"] {
+        background-color: rgba(128, 128, 128, 0.02);
+    }
+
+    /* ===== 侧边栏 Radio 导航 ===== */
+    [data-testid="stSidebar"] .stRadio label {
+        padding: 0.4rem 0.75rem;
+        border-radius: 10px;
+    }
+
+    /* ===== Metric 指标卡片 ===== */
+    [data-testid="stMetric"] {
+        background: rgba(128, 128, 128, 0.03);
+        border-radius: 12px;
+        padding: 0.75rem;
+    }
+
+    /* ===== Tab 标签 ===== */
+    .stTabs [role="tab"] {
+        font-weight: 500;
+        border-radius: 10px;
+    }
+
+    /* ===== DataFrame 表格 ===== */
+    [data-testid="stDataFrame"] {
+        border-radius: 12px;
+        overflow: hidden;
+    }
+    [data-testid="stDataFrame"] table {
+        border-radius: 12px;
+    }
+
+    /* ===== Expander 折叠面板 ===== */
+    [data-testid="stExpander"] {
+        border-radius: 12px;
+        border: none !important;
+    }
+
+    /* ===== SelectBox / TextInput 圆角 ===== */
+    [data-testid="stTextInput"] input,
+    [data-testid="stSelectbox"] div[role="combobox"],
+    .stSelectbox [data-baseweb="select"] {
+        border-radius: 10px !important;
+    }
+
+    /* ===== Divider 分隔线更淡 ===== */
+    hr {
+        opacity: 0.3;
+        margin: 1.5rem 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -298,7 +367,7 @@ def display_signals(signals):
     """显示交易信号"""
     # 处理错误情况
     if 'error' in signals:
-        st.warning(f"⚠️ {signals['error']}")
+        st.warning(f"{signals['error']}")
         return
 
     col1, col2, col3, col4 = st.columns(4)
@@ -307,55 +376,55 @@ def display_signals(signals):
         st.subheader("MACD")
         macd_signal = signals.get('macd', '暂无数据')
         if "金叉" in macd_signal:
-            st.markdown(f"<span class='buy-signal'>📈 {macd_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='buy-signal'>{macd_signal}</span>", unsafe_allow_html=True)
         elif "死叉" in macd_signal:
-            st.markdown(f"<span class='sell-signal'>📉 {macd_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='sell-signal'>{macd_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {macd_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>{macd_signal}</span>", unsafe_allow_html=True)
 
     with col2:
         st.subheader("RSI")
         rsi_signal = signals.get('rsi', '暂无数据')
         if "超卖" in rsi_signal:
-            st.markdown(f"<span class='buy-signal'>🔵 {rsi_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='buy-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
         elif "超买" in rsi_signal:
-            st.markdown(f"<span class='sell-signal'>🔴 {rsi_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='sell-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>⚪ {rsi_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
 
     with col3:
         st.subheader("KDJ")
         kdj_signal = signals.get('kdj', '暂无数据')
         if "金叉" in kdj_signal or "超卖" in kdj_signal:
-            st.markdown(f"<span class='buy-signal'>📈 {kdj_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='buy-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
         elif "死叉" in kdj_signal or "超买" in kdj_signal:
-            st.markdown(f"<span class='sell-signal'>📉 {kdj_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='sell-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {kdj_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
 
     with col4:
         st.subheader("布林带")
         boll_signal = signals.get('boll', '暂无数据')
         if "反弹" in boll_signal or "偏多" in boll_signal:
-            st.markdown(f"<span class='buy-signal'>📈 {boll_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='buy-signal'>{boll_signal}</span>", unsafe_allow_html=True)
         elif "回调" in boll_signal or "偏空" in boll_signal:
-            st.markdown(f"<span class='sell-signal'>📉 {boll_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='sell-signal'>{boll_signal}</span>", unsafe_allow_html=True)
         else:
-            st.markdown(f"<span class='neutral-signal'>➖ {boll_signal}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='neutral-signal'>{boll_signal}</span>", unsafe_allow_html=True)
 
     # 综合建议
     st.divider()
     recommendation = signals.get('recommendation', '观望')
     if "偏多" in recommendation:
-        st.success(f"### 💡 综合建议: {recommendation}")
+        st.success(f"### 综合建议: {recommendation}")
     elif "偏空" in recommendation:
-        st.error(f"### 💡 综合建议: {recommendation}")
+        st.error(f"### 综合建议: {recommendation}")
     else:
-        st.info(f"### 💡 综合建议: {recommendation}")
+        st.info(f"### 综合建议: {recommendation}")
 
 def analyze_stock_page():
     """个股分析页面"""
-    st.markdown('<h1 class="main-header">📊 股票技术分析</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">股票技术分析</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存查询状态 - 初始化
     if 'analyze_symbol' not in st.session_state:
@@ -426,13 +495,13 @@ def analyze_stock_page():
 
     col_analyze, col_clear = st.columns([4, 1])
     with col_clear:
-        if st.button("🔄 刷新数据", type="secondary"):
+        if st.button("刷新数据", type="secondary"):
             get_cached_stock_data.clear()
             get_cached_realtime_quote.clear()
             get_cached_stock_info.clear()
             st.success("已清除缓存，请重新分析")
     with col_analyze:
-        analyze_clicked = st.button("🔍 开始分析", type="primary", use_container_width=True)
+        analyze_clicked = st.button("开始分析", type="primary", use_container_width=True)
 
     # 股票代码格式校验
     def validate_symbol(sym, mkt):
@@ -454,29 +523,29 @@ def analyze_stock_page():
     if analyze_clicked:
         is_valid, err_msg = validate_symbol(symbol, market)
         if not is_valid:
-            st.error(f"❌ {err_msg}")
+            st.error(f"输入的股票代码格式有误，{err_msg}")
             st.stop()
 
         # 使用进度条显示加载状态
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        status_text.text("⏳ 正在获取股票信息...")
+        status_text.text("正在获取股票信息...")
         progress_bar.progress(5)
         info = get_cached_stock_info(symbol, market)
         progress_bar.progress(20)
 
-        status_text.text("⏳ 正在获取实时行情...")
+        status_text.text("正在获取实时行情...")
         quote = get_cached_realtime_quote(symbol, market)
         progress_bar.progress(40)
 
-        status_text.text("⏳ 正在获取历史K线数据...")
+        status_text.text("正在获取历史K线数据...")
         data = get_cached_stock_data(symbol, period, market)
         progress_bar.progress(60)
 
         # 调试信息
         if data is None:
-            st.error(f"❌ 数据获取失败: {symbol}")
+            st.error(f"数据获取失败: {symbol}")
             st.error("**可能原因：**\n1. 股票代码不存在或已退市\n2. 所有数据源暂时不可用\n3. 网络连接问题")
             with st.expander("查看调试信息"):
                 st.info("已尝试以下数据源：\n1. AKShare (同花顺/东方财富)\n2. 新浪财经\n3. Yahoo Finance")
@@ -484,10 +553,10 @@ def analyze_stock_page():
             status_text.empty()
             return
         else:
-            st.write(f"✅ 获取到 {len(data)} 天数据")
+            st.write(f"获取到 {len(data)} 天数据")
 
         if data is None or data.empty:
-            st.error(f"❌ 未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
+            st.error(f"未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
             progress_bar.empty()
             status_text.empty()
             return
@@ -499,17 +568,17 @@ def analyze_stock_page():
 
         # 显示数据源信息
         if offline_mode:
-            st.error(f"📴 离线模式 | 数据源: {data_source} | 网络异常，显示缓存数据")
+            st.error(f"离线模式 | 数据源: {data_source} | 网络异常，显示缓存数据")
         elif is_fallback:
-            st.warning(f"⚠️ 当前数据源: {data_source} | 同花顺数据源暂不可用，正在使用备选数据源")
+            st.warning(f"当前数据源: {data_source} | 同花顺数据源暂不可用，正在使用备选数据源")
         else:
-            st.success(f"✅ 数据源: {data_source}")
+            st.success(f"数据源: {data_source}")
 
         # 检查数据是否足够（至少需要30天数据）
         if len(data) < 30:
-            st.warning(f"⚠️ {symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
+            st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
-        status_text.text("⏳ 正在合并实时行情...")
+        status_text.text("正在合并实时行情...")
         # 如果有实时行情，合并到历史数据中
         if quote and data is not None and not data.empty:
             from datetime import datetime
@@ -524,17 +593,17 @@ def analyze_stock_page():
             data = pd.concat([data, realtime_row])
         progress_bar.progress(75)
 
-        status_text.text("⏳ 正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
+        status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
         data = TechnicalIndicators.calculate_all(data)
         progress_bar.progress(90)
 
-        status_text.text("⏳ 正在生成交易信号...")
+        status_text.text("正在生成交易信号...")
         signals = TechnicalIndicators.get_signals(data)
         progress_bar.progress(100)
 
         # 检查是否有错误
         if 'error' in signals:
-            st.warning(f"⚠️ 指标计算问题：{signals['error']}")
+            st.warning(f"指标计算问题：{signals['error']}")
 
         # 清除进度条
         progress_bar.empty()
@@ -553,13 +622,13 @@ def analyze_stock_page():
         with col_watchlist:
             # 自选股按钮
             if is_in_watchlist(symbol, market):
-                if st.button("❌ 移除自选", key="remove_watchlist"):
+                if st.button("移除自选", key="remove_watchlist"):
                     success, msg = remove_from_watchlist(symbol, market)
                     if success:
                         st.success(msg)
                         st.rerun()
             else:
-                if st.button("⭐ 加入自选", key="add_watchlist"):
+                if st.button("加入自选", key="add_watchlist"):
                     success, msg = add_to_watchlist(symbol, stock_name, market)
                     if success:
                         st.success(msg)
@@ -677,7 +746,7 @@ def get_cached_hot_stocks(market):
 
 def hot_stocks_page():
     """热门股票页面"""
-    st.markdown('<h1 class="main-header">🔥 热门股票排行</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">热门股票</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存热门股票页面状态
     if 'hot_market' not in st.session_state:
@@ -724,7 +793,7 @@ def hot_stocks_page():
                 return
 
             # 热门股票
-            st.subheader("📈 热门股票 TOP 20")
+            st.subheader("热门股票")
             df_hot = pd.DataFrame(hot)
             if not df_hot.empty:
                 df_hot = df_hot.rename(columns={
@@ -742,7 +811,7 @@ def hot_stocks_page():
                 st.info("暂无热门股票数据")
 
             # 涨幅榜
-            st.subheader("📊 涨幅榜 TOP 10")
+            st.subheader("涨幅榜")
             df_gainers = pd.DataFrame(gainers)
             if not df_gainers.empty:
                 df_gainers = df_gainers.rename(columns={
@@ -757,7 +826,7 @@ def hot_stocks_page():
                 st.info("暂无涨幅榜数据")
 
             # 跌幅榜
-            st.subheader("📉 跌幅榜 TOP 10")
+            st.subheader("跌幅榜")
             df_losers = pd.DataFrame(losers)
             if not df_losers.empty:
                 df_losers = df_losers.rename(columns={
@@ -780,21 +849,21 @@ def hot_stocks_page():
                 st.warning("暂无美股热门数据，请稍后重试")
                 return
 
-            st.subheader("📈 美股热门 TOP 20")
+            st.subheader("美股热门")
             df_hot = pd.DataFrame(hot)
             if not df_hot.empty:
                 st.dataframe(df_hot, use_container_width=True)
             else:
                 st.info("暂无热门股票数据")
 
-            st.subheader("📊 涨幅榜 TOP 10")
+            st.subheader("涨幅榜")
             df_gainers = pd.DataFrame(gainers)
             if not df_gainers.empty:
                 st.dataframe(df_gainers, use_container_width=True)
             else:
                 st.info("暂无涨幅榜数据")
 
-            st.subheader("📉 跌幅榜 TOP 10")
+            st.subheader("跌幅榜")
             df_losers = pd.DataFrame(losers)
             if not df_losers.empty:
                 st.dataframe(df_losers, use_container_width=True)
@@ -811,7 +880,7 @@ def display_recommendation_list(recommended, strategy_name):
     """显示推荐列表"""
     if not recommended:
         st.warning(f"暂无{strategy_name}推荐股票")
-        st.info("💡 可能原因：\n1. 数据获取失败（网络问题）\n2. 股票分析返回None（数据不足）\n3. 请检查日志输出")
+        st.info("可能原因：\n1. 数据获取失败（网络问题）\n2. 股票分析返回None（数据不足）\n3. 请检查日志输出")
         return
 
     st.success(f"{strategy_name}：为您推荐以下 {len(recommended)} 只股票")
@@ -861,7 +930,7 @@ def get_cached_sector_stocks(sector_name, num_stocks):
 
 def recommended_stocks_page():
     """推荐股票页面 - 短线龙头股推荐"""
-    st.markdown('<h1 class="main-header">⭐ 短线龙头股推荐</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">短线龙头股推荐</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存推荐页面状态
     if 'rec_sector' not in st.session_state:
@@ -901,7 +970,7 @@ def recommended_stocks_page():
 
     col1, col2 = st.columns([1, 4])
     with col1:
-        if st.button("🔄 清除缓存", type="secondary"):
+        if st.button("清除缓存", type="secondary"):
             get_cached_short_term_stocks.clear()
             get_cached_sector_stocks.clear()
             st.session_state.rec_data_loaded = False
@@ -973,7 +1042,7 @@ def display_watchlist_sidebar():
     watchlist = get_watchlist()
 
     if watchlist:
-        st.markdown("### ⭐ 自选股")
+        st.markdown("### 自选股")
         for item in watchlist:
             col1, col2 = st.columns([4, 1])
             with col1:
@@ -994,7 +1063,7 @@ def display_watchlist_sidebar():
 
 def display_data_source_selector():
     """显示数据源选择器"""
-    with st.expander("⚙️ 数据源设置"):
+    with st.expander("数据源设置"):
         from data_fetcher import StockDataFetcher
 
         fetcher = StockDataFetcher()
@@ -1026,7 +1095,7 @@ def display_health_status():
     fetcher = StockDataFetcher()
     health = fetcher.check_health()
 
-    with st.expander("💓 数据源健康状态"):
+    with st.expander("数据源健康状态"):
         for source, status in health.items():
             source_names = {
                 'akshare': 'AKShare (同花顺)',
@@ -1046,10 +1115,10 @@ def display_health_status():
 
 def display_data_source_status():
     """显示数据源状态说明"""
-    with st.expander("📡 关于数据源"):
+    with st.expander("关于数据源"):
         st.markdown("""
         **数据源优先级：**
-        1. **AKShare (同花顺/东方财富)** - 主要数据源，数据最准确
+        1. **AKShare（腾讯财经）** - 主要数据源，数据最全
         2. **新浪财经** - 备选数据源
         3. **Yahoo Finance** - 最终备选
 
@@ -1061,7 +1130,7 @@ def display_data_source_status():
 
 def compare_stocks_page():
     """股票对比页面"""
-    st.markdown('<h1 class="main-header">📊 股票对比分析</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">股票对比</h1>', unsafe_allow_html=True)
 
     st.info("同时对比多只股票的关键指标，最多支持5只股票（并发获取，速度更快）")
 
@@ -1078,7 +1147,7 @@ def compare_stocks_page():
     with col2:
         market = st.selectbox("市场", ["CN"], index=0, format_func=lambda x: "A股")
 
-    if st.button("🔍 开始对比", type="primary"):
+    if st.button("开始对比", type="primary"):
         symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()][:5]
 
         if len(symbols) < 2:
@@ -1141,11 +1210,11 @@ def compare_stocks_page():
             if comparison_data:
                 # 显示对比表格
                 df = pd.DataFrame(comparison_data)
-                st.subheader("📊 关键指标对比")
+                st.subheader("关键指标对比")
                 st.dataframe(df, use_container_width=True)
 
                 # 显示价格走势图对比
-                st.subheader("📈 价格走势对比")
+                st.subheader("价格走势对比")
                 fig = go.Figure()
 
                 for symbol in symbols:
@@ -1180,7 +1249,7 @@ def main():
     """主函数"""
     # 侧边栏导航
     with st.sidebar:
-        st.title("📊 股票分析系统")
+        st.title("股票分析系统")
         st.markdown("---")
 
         # 自选股列表
@@ -1189,23 +1258,14 @@ def main():
         page = st.radio(
             "功能菜单",
             options=["个股分析", "热门股票", "智能推荐", "股票对比"],
-            format_func=lambda x: {"个股分析": "📈 个股分析", "热门股票": "🔥 热门股票", "智能推荐": "⭐ 智能推荐", "股票对比": "📊 股票对比"}[x]
+            format_func=lambda x: x
         )
 
         st.markdown("---")
         st.markdown("### 关于")
         st.markdown("""
-        本系统提供：
-        - 📊 K线图 + 技术指标
-        - 📈 MACD、RSI、KDJ、BOLL
-        - 🔥 实时热门股票排行
-        - ⭐ 智能股票推荐
-        - ⭐ 自选股管理
-
-        **支持市场：**
-        - A股 (中国市场)
-        - 美股 (美国市场)
-        - 港股 (香港市场)
+        支持 A股/美股/港股 技术分析。
+        K线 · MACD · RSI · KDJ · BOLL
         """)
 
         st.markdown("---")
@@ -1216,7 +1276,7 @@ def main():
         display_data_source_status()
 
         st.markdown("---")
-        st.caption("⚠️ 风险提示：本系统仅供参考，不构成投资建议")
+        st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
     # 页面路由
     if page == "个股分析":
