@@ -19,6 +19,7 @@ from config import (
     CACHE_TTL_HOT_STOCKS, CACHE_TTL_INDICATORS,
     CACHE_TTL_RECOMMENDED, CACHE_TTL_SHORT_TERM, CACHE_TTL_SECTOR,
     RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD,
+    DEFAULT_COLOR_SCHEME, COLOR_SCHEMES,
 )
 from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
 
