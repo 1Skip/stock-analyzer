@@ -20,9 +20,9 @@
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义(苹果概念/特斯拉/电力/算力租赁)，多因子评分(0-100) |
+| `config.py` | 集中配置 | 所有参数 + 三种配色方案 + 评分权重 + 信号阈值，支持环境变量覆盖 |
 | `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存 |
-| `debug_recommendation.py` | 调试脚本 | 引用的 `get_short_term_recommendations` 等方法可能不存在 |
-| `sector_recommend.py` | 板块推荐入口 | 独立脚本，依赖 `holdings.json` 和 `sectors_config.json` |
+| `tests/` | 测试框架 | conftest.py 夹具 + test_technical_indicators.py（37 测试） |
 | `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare |
 | `.devcontainer/devcontainer.json` | Dev Container 配置 | Python 3.11，自动安装依赖并启动 Streamlit |
 | `.gitignore` | Git 忽略规则 | 已配置：缓存、虚拟环境、敏感文件、base64 文件 |
@@ -44,7 +44,7 @@
 - **BOLL**：20 日中轨，2 倍标准差
 - **MACD**：12/26/9 标准参数
 - **MA**：5/10/20/60 四条均线
-- **信号判断**：`TechnicalIndicators.get_signals()` 综合四个指标给出买入/卖出/观望
+- **信号判断**：`TechnicalIndicators.get_signals()` 综合四个指标给出偏多信号/偏空信号/观望
 
 ## 5. 数据字段规范
 
@@ -62,7 +62,79 @@
 - `chart_plotter.py` 与 `app.py` 的图表逻辑重复，改图表需两边同步
 - 港股/美股热门排行功能远弱于 A 股
 
-## 7. 常用命令
+## 7. 常见错误与解决方案
+
+以下是本项目开发过程中实际遇到的问题及已验证的解决方法。遇到类似问题先查此表，避免重复踩坑。
+
+### 7.1 环境与编码
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| `python` 命令返回 exit code 49（Windows） | Windows App Store Python Alias 拦截了 `python` 命令，指向假 Python | 使用完整路径：`/c/Users/skip8/AppData/Local/Programs/Python/Python314/python.exe`，或在设置中禁用 App Execution Alias |
+| `UnicodeDecodeError: 'gbk' codec can't decode byte 0x88` | Windows 默认编码为 GBK，`open(file)` 未指定编码 | 所有 `open()` 调用显式指定 `encoding='utf-8'` |
+| matplotlib 中文显示为方块 | 未配置中文字体 | 设置 `plt.rcParams['font.sans-serif'] = ['SimHei', ...]` 和 `plt.rcParams['axes.unicode_minus'] = False` |
+
+### 7.2 数据计算边界
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| RSI 返回 NaN（停牌/一字板） | `avg_gain == 0 and avg_loss == 0` 导致 `0/0 → NaN` | 除零保护：`rsi_val[(avg_gain == 0) & (avg_loss == 0)] = 50` |
+| KDJ 返回 NaN（涨停/跌停） | `high == low` 导致 `price_range == 0`，除零 | 用 `price_range.replace(0, np.nan)` 将零替换为 NaN，再用 `rsv.fillna(50)` 填充 |
+| `df['rsi']` 列不存在（自定义 RSI 周期时） | `calculate_rsi` 中 `df['rsi'] = df['rsi_6']` 硬编码了 `rsi_6` | 改为动态引用第一个周期：`df['rsi'] = df[f'rsi_{periods[0]}']` |
+
+### 7.3 DataFrame 序列化
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| 离线缓存加载后索引变成普通列 | `pd.DataFrame.to_dict()` 丢失 DatetimeIndex | 使用 `df.to_json(orient='split', date_format='iso')` 保存，`pd.read_json(raw, orient='split')` 加载，并向后兼容旧 dict 格式 |
+| 缓存 DataFrame 无法 `.iloc` 按日期索引 | 同上，索引丢失 | 加载后用 `pd.to_datetime()` 重建 DatetimeIndex |
+
+### 7.4 Streamlit 状态管理
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| 页面首次加载空白，需手动点按钮 | Streamlit 全量重跑，数据未自动加载 | 使用 `st.session_state.xxx_loaded` 标志位，首次进入自动触发数据加载 |
+| 侧边栏操作后页面状态丢失 | 每次交互全量重跑，局部变量全部重置 | 所有跨交互状态存入 `st.session_state`，使用 `key` + `on_change` 回调同步 |
+| 缓存装饰器 TTL 与 config 不一致 | 装饰器参数硬编码数字，config 导入后未使用 | 统一使用 `@st.cache_data(ttl=CONFIG_CONSTANT)` |
+
+### 7.5 字符串匹配与信号语言
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| 信号匹配逻辑失效（如推荐列表关键信号为空） | 修改 `technical_indicators.py` 的信号字符串后，其他文件中用 `"买入" in signal` 等旧字符串匹配不到 | 修改信号文本后，**所有文件**中 grep 旧字符串并同步更新。特别注意 `main.py`（CLI）容易遗漏 |
+| Edit 工具报 "String to replace not found" | 缩进/空格/全角半角与原文不完全一致 | 先用 Read 读取精确内容，复制粘贴整行（包括前后空格）到 old_string |
+
+### 7.6 CSS 与配色
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| 暗色主题下卡片背景变白、文本不可读 | CSS 使用硬编码 `#ffffff`、`#f0f2f6` 等亮色值 | 改用半透明色 `rgba(128, 128, 128, 0.08)` 等，自动适配亮/暗背景 |
+| 图表标记（金叉/死叉）颜色与配色方案不一致 | 标记色值硬编码 `#cc0000`/`#008844` | 从 `get_chart_colors()` 读取动态色值 |
+| Web 图表配色改了但 CLI 图表没变 | `chart_plotter.py` 硬编码独立色值 | `chart_plotter.py` 从 `config.py` 导入配色方案，通过 `color_scheme` 参数选择 |
+
+### 7.7 测试编写
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| 信号测试结果不稳定（同一 fixture 有时通过有时失败） | 测试 fixture 使用 `np.random` 生成 OHLC，随机性导致信号不确定 | 趋势类测试必须用确定性 OHLC（明确设定 open < close 或 open > close），仅非关键数据用随机值 |
+| 新增指标后测试断言失败 | 测试中硬编码列名列表，新列未加入 | 测试应验证关键列存在即可，避免穷举列名 |
+
+### 7.8 代码质量
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| `except:` 裸异常吞掉 KeyboardInterrupt | 使用裸 `except:` 而非 `except Exception:` | 始终使用 `except Exception:`，除非确实需要捕获所有异常（极其罕见） |
+| 未使用的 import 堆积 | 多次修改后遗留 | 定期检查并移除未使用的 import |
+
+### 7.9 数据获取
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| A股数据获取全部失败 | AKShare 网络超时或其他数据源不可用 | 检查三级回退链：AKShare → 新浪 → yfinance。全部失败则启用 `.stock_cache.json` 离线缓存（24h 有效） |
+| 换手率显示 None | AKShare 全市场接口返回空或字段缺失 | 在 `stock_recommendation.py` 中从 `StockDataFetcher._get_spot_snapshot()` 获取，失败则返回 None（绝不使用随机模拟数据） |
+| 全市场快照每次查询都下载 5000+ 行 | 未缓存快照结果 | 使用类级别 `_spot_cache` + 60 秒 TTL 缓存 |
+
+## 8. 常用命令
 
 ```bash
 # CLI 交互模式
@@ -90,7 +162,7 @@ pytest tests/ -v
 pip-audit
 ```
 
-## 8. 修改规则
+## 9. 修改规则
 
 - 不自动执行 `git commit` / `git push`，除非用户明确要求
 - 修改 `requirements.txt` 前确认版本兼容性
@@ -100,9 +172,9 @@ pip-audit
 - 修改技术指标计算逻辑后，必须用真实数据验证输出值范围（如 RSI 0-100、BOLL 上轨≥中轨≥下轨）
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
-- **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#10-安全注意事项)）
+- **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#11-安全注意事项)）
 
-## 9. Agent Skills 使用指南
+## 10. Agent Skills 使用指南
 
 本项目配置了 10 个项目级 Skill，按任务类型选择：
 
@@ -128,7 +200,7 @@ pip-audit
 
 **Skill 文件位置**：`.claude/skills/<skill-name>/SKILL.md`
 
-## 10. 安全注意事项
+## 11. 安全注意事项
 
 ### 敏感文件
 
