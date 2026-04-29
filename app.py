@@ -6,6 +6,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import html
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import time
@@ -153,6 +154,25 @@ def plot_candlestick_chart(data, title="K线图"):
             row=3, col=1
         )
 
+        # 金叉/死叉标记
+        macd_vals = data['macd'].values
+        signal_vals = data['macd_signal'].values
+        golden_idx = np.where((macd_vals > signal_vals) & (np.roll(macd_vals <= signal_vals, 1)))[0]
+        death_idx = np.where((macd_vals < signal_vals) & (np.roll(macd_vals >= signal_vals, 1)))[0]
+        # 排除第一个元素（roll导致的不真实交叉）
+        golden_idx = golden_idx[golden_idx > 0]
+        death_idx = death_idx[death_idx > 0]
+        if len(golden_idx) > 0:
+            fig.add_trace(go.Scatter(
+                x=data.index[golden_idx], y=data['macd'].iloc[golden_idx],
+                mode='markers', name='MACD金叉', marker=dict(symbol='triangle-up', size=12, color='#cc0000', line=dict(width=1)),
+                showlegend=True, hovertemplate='金叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
+        if len(death_idx) > 0:
+            fig.add_trace(go.Scatter(
+                x=data.index[death_idx], y=data['macd'].iloc[death_idx],
+                mode='markers', name='MACD死叉', marker=dict(symbol='triangle-down', size=12, color='#008844', line=dict(width=1)),
+                showlegend=True, hovertemplate='死叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
+
     fig.update_layout(
         title=title,
         xaxis_rangeslider_visible=False,
@@ -179,6 +199,10 @@ def plot_rsi_chart(data):
     fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买(70)")
     fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖(30)")
 
+    # 超买超卖色带
+    fig.add_hrect(y0=0, y1=30, line_width=0, fillcolor="green", opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=70, y1=100, line_width=0, fillcolor="red", opacity=0.08, name="超买区")
+
     fig.update_layout(
         title="RSI指标 (6日/12日/24日)",
         height=400,
@@ -195,8 +219,30 @@ def plot_kdj_chart(data):
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_k'], name='K', line=dict(color='blue')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_d'], name='D', line=dict(color='orange')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_j'], name='J', line=dict(color='purple')))
-    fig.add_hline(y=80, line_dash="dash", line_color="red")
-    fig.add_hline(y=20, line_dash="dash", line_color="green")
+    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="超买(80)")
+    fig.add_hline(y=20, line_dash="dash", line_color="green", annotation_text="超卖(20)")
+
+    # KDJ金叉/死叉标记
+    k_vals = data['kdj_k'].values
+    d_vals = data['kdj_d'].values
+    kdj_golden = np.where((k_vals > d_vals) & (np.roll(k_vals <= d_vals, 1)))[0]
+    kdj_death = np.where((k_vals < d_vals) & (np.roll(k_vals >= d_vals, 1)))[0]
+    kdj_golden = kdj_golden[kdj_golden > 0]
+    kdj_death = kdj_death[kdj_death > 0]
+    if len(kdj_golden) > 0:
+        fig.add_trace(go.Scatter(
+            x=data.index[kdj_golden], y=data['kdj_k'].iloc[kdj_golden],
+            mode='markers', name='KDJ金叉', marker=dict(symbol='triangle-up', size=12, color='#cc0000', line=dict(width=1)),
+            showlegend=True, hovertemplate='KDJ金叉<br>%{x}<br>K: %{y:.1f}'))
+    if len(kdj_death) > 0:
+        fig.add_trace(go.Scatter(
+            x=data.index[kdj_death], y=data['kdj_k'].iloc[kdj_death],
+            mode='markers', name='KDJ死叉', marker=dict(symbol='triangle-down', size=12, color='#008844', line=dict(width=1)),
+            showlegend=True, hovertemplate='KDJ死叉<br>%{x}<br>K: %{y:.1f}'))
+
+    # RSI风格超买超卖色带
+    fig.add_hrect(y0=0, y1=20, line_width=0, fillcolor="green", opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=80, y1=100, line_width=0, fillcolor="red", opacity=0.08, name="超买区")
 
     fig.update_layout(
         title="KDJ指标 (随机指标)",
@@ -572,6 +618,7 @@ def hot_stocks_page():
 
     def on_hot_market_change():
         st.session_state.hot_market = st.session_state.hot_market_select
+        st.session_state.hot_data_loaded = False  # 市场切换时重新加载
 
     market_index = ["CN", "US"].index(st.session_state.hot_market)
     market = st.selectbox("选择市场", options=["CN", "US"],
@@ -582,77 +629,88 @@ def hot_stocks_page():
 
     market = st.session_state.hot_market
 
-    if st.button("刷新数据", type="primary"):
+    # 自动加载数据（首次进入或市场切换后）
+    if 'hot_data_loaded' not in st.session_state:
+        st.session_state.hot_data_loaded = False
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        refresh_clicked = st.button("刷新数据", type="primary")
+
+    if refresh_clicked or not st.session_state.hot_data_loaded:
         with st.spinner("正在获取热门股票..."):
-            # 清除缓存，强制重新获取
             get_cached_hot_stocks.clear()
             data = get_cached_hot_stocks(market)
+            st.session_state.hot_data_loaded = True
+            st.session_state.hot_data = data
+    else:
+        data = st.session_state.get('hot_data')
 
-            if market == "CN":
-                hot = data.get('hot', [])
-                gainers = data.get('gainers', [])
-                losers = data.get('losers', [])
+    if data:
+        if market == "CN":
+            hot = data.get('hot', [])
+            gainers = data.get('gainers', [])
+            losers = data.get('losers', [])
 
-                # 调试信息
-                if not hot:
-                    st.warning("暂无热门股票数据，请稍后重试")
-                    return
+            if not hot:
+                st.warning("暂无热门股票数据，请稍后重试")
+                return
 
-                # 热门股票
-                st.subheader("📈 热门股票 TOP 20")
-                df_hot = pd.DataFrame(hot)
-                if not df_hot.empty:
-                    df_hot = df_hot.rename(columns={
-                        '代码': 'Symbol',
-                        '名称': 'Name',
-                        '最新价': 'Price',
-                        '涨跌幅': 'Change%',
-                        '换手率': 'Turnover%',
-                        '成交量': 'Volume',
-                        '成交额': 'Amount',
-                        '热度分数': 'Score'
-                    })
-                    st.dataframe(df_hot, use_container_width=True)
-                else:
-                    st.info("暂无热门股票数据")
-
-                # 涨幅榜
-                st.subheader("📊 涨幅榜 TOP 10")
-                df_gainers = pd.DataFrame(gainers)
-                if not df_gainers.empty:
-                    df_gainers = df_gainers.rename(columns={
-                        '代码': 'Symbol',
-                        '名称': 'Name',
-                        '最新价': 'Price',
-                        '涨跌幅': 'Change%',
-                        '换手率': 'Turnover%'
-                    })
-                    st.dataframe(df_gainers, use_container_width=True)
-                else:
-                    st.info("暂无涨幅榜数据")
-
-                # 跌幅榜
-                st.subheader("📉 跌幅榜 TOP 10")
-                df_losers = pd.DataFrame(losers)
-                if not df_losers.empty:
-                    df_losers = df_losers.rename(columns={
-                        '代码': 'Symbol',
-                        '名称': 'Name',
-                        '最新价': 'Price',
-                        '涨跌幅': 'Change%',
-                        '换手率': 'Turnover%'
-                    })
-                    st.dataframe(df_losers, use_container_width=True)
-                else:
-                    st.info("暂无跌幅榜数据")
-
+            # 热门股票
+            st.subheader("📈 热门股票 TOP 20")
+            df_hot = pd.DataFrame(hot)
+            if not df_hot.empty:
+                df_hot = df_hot.rename(columns={
+                    '代码': 'Symbol',
+                    '名称': 'Name',
+                    '最新价': 'Price',
+                    '涨跌幅': 'Change%',
+                    '换手率': 'Turnover%',
+                    '成交量': 'Volume',
+                    '成交额': 'Amount',
+                    '热度分数': 'Score'
+                })
+                st.dataframe(df_hot, use_container_width=True)
             else:
-                hot = data.get('hot', [])
-                df_hot = pd.DataFrame(hot)
-                if not df_hot.empty:
-                    st.dataframe(df_hot, use_container_width=True)
-                else:
-                    st.info("暂无美股热门数据")
+                st.info("暂无热门股票数据")
+
+            # 涨幅榜
+            st.subheader("📊 涨幅榜 TOP 10")
+            df_gainers = pd.DataFrame(gainers)
+            if not df_gainers.empty:
+                df_gainers = df_gainers.rename(columns={
+                    '代码': 'Symbol',
+                    '名称': 'Name',
+                    '最新价': 'Price',
+                    '涨跌幅': 'Change%',
+                    '换手率': 'Turnover%'
+                })
+                st.dataframe(df_gainers, use_container_width=True)
+            else:
+                st.info("暂无涨幅榜数据")
+
+            # 跌幅榜
+            st.subheader("📉 跌幅榜 TOP 10")
+            df_losers = pd.DataFrame(losers)
+            if not df_losers.empty:
+                df_losers = df_losers.rename(columns={
+                    '代码': 'Symbol',
+                    '名称': 'Name',
+                    '最新价': 'Price',
+                    '涨跌幅': 'Change%',
+                    '换手率': 'Turnover%'
+                })
+                st.dataframe(df_losers, use_container_width=True)
+            else:
+                st.info("暂无跌幅榜数据")
+
+        else:
+            hot = data.get('hot', [])
+            df_hot = pd.DataFrame(hot)
+            if not df_hot.empty:
+                st.dataframe(df_hot, use_container_width=True)
+            else:
+                st.info("暂无美股热门数据")
 
 @st.cache_data(ttl=600, show_spinner=False)
 def get_cached_recommended_stocks(num_stocks):
@@ -674,9 +732,9 @@ def display_recommendation_list(recommended, strategy_name):
         with st.container():
             st.markdown(f"""
             <div class="stock-card">
-                <h4>#{i} {stock['symbol']} {stock['name']}</h4>
+                <h4>#{i} {html.escape(str(stock['symbol']))} {html.escape(str(stock['name']))}</h4>
                 <p><strong>综合评分:</strong> {stock['score']}/100 |
-                <strong>建议:</strong> {stock['rating']} |
+                <strong>建议:</strong> {html.escape(str(stock['rating']))} |
                 <strong>当前价:</strong> {stock['latest_price']:.2f}</p>
             </div>
             """, unsafe_allow_html=True)
@@ -724,6 +782,7 @@ def recommended_stocks_page():
 
     def on_sector_change():
         st.session_state.rec_sector = st.session_state.rec_sector_select
+        st.session_state.rec_data_loaded = False  # 板块切换时重新加载
 
     def on_num_stocks_change():
         st.session_state.rec_num_stocks = st.session_state.rec_num_slider
@@ -747,15 +806,19 @@ def recommended_stocks_page():
     sector = st.session_state.rec_sector
     num_stocks = st.session_state.rec_num_stocks
 
-    # 添加清除缓存按钮
+    # 自动加载数据（首次进入时）
+    if 'rec_data_loaded' not in st.session_state:
+        st.session_state.rec_data_loaded = False
+
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("🔄 清除缓存", type="secondary"):
             get_cached_short_term_stocks.clear()
             get_cached_sector_stocks.clear()
-            st.success("缓存已清除，请重新生成推荐")
+            st.session_state.rec_data_loaded = False
+            st.success("缓存已清除，已重新加载")
 
-    if st.button("生成推荐", type="primary"):
+    if st.button("生成推荐", type="primary") or not st.session_state.rec_data_loaded:
         with st.spinner(f"正在分析{sector}板块，请稍候..."):
             if sector == "全部":
                 # 使用并发获取加速
@@ -814,6 +877,7 @@ def recommended_stocks_page():
                 recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
                 st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
                 display_recommendation_list(recommended, f"{sector} 短线龙头股")
+            st.session_state.rec_data_loaded = True
 
 def display_watchlist_sidebar():
     """在侧边栏显示自选股列表"""

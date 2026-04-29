@@ -91,15 +91,27 @@ class StockRecommender:
                 prev = hist.iloc[-2]
                 change = ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
 
+                # 尝试从全市场快照获取真实换手率
+                turnover = None
+                try:
+                    from data_fetcher import StockDataFetcher
+                    spot_df = StockDataFetcher._get_spot_snapshot()
+                    if spot_df is not None:
+                        spot_row = spot_df[spot_df['代码'] == symbol]
+                        if not spot_row.empty:
+                            turnover = float(spot_row.iloc[0].get('换手率', None))
+                except Exception:
+                    pass
+
                 return {
                     '代码': symbol,
                     '名称': stock['name'],
                     '最新价': round(latest['Close'], 2),
                     '涨跌幅': round(change, 2),
-                    '换手率': round(np.random.uniform(1, 10), 2),  # 模拟数据
+                    '换手率': round(turnover, 2) if turnover is not None else None,
                     '成交量': int(latest['Volume']),
                     '成交额': int(latest['Volume'] * latest['Close']),
-                    '热度分数': round(abs(change) + np.random.uniform(0, 5), 2)
+                    '热度分数': round(abs(change), 2)
                 }
             except:
                 return None

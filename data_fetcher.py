@@ -36,6 +36,11 @@ class StockDataFetcher:
         'yfinance': {'healthy': True, 'last_check': None, 'fail_count': 0}
     }
 
+    # 全市场快照缓存（避免每次获取单只股票名称/行情都下载5000+行）
+    _spot_cache = None
+    _spot_cache_time = None
+    _spot_cache_ttl = timedelta(seconds=60)  # 60秒内复用
+
     # 离线数据缓存文件路径
     _offline_cache_file = os.path.join(os.path.dirname(__file__), '.stock_cache.json')
 
@@ -71,12 +76,45 @@ class StockDataFetcher:
         """检查各数据源健康状态"""
         return self._health_status.copy()
 
+    @classmethod
+    def _get_spot_snapshot(cls):
+        """获取A股全市场快照（带缓存，60秒内复用，避免重复下载5000+条）"""
+        now = datetime.now()
+        if cls._spot_cache is not None and cls._spot_cache_time is not None:
+            if now - cls._spot_cache_time < cls._spot_cache_ttl:
+                return cls._spot_cache
+        if AKSHARE_AVAILABLE:
+            try:
+                cls._spot_cache = ak.stock_zh_a_spot_em()
+                cls._spot_cache_time = now
+                return cls._spot_cache
+            except Exception:
+                return None
+        return None
+
     def _retry_with_backoff(self, func, source_name, *args, **kwargs):
         """带指数退避和智能重试间隔的重试机制"""
-        # 如果数据源不健康且不是强制请求，快速失败
+        # 如果数据源不健康，检查是否应该尝试恢复
         if source_name in self._health_status:
-            if not self._health_status[source_name]['healthy']:
-                fail_count = self._health_status[source_name]['fail_count']
+            status = self._health_status[source_name]
+            if not status['healthy']:
+                # 如果距上次检查超过5分钟，尝试恢复（重置健康状态尝试一次）
+                last_check = status.get('last_check')
+                if last_check:
+                    try:
+                        last_check_time = datetime.fromisoformat(last_check)
+                        if datetime.now() - last_check_time > timedelta(minutes=5):
+                            print(f"{source_name} 离线超5分钟，尝试恢复检查...")
+                            status['healthy'] = True
+                            status['fail_count'] = 0
+                    except (ValueError, TypeError):
+                        status['healthy'] = True
+                        status['fail_count'] = 0
+                else:
+                    # 从未检查过，允许首次尝试
+                    pass
+            if not status['healthy']:
+                fail_count = status['fail_count']
                 # 随着失败次数增加，跳过更多尝试
                 if fail_count > 5 and random.random() < 0.5:
                     print(f"{source_name} 数据源暂时跳过（连续失败{fail_count}次）")
@@ -116,7 +154,7 @@ class StockDataFetcher:
 
             cache_data[symbol] = {
                 'timestamp': datetime.now().isoformat(),
-                'data': data.to_dict() if isinstance(data, pd.DataFrame) else data
+                'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data
             }
 
             with open(self._offline_cache_file, 'w', encoding='utf-8') as f:
@@ -143,11 +181,18 @@ class StockDataFetcher:
             if age > timedelta(hours=max_age_hours):
                 return None
 
-            # 恢复DataFrame
-            df = pd.DataFrame.from_dict(cached['data'])
-            if 'date' in df.columns:
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
+            # 恢复DataFrame（新格式用json/orient='split'保留index类型，旧格式兼容from_dict）
+            raw = cached['data']
+            if isinstance(raw, str):
+                df = pd.read_json(raw, orient='split')
+            else:
+                df = pd.DataFrame.from_dict(raw)
+                if 'date' in df.columns:
+                    df['date'] = pd.to_datetime(df['date'])
+                    df = df.set_index('date')
+            # 确保index为DatetimeIndex（兼容旧缓存字符串index）
+            if not isinstance(df.index, pd.DatetimeIndex):
+                df.index = pd.to_datetime(df.index)
 
             df.attrs['data_source'] = f"离线缓存 ({age.days}天{age.seconds//3600}小时前)"
             return df
@@ -297,6 +342,7 @@ class StockDataFetcher:
                 df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
                 if len(df) >= 10:
+                    df.attrs['adjust_method'] = '前复权(qfq)'
                     return df
 
         except Exception as e:
@@ -333,6 +379,7 @@ class StockDataFetcher:
                             df[col] = pd.to_numeric(df[col], errors='coerce')
                     df = df.dropna(subset=['open', 'high', 'low', 'close'])
                     if len(df) >= 10:
+                        df.attrs['adjust_method'] = '未复权（新浪接口）'
                         return df
         except requests.exceptions.Timeout:
             print(f"新浪财经请求超时 {symbol}")
@@ -381,6 +428,7 @@ class StockDataFetcher:
                 if not data.empty and len(data) >= 10:
                     # 标准化列名
                     data.columns = [col.lower().replace(' ', '_') for col in data.columns]
+                    data.attrs['adjust_method'] = 'adjusted close（yfinance）'
                     return data
 
                 if attempt < max_retries - 1:
@@ -417,15 +465,12 @@ class StockDataFetcher:
     def get_stock_name(self, symbol, market="US"):
         """获取股票名称，A股优先从 AKShare 实时获取（东方财富数据）"""
         if market == "CN":
-            # 第一优先：AKShare 实时数据
-            if AKSHARE_AVAILABLE:
-                try:
-                    df = ak.stock_zh_a_spot_em()
-                    stock_row = df[df['代码'] == symbol]
-                    if not stock_row.empty:
-                        return stock_row.iloc[0]['名称']
-                except Exception as e:
-                    print(f"AKShare 获取名称失败: {str(e)}")
+            # 第一优先：AKShare 实时数据（使用缓存的快照，避免重复下载全市场数据）
+            spot_df = self._get_spot_snapshot()
+            if spot_df is not None:
+                stock_row = spot_df[spot_df['代码'] == symbol]
+                if not stock_row.empty:
+                    return stock_row.iloc[0]['名称']
 
             # 第二优先：新浪财经
             try:
@@ -477,26 +522,23 @@ class StockDataFetcher:
         """获取实时行情 - A股优先使用 AKShare（同花顺/东方财富数据）"""
         try:
             if market == "CN":
-                # 第一优先：AKShare 实时行情（东方财富数据源）
-                if AKSHARE_AVAILABLE:
-                    try:
-                        df = ak.stock_zh_a_spot_em()
-                        stock_row = df[df['代码'] == symbol]
-                        if not stock_row.empty:
-                            row = stock_row.iloc[0]
-                            return {
-                                'symbol': symbol,
-                                'name': row['名称'],
-                                'price': float(row['最新价']),
-                                'open': float(row['今开']),
-                                'high': float(row['最高']),
-                                'low': float(row['最低']),
-                                'volume': int(float(row['成交量']) / 100),  # 转换为手
-                                'prev_close': float(row['昨收']),
-                                'change': float(row['涨跌幅'])
-                            }
-                    except Exception as e:
-                        print(f"AKShare 实时行情失败: {str(e)}")
+                # 第一优先：AKShare 实时行情（使用缓存的快照，避免重复下载全市场数据）
+                spot_df = self._get_spot_snapshot()
+                if spot_df is not None:
+                    stock_row = spot_df[spot_df['代码'] == symbol]
+                    if not stock_row.empty:
+                        row = stock_row.iloc[0]
+                        return {
+                            'symbol': symbol,
+                            'name': row['名称'],
+                            'price': float(row['最新价']),
+                            'open': float(row['今开']),
+                            'high': float(row['最高']),
+                            'low': float(row['最低']),
+                            'volume': int(float(row['成交量']) / 100),  # 转换为手
+                            'prev_close': float(row['昨收']),
+                            'change': float(row['涨跌幅'])
+                        }
 
                 # 第二优先：新浪财经实时行情
                 url = f"https://hq.sinajs.cn/list=sz{symbol}"

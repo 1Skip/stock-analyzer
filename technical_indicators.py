@@ -78,7 +78,10 @@ class TechnicalIndicators:
 
             # 计算RS和RSI
             rs = avg_gain / avg_loss
-            df[f'rsi_{period}'] = 100 - (100 / (1 + rs))
+            rsi_val = 100 - (100 / (1 + rs))
+            # 除零保护：avg_gain=0 且 avg_loss=0 时（停牌/一字板）RSI=50
+            rsi_val[(avg_gain == 0) & (avg_loss == 0)] = 50
+            df[f'rsi_{period}'] = rsi_val
 
         # 保留rsi字段用于兼容（使用RSI6作为默认RSI）
         df['rsi'] = df['rsi_6']
@@ -139,8 +142,10 @@ class TechnicalIndicators:
         low_list = df['low'].rolling(window=n, min_periods=n).min()
         high_list = df['high'].rolling(window=n, min_periods=n).max()
 
-        # 计算RSV
-        rsv = (df['close'] - low_list) / (high_list - low_list) * 100
+        # 计算RSV（处理一字板除零：最高=最低时RSV=50）
+        price_range = high_list - low_list
+        rsv = (df['close'] - low_list) / price_range.replace(0, np.nan) * 100
+        rsv = rsv.fillna(50)
 
         # 计算平滑系数
         alpha_k = 1 / m1  # K的平滑系数
