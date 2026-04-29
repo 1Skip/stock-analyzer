@@ -761,7 +761,8 @@ def get_cached_hot_stocks(market):
         return {
             'hot': recommender.get_hot_stocks_cn(limit=20),
             'gainers': recommender.get_top_gainers_cn(limit=10),
-            'losers': recommender.get_top_losers_cn(limit=10)
+            'losers': recommender.get_top_losers_cn(limit=10),
+            'sectors': recommender.get_hot_sectors_cn(limit=30)
         }
     elif market == "HK":
         return {
@@ -777,8 +778,8 @@ def get_cached_hot_stocks(market):
         }
 
 def hot_stocks_page():
-    """热门股票页面"""
-    st.markdown('<h1 class="main-header">热门股票</h1>', unsafe_allow_html=True)
+    """热门板块页面"""
+    st.markdown('<h1 class="main-header">热门板块</h1>', unsafe_allow_html=True)
 
     # 使用 session state 保存热门股票页面状态
     if 'hot_market' not in st.session_state:
@@ -806,7 +807,7 @@ def hot_stocks_page():
         refresh_clicked = st.button("刷新数据", type="primary")
 
     if refresh_clicked or not st.session_state.hot_data_loaded:
-        with st.spinner("正在获取热门股票..."):
+        with st.spinner("正在获取热门板块..."):
             get_cached_hot_stocks.clear()
             data = get_cached_hot_stocks(market)
             st.session_state.hot_data_loaded = True
@@ -815,16 +816,66 @@ def hot_stocks_page():
         data = st.session_state.get('hot_data')
 
     if data:
-        if market in ("CN", "HK"):
+        if market == "CN":
+            sectors = data.get('sectors', [])
+            gainers = data.get('gainers', [])
+            losers = data.get('losers', [])
+
+            # 热门板块（同花顺行业板块排行）
+            st.subheader("行业板块排行")
+            if sectors:
+                df_sectors = pd.DataFrame(sectors)
+                # 涨跌幅着色
+                def color_change(val):
+                    if val > 0:
+                        return 'color: #cc0000'
+                    elif val < 0:
+                        return 'color: #008844'
+                    return ''
+                df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
+                st.dataframe(df_styled, use_container_width=True, hide_index=True)
+            else:
+                st.info("暂无板块数据")
+
+            # 涨幅榜
+            st.subheader("个股涨幅榜")
+            df_gainers = pd.DataFrame(gainers)
+            if not df_gainers.empty:
+                df_gainers = df_gainers.rename(columns={
+                    '代码': 'Symbol',
+                    '名称': 'Name',
+                    '最新价': 'Price',
+                    '涨跌幅': 'Change%',
+                    '换手率': 'Turnover%'
+                })
+                st.dataframe(df_gainers, use_container_width=True)
+            else:
+                st.info("暂无涨幅榜数据")
+
+            # 跌幅榜
+            st.subheader("个股跌幅榜")
+            df_losers = pd.DataFrame(losers)
+            if not df_losers.empty:
+                df_losers = df_losers.rename(columns={
+                    '代码': 'Symbol',
+                    '名称': 'Name',
+                    '最新价': 'Price',
+                    '涨跌幅': 'Change%',
+                    '换手率': 'Turnover%'
+                })
+                st.dataframe(df_losers, use_container_width=True)
+            else:
+                st.info("暂无跌幅榜数据")
+
+        elif market == "HK":
             hot = data.get('hot', [])
             gainers = data.get('gainers', [])
             losers = data.get('losers', [])
 
             if not hot:
-                st.warning("暂无热门股票数据，请稍后重试")
+                st.warning("暂无港股热门数据，请稍后重试")
                 return
 
-            # 热门股票
             st.subheader("热门股票")
             df_hot = pd.DataFrame(hot)
             if not df_hot.empty:
@@ -842,32 +893,16 @@ def hot_stocks_page():
             else:
                 st.info("暂无热门股票数据")
 
-            # 涨幅榜
             st.subheader("涨幅榜")
             df_gainers = pd.DataFrame(gainers)
             if not df_gainers.empty:
-                df_gainers = df_gainers.rename(columns={
-                    '代码': 'Symbol',
-                    '名称': 'Name',
-                    '最新价': 'Price',
-                    '涨跌幅': 'Change%',
-                    '换手率': 'Turnover%'
-                })
                 st.dataframe(df_gainers, use_container_width=True)
             else:
                 st.info("暂无涨幅榜数据")
 
-            # 跌幅榜
             st.subheader("跌幅榜")
             df_losers = pd.DataFrame(losers)
             if not df_losers.empty:
-                df_losers = df_losers.rename(columns={
-                    '代码': 'Symbol',
-                    '名称': 'Name',
-                    '最新价': 'Price',
-                    '涨跌幅': 'Change%',
-                    '换手率': 'Turnover%'
-                })
                 st.dataframe(df_losers, use_container_width=True)
             else:
                 st.info("暂无跌幅榜数据")
@@ -1286,7 +1321,7 @@ def main():
 
         page = st.radio(
             "功能菜单",
-            options=["个股分析", "热门股票", "智能推荐", "股票对比"],
+            options=["个股分析", "热门板块", "智能推荐", "股票对比"],
             format_func=lambda x: x
         )
 
@@ -1310,7 +1345,7 @@ def main():
     # 页面路由
     if page == "个股分析":
         analyze_stock_page()
-    elif page == "热门股票":
+    elif page == "热门板块":
         hot_stocks_page()
     elif page == "智能推荐":
         recommended_stocks_page()

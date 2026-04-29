@@ -1,6 +1,7 @@
 """
 热门股票和推荐股票模块
 A股使用新浪财经批量行情，港股美股使用yfinance
+板块排行使用AKShare（同花顺数据源）
 """
 import requests
 import re
@@ -9,6 +10,7 @@ import pandas as pd
 import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
+import akshare as ak
 warnings.filterwarnings('ignore')
 
 # 导入热门股票列表
@@ -157,6 +159,28 @@ class StockRecommender:
         # 按热度分数排序
         results.sort(key=lambda x: x['热度分数'], reverse=True)
         return results[:limit]
+
+    def get_hot_sectors_cn(self, limit=30):
+        """获取A股热门板块排行（同花顺行业板块实时数据）"""
+        try:
+            df = ak.stock_board_industry_summary_ths()
+            sectors = []
+            for _, row in df.head(limit).iterrows():
+                sectors.append({
+                    '板块': row['板块'],
+                    '涨跌幅': round(float(row['涨跌幅']), 2),
+                    '领涨股': row['领涨股'],
+                    '领涨股价格': round(float(row['领涨股-最新价']), 2),
+                    '领涨股涨幅': round(float(row['领涨股-涨跌幅']), 2),
+                    '上涨家数': int(row['上涨家数']),
+                    '下跌家数': int(row['下跌家数']),
+                    '总成交额(亿)': round(float(row['总成交额']), 2),
+                    '净流入(亿)': round(float(row['净流入']), 2),
+                })
+            return sectors
+        except Exception as e:
+            print(f"获取板块排行失败: {e}")
+            return []
 
     def _get_market_ranking(self, sort_asc=False, limit=10):
         """获取全市场涨幅榜/跌幅榜（新浪财经数据源）"""
