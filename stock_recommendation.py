@@ -181,9 +181,6 @@ class StockRecommender:
                 results = []
                 for item in data:
                     try:
-                        # 过滤掉北交所新股（涨幅几百%的数据噪音）
-                        if item.get('symbol', '').startswith('bj') and float(item.get('changepercent', 0)) > 100:
-                            continue
                         results.append({
                             '代码': item['code'],
                             '名称': item['name'],
