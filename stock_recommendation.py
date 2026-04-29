@@ -158,19 +158,54 @@ class StockRecommender:
         results.sort(key=lambda x: x['热度分数'], reverse=True)
         return results[:limit]
 
+    def _get_market_ranking(self, sort_asc=False, limit=10):
+        """获取全市场涨幅榜/跌幅榜（新浪财经数据源）"""
+        try:
+            url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
+            params = {
+                'page': 1,
+                'num': limit + 5,  # 多取几条以防新股/异常数据
+                'sort': 'changepercent',
+                'asc': 1 if sort_asc else 0,
+                'node': 'hs_a',
+                'symbol': '',
+                '_s_r_a': 'init'
+            }
+            headers = {
+                'Referer': 'https://finance.sina.com.cn/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                for item in data:
+                    try:
+                        # 过滤掉北交所新股（涨幅几百%的数据噪音）
+                        if item.get('symbol', '').startswith('bj') and float(item.get('changepercent', 0)) > 100:
+                            continue
+                        results.append({
+                            '代码': item['code'],
+                            '名称': item['name'],
+                            '最新价': round(float(item['trade']), 2),
+                            '涨跌幅': round(float(item['changepercent']), 2),
+                            '换手率': round(float(item.get('turnoverratio', 0)), 2) if item.get('turnoverratio') else None,
+                            '成交量': int(float(item['volume'])),
+                            '成交额': int(float(item['amount'])),
+                        })
+                    except (ValueError, KeyError):
+                        continue
+                return results[:limit]
+        except Exception:
+            return []
+
     def get_top_gainers_cn(self, limit=10):
-        """获取A股涨幅榜"""
-        stocks = self.get_hot_stocks_cn(limit=30)
-        gainers = [s for s in stocks if s['涨跌幅'] > 0]
-        gainers.sort(key=lambda x: x['涨跌幅'], reverse=True)
-        return gainers[:limit]
+        """获取A股全市场涨幅榜（新浪财经实时排行）"""
+        return self._get_market_ranking(sort_asc=False, limit=limit)
 
     def get_top_losers_cn(self, limit=10):
-        """获取A股跌幅榜"""
-        stocks = self.get_hot_stocks_cn(limit=30)
-        losers = [s for s in stocks if s['涨跌幅'] < 0]
-        losers.sort(key=lambda x: x['涨跌幅'])
-        return losers[:limit]
+        """获取A股全市场跌幅榜（新浪财经实时排行）"""
+        return self._get_market_ranking(sort_asc=True, limit=limit)
 
     def get_hot_stocks_hk(self, limit=20):
         """获取港股热门股票（使用yfinance数据源）"""
