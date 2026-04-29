@@ -66,6 +66,12 @@ st.markdown("""
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     }
 
+    /* ===== 等宽数字 — 金融数据列对齐 ===== */
+    [data-testid="stMetricValue"], [data-testid="stDataFrame"] td {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+    }
+
     /* ===== 极简标题 ===== */
     .main-header {
         font-size: 2rem;
@@ -75,17 +81,21 @@ st.markdown("""
         margin-bottom: 1.5rem;
     }
 
-    /* ===== 信号：仅颜色区分，不加粗 ===== */
-    .buy-signal { color: #cc0000; }
-    .sell-signal { color: #008844; }
-    .neutral-signal { opacity: 0.6; }
+    /* ===== 信号：仅颜色区分，微加粗 ===== */
+    .buy-signal  { color: #cc0000; font-weight: 500; }
+    .sell-signal { color: #008844; font-weight: 500; }
+    .neutral-signal { opacity: 0.5; }
 
-    /* ===== 极简卡片 ===== */
+    /* ===== 极简卡片 + 悬停动效 ===== */
     .stock-card {
         background: rgba(128, 128, 128, 0.04);
         border-radius: 14px;
         padding: 1.25rem;
         margin: 0.6rem 0;
+        transition: background 0.2s ease;
+    }
+    .stock-card:hover {
+        background: rgba(128, 128, 128, 0.08);
     }
 
     /* ===== 自选股条目 ===== */
@@ -94,6 +104,10 @@ st.markdown("""
         border-radius: 8px;
         padding: 0.5rem;
         margin: 0.25rem 0;
+        transition: background 0.2s ease;
+    }
+    .watchlist-item:hover {
+        background: rgba(128, 128, 128, 0.08);
     }
 
     /* ===== 按钮：苹果风格圆角 ===== */
@@ -123,19 +137,36 @@ st.markdown("""
     [data-testid="stSidebar"] .stRadio label {
         padding: 0.4rem 0.75rem;
         border-radius: 10px;
+        transition: background 0.2s ease;
     }
 
-    /* ===== Metric 指标卡片 ===== */
+    /* ===== 侧边栏分隔线更紧凑 ===== */
+    [data-testid="stSidebar"] hr {
+        margin: 0.8rem 0;
+        opacity: 0.2;
+    }
+
+    /* ===== Metric 指标卡片 — 特斯拉风格大数字 ===== */
     [data-testid="stMetric"] {
         background: rgba(128, 128, 128, 0.03);
         border-radius: 12px;
         padding: 0.75rem;
+        transition: background 0.2s ease;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.75rem !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-size: 1rem !important;
+        font-weight: 500 !important;
     }
 
     /* ===== Tab 标签 ===== */
     .stTabs [role="tab"] {
         font-weight: 500;
         border-radius: 10px;
+        transition: background 0.2s ease;
     }
 
     /* ===== DataFrame 表格 ===== */
@@ -145,6 +176,13 @@ st.markdown("""
     }
     [data-testid="stDataFrame"] table {
         border-radius: 12px;
+    }
+    [data-testid="stDataFrame"] th {
+        font-weight: 500;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.6;
     }
 
     /* ===== Expander 折叠面板 ===== */
@@ -250,7 +288,11 @@ def plot_candlestick_chart(data, title="K线图"):
         xaxis_rangeslider_visible=False,
         height=800,
         showlegend=True,
-        hovermode='x unified'
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20)
     )
 
     fig.update_xaxes(rangeslider_visible=False)
@@ -285,7 +327,11 @@ def plot_rsi_chart(data):
         title="RSI指标 (6日/12日/24日)",
         height=400,
         yaxis_range=[0, 100],
-        hovermode='x unified'
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20)
     )
 
     return fig
@@ -331,7 +377,11 @@ def plot_kdj_chart(data):
     fig.update_layout(
         title="KDJ指标 (随机指标)",
         height=400,
-        hovermode='x unified'
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20)
     )
 
     return fig
@@ -358,7 +408,11 @@ def plot_boll_chart(data):
     fig.update_layout(
         title="布林带 (BOLL)",
         height=400,
-        hovermode='x unified'
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20)
     )
 
     return fig
@@ -1113,24 +1167,24 @@ def display_watchlist_sidebar():
     """在侧边栏显示自选股列表"""
     watchlist = get_watchlist()
 
-    if watchlist:
-        st.markdown("### 自选股")
-        for item in watchlist:
-            col1, col2 = st.columns([4, 1])
-            with col1:
-                # 使用更简洁的按钮样式
-                display_text = f"{item['symbol']}"
-                if item['name'] and item['name'] != item['symbol']:
-                    display_text += f" · {item['name'][:4]}"
-                if st.button(display_text, key=f"wl_{item['symbol']}_{item['market']}", use_container_width=True):
-                    st.session_state.analyze_symbol = item['symbol']
-                    st.session_state.analyze_market = item['market']
-                    st.rerun()
-            with col2:
-                if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
-                    remove_from_watchlist(item['symbol'], item['market'])
-                    st.rerun()
-        st.markdown("---")
+    with st.expander("自选股"):
+        if watchlist:
+            for item in watchlist:
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    display_text = f"{item['symbol']}"
+                    if item['name'] and item['name'] != item['symbol']:
+                        display_text += f" · {item['name'][:4]}"
+                    if st.button(display_text, key=f"wl_{item['symbol']}_{item['market']}", use_container_width=True):
+                        st.session_state.analyze_symbol = item['symbol']
+                        st.session_state.analyze_market = item['market']
+                        st.rerun()
+                with col2:
+                    if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
+                        remove_from_watchlist(item['symbol'], item['market'])
+                        st.rerun()
+        else:
+            st.caption("暂无自选股")
 
 
 def display_data_source_selector():
@@ -1310,7 +1364,11 @@ def compare_stocks_page():
                     xaxis_title="日期",
                     yaxis_title="相对价格",
                     height=500,
-                    hovermode='x unified'
+                    hovermode='x unified',
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+                    margin=dict(l=20, r=20, t=40, b=20)
                 )
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -1324,9 +1382,6 @@ def main():
         st.title("股票分析系统")
         st.markdown("---")
 
-        # 自选股列表
-        display_watchlist_sidebar()
-
         page = st.radio(
             "功能菜单",
             options=["个股分析", "热门板块", "智能推荐", "股票对比"],
@@ -1334,20 +1389,15 @@ def main():
         )
 
         st.markdown("---")
-        st.markdown("### 关于")
-        st.markdown("""
-        支持 A股/美股/港股 技术分析。
-        K线 · MACD · RSI · KDJ · BOLL
-        """)
 
-        st.markdown("---")
+        # 自选股（折叠）
+        display_watchlist_sidebar()
 
-        # 数据源设置和健康状态
+        # 数据与状态（合并折叠）
         display_data_source_selector()
         display_health_status()
         display_data_source_status()
 
-        st.markdown("---")
         st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
     # 页面路由
