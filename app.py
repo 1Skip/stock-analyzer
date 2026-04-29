@@ -216,13 +216,13 @@ def plot_candlestick_chart(data, title="K线图"):
 
     # MACD
     if 'macd' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['macd'], name='MACD', line=dict(color='blue')), row=3, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['macd_signal'], name='Signal', line=dict(color='red')), row=3, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['macd'], name='DIF', line=dict(color='blue')), row=3, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['macd_signal'], name='DEA', line=dict(color='red')), row=3, col=1)
 
         # MACD柱状图
         colors_macd = get_macd_hist_colors(data['macd_hist'], inc_color, dec_color)
         fig.add_trace(
-            go.Bar(x=data.index, y=data['macd_hist'], name='MACD Hist', marker_color=colors_macd),
+            go.Bar(x=data.index, y=data['macd_hist'], name='MACD', marker_color=colors_macd),
             row=3, col=1
         )
 
@@ -611,18 +611,26 @@ def analyze_stock_page():
             st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
         status_text.text("正在合并实时行情...")
-        # 如果有实时行情，合并到历史数据中
+        # 如果有实时行情，更新历史数据最后一行（避免同一天重复行）
         if quote and data is not None and not data.empty:
-            from datetime import datetime
-            now = datetime.now()
-            realtime_row = pd.DataFrame({
-                'open': [quote['open']],
-                'high': [quote['high']],
-                'low': [quote['low']],
-                'close': [quote['price']],
-                'volume': [quote['volume']]
-            }, index=[now])
-            data = pd.concat([data, realtime_row])
+            today = pd.Timestamp.now().normalize()
+            if data.index[-1].normalize() == today:
+                # 更新已存在的今日行
+                idx = data.index[-1]
+                data.loc[idx, 'close'] = quote['price']
+                data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+                data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+                data.loc[idx, 'volume'] = quote.get('volume', data.loc[idx, 'volume'])
+            else:
+                # 新交易日，追加实时行情行
+                realtime_row = pd.DataFrame({
+                    'open': [quote['open']],
+                    'high': [quote['high']],
+                    'low': [quote['low']],
+                    'close': [quote['price']],
+                    'volume': [quote['volume']]
+                }, index=[pd.Timestamp.now()])
+                data = pd.concat([data, realtime_row])
         progress_bar.progress(75)
 
         status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
@@ -705,9 +713,9 @@ def analyze_stock_page():
 
         with cols[0]:
             st.subheader("MACD")
-            st.write(f"MACD: {latest['macd']:.3f}")
-            st.write(f"Signal: {latest['macd_signal']:.3f}")
-            st.write(f"Hist: {latest['macd_hist']:.3f}")
+            st.write(f"DIF: {latest['macd']:.3f}")
+            st.write(f"DEA: {latest['macd_signal']:.3f}")
+            st.write(f"MACD: {latest['macd_hist']:.3f}")
 
         with cols[1]:
             st.subheader("RSI")
