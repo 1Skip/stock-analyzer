@@ -464,7 +464,7 @@ def analyze_stock_page():
     if 'analyze_market' not in st.session_state:
         st.session_state.analyze_market = "CN"
     if 'analyze_period' not in st.session_state:
-        st.session_state.analyze_period = "3mo"
+        st.session_state.analyze_period = "1y"
 
     # 回调函数用于保存状态
     def on_symbol_change():
