@@ -5,7 +5,7 @@
 """
 import pandas as pd
 import numpy as np
-from MyTT import MACD, KDJ, RSI, BOLL, MA
+from MyTT import EMA, MA, STD, KDJ, RSI
 
 
 class TechnicalIndicators:
@@ -34,7 +34,7 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_macd(data, fast=12, slow=26, signal=9):
         """
-        计算MACD指标 — MyTT（同花顺/通达信标准算法）
+        计算MACD指标 — MyTT底层EMA（跳过RD舍入，与同花顺完全一致）
         DIF = EMA(fast) - EMA(slow)
         DEA = EMA(DIF, signal)
         MACD柱 = 2 × (DIF - DEA)
@@ -42,7 +42,9 @@ class TechnicalIndicators:
         df = data.copy()
         close = df['close'].values.astype(np.float64)
 
-        dif, dea, hist = MACD(close, fast, slow, signal)
+        dif = EMA(close, fast) - EMA(close, slow)
+        dea = EMA(dif, signal)
+        hist = (dif - dea) * 2
 
         df['macd'] = dif
         df['macd_signal'] = dea
@@ -78,7 +80,7 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_boll(data, period=20, std_dev=2):
         """
-        计算布林带 (BOLL) 指标 — MyTT（同花顺标准算法）
+        计算布林带 (BOLL) 指标 — MyTT底层MA+STD（跳过RD舍入，与同花顺完全一致）
         中轨 = N日移动平均线
         上轨 = 中轨 + N日标准差 × 倍数
         下轨 = 中轨 - N日标准差 × 倍数
@@ -86,7 +88,10 @@ class TechnicalIndicators:
         df = data.copy()
         close = df['close'].values.astype(np.float64)
 
-        upper, mid, lower = BOLL(close, period, std_dev)
+        mid = MA(close, period)
+        std = STD(close, period)
+        upper = mid + std * std_dev
+        lower = mid - std * std_dev
 
         df['boll_upper'] = upper
         df['boll_mid'] = mid
