@@ -83,8 +83,8 @@ class TechnicalIndicators:
             rsi_val[(avg_gain == 0) & (avg_loss == 0)] = 50
             df[f'rsi_{period}'] = rsi_val
 
-        # 保留rsi字段用于兼容（使用RSI6作为默认RSI）
-        df['rsi'] = df['rsi_6']
+        # rsi字段用于兼容（指向第一个周期的RSI）
+        df['rsi'] = df[f'rsi_{periods[0]}']
 
         # 添加RSI信号线 (70超买, 30超卖)
         df['rsi_overbought'] = 70
@@ -207,9 +207,9 @@ class TechnicalIndicators:
 
         # MACD信号
         if latest['macd'] > latest['macd_signal'] and prev['macd'] <= prev['macd_signal']:
-            signals['macd'] = "金叉买入信号"
+            signals['macd'] = "金叉（偏多信号）"
         elif latest['macd'] < latest['macd_signal'] and prev['macd'] >= prev['macd_signal']:
-            signals['macd'] = "死叉卖出信号"
+            signals['macd'] = "死叉（偏空信号）"
         elif latest['macd'] > latest['macd_signal']:
             signals['macd'] = "多头趋势"
         else:
@@ -227,14 +227,14 @@ class TechnicalIndicators:
         # KDJ信号
         if latest['kdj_k'] > latest['kdj_d'] and prev['kdj_k'] <= prev['kdj_d']:
             if latest['kdj_k'] < 20:
-                signals['kdj'] = "低位金叉，强烈买入"
+                signals['kdj'] = "低位金叉（偏多信号，强）"
             else:
-                signals['kdj'] = "金叉买入信号"
+                signals['kdj'] = "金叉（偏多信号）"
         elif latest['kdj_k'] < latest['kdj_d'] and prev['kdj_k'] >= prev['kdj_d']:
             if latest['kdj_k'] > 80:
-                signals['kdj'] = "高位死叉，强烈卖出"
+                signals['kdj'] = "高位死叉（偏空信号，强）"
             else:
-                signals['kdj'] = "死叉卖出信号"
+                signals['kdj'] = "死叉（偏空信号）"
         elif latest['kdj_k'] > 80:
             signals['kdj'] = "K值超买"
         elif latest['kdj_k'] < 20:
@@ -252,29 +252,29 @@ class TechnicalIndicators:
         else:
             signals['boll'] = "中轨下方，偏空"
 
-        # 综合建议
+        # 综合建议（按指标方向计数）
         buy_count = sum([
-            "买入" in signals['macd'],
+            "金叉" in signals['macd'],
             "超卖" in signals['rsi'],
-            "买入" in signals['kdj'],
+            "金叉" in signals['kdj'],
             "反弹" in signals['boll'] or "偏多" in signals['boll']
         ])
 
         sell_count = sum([
-            "卖出" in signals['macd'],
+            "死叉" in signals['macd'],
             "超买" in signals['rsi'],
-            "卖出" in signals['kdj'],
+            "死叉" in signals['kdj'],
             "回调" in signals['boll'] or "偏空" in signals['boll']
         ])
 
         if buy_count >= 3:
-            signals['recommendation'] = "强烈买入"
+            signals['recommendation'] = "偏多信号（强）"
         elif buy_count >= 2:
-            signals['recommendation'] = "买入"
+            signals['recommendation'] = "偏多信号"
         elif sell_count >= 3:
-            signals['recommendation'] = "强烈卖出"
+            signals['recommendation'] = "偏空信号（强）"
         elif sell_count >= 2:
-            signals['recommendation'] = "卖出"
+            signals['recommendation'] = "偏空信号"
         else:
             signals['recommendation'] = "观望"
 

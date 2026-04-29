@@ -10,6 +10,8 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 
+from config import COLOR_SCHEMES, DEFAULT_COLOR_SCHEME
+
 # 设置中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
 plt.rcParams['axes.unicode_minus'] = False
@@ -19,7 +21,13 @@ class ChartPlotter:
     """图表绘制器"""
 
     @staticmethod
-    def plot_candlestick(data, title="K线图", save_path=None, show_volume=True):
+    def _get_colors(color_scheme='red_up'):
+        """获取配色方案"""
+        scheme = COLOR_SCHEMES.get(color_scheme, COLOR_SCHEMES['red_up'])
+        return scheme['increasing'], scheme['decreasing']
+
+    @staticmethod
+    def plot_candlestick(data, title="K线图", save_path=None, show_volume=True, color_scheme='red_up'):
         """
         绘制K线图
         """
@@ -27,6 +35,7 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
+        up_color, down_color = ChartPlotter._get_colors(color_scheme)
         df = data.copy()
 
         # 创建子图
@@ -42,14 +51,12 @@ class ChartPlotter:
         for idx, row in df.iterrows():
             x = idx
 
-            # 确定颜色 (涨红跌绿 或 涨绿跌红)
-            # A股习惯: 红涨绿跌
             if row['close'] >= row['open']:
-                color = '#e74c3c'  # 红色 (涨)
-                edgecolor = '#e74c3c'
+                color = up_color
+                edgecolor = up_color
             else:
-                color = '#27ae60'  # 绿色 (跌)
-                edgecolor = '#27ae60'
+                color = down_color
+                edgecolor = down_color
 
             # 绘制实体
             height = abs(row['close'] - row['open'])
@@ -69,8 +76,8 @@ class ChartPlotter:
 
         # 绘制成交量
         if ax2 is not None and 'volume' in df.columns:
-            colors = ['#e74c3c' if df['close'].iloc[i] >= df['open'].iloc[i]
-                     else '#27ae60' for i in range(len(df))]
+            colors = [up_color if df['close'].iloc[i] >= df['open'].iloc[i]
+                     else down_color for i in range(len(df))]
             ax2.bar(df.index, df['volume'], color=colors, alpha=0.7, width=0.6)
             ax2.set_ylabel('成交量', fontsize=12)
             ax2.set_xlabel('日期', fontsize=12)
@@ -90,7 +97,7 @@ class ChartPlotter:
         plt.show()
 
     @staticmethod
-    def plot_with_indicators(data, title="股票分析", save_path=None):
+    def plot_with_indicators(data, title="股票分析", save_path=None, color_scheme='red_up'):
         """
         绘制K线图和所有技术指标
         使用多子图布局
@@ -99,6 +106,7 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
+        up_color, down_color = ChartPlotter._get_colors(color_scheme)
         df = data.copy()
 
         # 创建6个子图: K线+MA, 成交量, MACD, RSI, KDJ, BOLL
@@ -116,11 +124,11 @@ class ChartPlotter:
         for idx, row in df.iterrows():
             x = idx
             if row['close'] >= row['open']:
-                color = '#e74c3c'
-                edgecolor = '#e74c3c'
+                color = up_color
+                edgecolor = up_color
             else:
-                color = '#27ae60'
-                edgecolor = '#27ae60'
+                color = down_color
+                edgecolor = down_color
 
             height = abs(row['close'] - row['open'])
             bottom = min(row['close'], row['open'])
@@ -147,8 +155,8 @@ class ChartPlotter:
 
         # 2. 成交量
         if 'volume' in df.columns:
-            colors = ['#e74c3c' if df['close'].iloc[i] >= df['open'].iloc[i]
-                     else '#27ae60' for i in range(len(df))]
+            colors = [up_color if df['close'].iloc[i] >= df['open'].iloc[i]
+                     else down_color for i in range(len(df))]
             ax2.bar(df.index, df['volume'], color=colors, alpha=0.7, width=0.6)
         ax2.set_ylabel('成交量')
         ax2.grid(True, alpha=0.3)
@@ -160,7 +168,7 @@ class ChartPlotter:
 
             # MACD柱状图
             macd_hist = df['macd_hist']
-            colors = ['#e74c3c' if v >= 0 else '#27ae60' for v in macd_hist]
+            colors = [up_color if v >= 0 else down_color for v in macd_hist]
             ax3.bar(df.index, macd_hist, color=colors, alpha=0.7, width=0.6)
             ax3.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
 
@@ -218,7 +226,7 @@ class ChartPlotter:
         plt.show()
 
     @staticmethod
-    def plot_single_indicator(data, indicator='macd', title=None, save_path=None):
+    def plot_single_indicator(data, indicator='macd', title=None, save_path=None, color_scheme='red_up'):
         """
         绘制单个指标图
         """
@@ -226,6 +234,7 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
+        up_color, down_color = ChartPlotter._get_colors(color_scheme)
         df = data.copy()
         fig, axes = plt.subplots(2, 1, figsize=(14, 8),
                                 gridspec_kw={'height_ratios': [2, 1]},
@@ -237,11 +246,11 @@ class ChartPlotter:
         for idx, row in df.iterrows():
             x = idx
             if row['close'] >= row['open']:
-                color = '#e74c3c'
-                edgecolor = '#e74c3c'
+                color = up_color
+                edgecolor = up_color
             else:
-                color = '#27ae60'
-                edgecolor = '#27ae60'
+                color = down_color
+                edgecolor = down_color
 
             height = abs(row['close'] - row['open'])
             bottom = min(row['close'], row['open'])
@@ -259,7 +268,7 @@ class ChartPlotter:
         if indicator == 'macd' and 'macd' in df.columns:
             ax2.plot(df.index, df['macd'], label='MACD', color='blue', linewidth=1.5)
             ax2.plot(df.index, df['macd_signal'], label='Signal', color='red', linewidth=1.5)
-            colors = ['#e74c3c' if v >= 0 else '#27ae60' for v in df['macd_hist']]
+            colors = [up_color if v >= 0 else down_color for v in df['macd_hist']]
             ax2.bar(df.index, df['macd_hist'], color=colors, alpha=0.7, width=0.6)
             ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
             ax2.set_ylabel('MACD')

@@ -230,13 +230,13 @@ class StockRecommender:
             score -= 5
 
         # KDJ评分
-        if "强烈买入" in signals['kdj']:
+        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
             score += 20
         elif "金叉" in signals['kdj']:
             score += 15
         elif "超卖" in signals['kdj']:
             score += 10
-        elif "强烈卖出" in signals['kdj']:
+        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
             score -= 20
         elif "死叉" in signals['kdj']:
             score -= 15
@@ -268,15 +268,15 @@ class StockRecommender:
 
         # 确定评级
         if score >= 80:
-            rating = "强烈买入"
+            rating = "偏多信号（强）"
         elif score >= 65:
-            rating = "买入"
+            rating = "偏多信号"
         elif score >= 50:
-            rating = "持有"
+            rating = "观望"
         elif score >= 35:
-            rating = "减持"
+            rating = "偏空信号"
         else:
-            rating = "卖出"
+            rating = "偏空信号（强）"
 
         return {
             'symbol': symbol,
@@ -432,13 +432,13 @@ class StockRecommender:
             score -= 10
 
         # KDJ评分（短线权重提高）- 最敏感的短线指标
-        if "强烈买入" in signals['kdj']:
+        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
             score += 30
         elif "金叉" in signals['kdj']:
             score += 25
         elif "超卖" in signals['kdj']:
             score += 20
-        elif "强烈卖出" in signals['kdj']:
+        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
             score -= 30
         elif "死叉" in signals['kdj']:
             score -= 25
@@ -476,15 +476,15 @@ class StockRecommender:
         score = max(0, min(100, score))
 
         if score >= 80:
-            rating = "强烈买入"
+            rating = "偏多信号（强）"
         elif score >= 65:
-            rating = "买入"
+            rating = "偏多信号"
         elif score >= 50:
-            rating = "持有"
+            rating = "观望"
         elif score >= 35:
-            rating = "减持"
+            rating = "偏空信号"
         else:
-            rating = "卖出"
+            rating = "偏空信号（强）"
 
         return {
             'symbol': symbol,

@@ -16,6 +16,12 @@ from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED, POPULAR_CN_S
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
+from config import (
+    COLOR_SCHEMES, DEFAULT_COLOR_SCHEME,
+    CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO,
+    CACHE_TTL_HOT_STOCKS, CACHE_TTL_INDICATORS,
+    CACHE_TTL_RECOMMENDED, CACHE_TTL_SHORT_TERM, CACHE_TTL_SECTOR,
+)
 
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
@@ -100,8 +106,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def get_chart_colors():
+    """获取当前配色方案（根据市场和用户选择）"""
+    market = st.session_state.get('analyze_market', 'CN')
+    scheme_name = st.session_state.get('color_scheme')
+    if not scheme_name:
+        scheme_name = DEFAULT_COLOR_SCHEME.get(market, 'red_up')
+    return COLOR_SCHEMES.get(scheme_name, COLOR_SCHEMES['red_up'])
+
 def plot_candlestick_chart(data, title="K线图"):
     """使用Plotly绘制K线图"""
+    colors = get_chart_colors()
+    inc_color = colors['increasing']
+    dec_color = colors['decreasing']
+
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
@@ -119,8 +137,8 @@ def plot_candlestick_chart(data, title="K线图"):
             low=data['low'],
             close=data['close'],
             name='K线',
-            increasing_line_color='#e74c3c',
-            decreasing_line_color='#27ae60'
+            increasing_line_color=inc_color,
+            decreasing_line_color=dec_color
         ),
         row=1, col=1
     )
@@ -135,10 +153,10 @@ def plot_candlestick_chart(data, title="K线图"):
 
     # 成交量
     if 'volume' in data.columns:
-        colors = ['#e74c3c' if data['close'].iloc[i] >= data['open'].iloc[i] else '#27ae60'
-                  for i in range(len(data))]
+        vol_colors = [inc_color if data['close'].iloc[i] >= data['open'].iloc[i] else dec_color
+                      for i in range(len(data))]
         fig.add_trace(
-            go.Bar(x=data.index, y=data['volume'], name='成交量', marker_color=colors),
+            go.Bar(x=data.index, y=data['volume'], name='成交量', marker_color=vol_colors),
             row=2, col=1
         )
 
@@ -148,7 +166,7 @@ def plot_candlestick_chart(data, title="K线图"):
         fig.add_trace(go.Scatter(x=data.index, y=data['macd_signal'], name='Signal', line=dict(color='red')), row=3, col=1)
 
         # MACD柱状图
-        colors_macd = ['#e74c3c' if v >= 0 else '#27ae60' for v in data['macd_hist']]
+        colors_macd = [inc_color if v >= 0 else dec_color for v in data['macd_hist']]
         fig.add_trace(
             go.Bar(x=data.index, y=data['macd_hist'], name='MACD Hist', marker_color=colors_macd),
             row=3, col=1
@@ -165,12 +183,12 @@ def plot_candlestick_chart(data, title="K线图"):
         if len(golden_idx) > 0:
             fig.add_trace(go.Scatter(
                 x=data.index[golden_idx], y=data['macd'].iloc[golden_idx],
-                mode='markers', name='MACD金叉', marker=dict(symbol='triangle-up', size=12, color='#cc0000', line=dict(width=1)),
+                mode='markers', name='MACD金叉', marker=dict(symbol='triangle-up', size=12, color=inc_color, line=dict(width=1)),
                 showlegend=True, hovertemplate='金叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
         if len(death_idx) > 0:
             fig.add_trace(go.Scatter(
                 x=data.index[death_idx], y=data['macd'].iloc[death_idx],
-                mode='markers', name='MACD死叉', marker=dict(symbol='triangle-down', size=12, color='#008844', line=dict(width=1)),
+                mode='markers', name='MACD死叉', marker=dict(symbol='triangle-down', size=12, color=dec_color, line=dict(width=1)),
                 showlegend=True, hovertemplate='死叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
 
     fig.update_layout(
@@ -190,18 +208,22 @@ def plot_candlestick_chart(data, title="K线图"):
 
 def plot_rsi_chart(data):
     """绘制RSI图表"""
+    colors = get_chart_colors()
+    inc_color = colors['increasing']
+    dec_color = colors['decreasing']
+
     fig = go.Figure()
 
     # 显示6日、12日、24日RSI
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_6'], name='RSI(6)', line=dict(color='red', width=2)))
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_12'], name='RSI(12)', line=dict(color='orange', width=2)))
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_24'], name='RSI(24)', line=dict(color='purple', width=2)))
-    fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="超买(70)")
-    fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="超卖(30)")
+    fig.add_hline(y=70, line_dash="dash", line_color=dec_color, annotation_text="超买(70)")
+    fig.add_hline(y=30, line_dash="dash", line_color=inc_color, annotation_text="超卖(30)")
 
     # 超买超卖色带
-    fig.add_hrect(y0=0, y1=30, line_width=0, fillcolor="green", opacity=0.08, name="超卖区")
-    fig.add_hrect(y0=70, y1=100, line_width=0, fillcolor="red", opacity=0.08, name="超买区")
+    fig.add_hrect(y0=0, y1=30, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=70, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
         title="RSI指标 (6日/12日/24日)",
@@ -214,13 +236,17 @@ def plot_rsi_chart(data):
 
 def plot_kdj_chart(data):
     """绘制KDJ图表"""
+    colors = get_chart_colors()
+    inc_color = colors['increasing']
+    dec_color = colors['decreasing']
+
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_k'], name='K', line=dict(color='blue')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_d'], name='D', line=dict(color='orange')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_j'], name='J', line=dict(color='purple')))
-    fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="超买(80)")
-    fig.add_hline(y=20, line_dash="dash", line_color="green", annotation_text="超卖(20)")
+    fig.add_hline(y=80, line_dash="dash", line_color=dec_color, annotation_text="超买(80)")
+    fig.add_hline(y=20, line_dash="dash", line_color=inc_color, annotation_text="超卖(20)")
 
     # KDJ金叉/死叉标记
     k_vals = data['kdj_k'].values
@@ -232,17 +258,17 @@ def plot_kdj_chart(data):
     if len(kdj_golden) > 0:
         fig.add_trace(go.Scatter(
             x=data.index[kdj_golden], y=data['kdj_k'].iloc[kdj_golden],
-            mode='markers', name='KDJ金叉', marker=dict(symbol='triangle-up', size=12, color='#cc0000', line=dict(width=1)),
+            mode='markers', name='KDJ金叉', marker=dict(symbol='triangle-up', size=12, color=inc_color, line=dict(width=1)),
             showlegend=True, hovertemplate='KDJ金叉<br>%{x}<br>K: %{y:.1f}'))
     if len(kdj_death) > 0:
         fig.add_trace(go.Scatter(
             x=data.index[kdj_death], y=data['kdj_k'].iloc[kdj_death],
-            mode='markers', name='KDJ死叉', marker=dict(symbol='triangle-down', size=12, color='#008844', line=dict(width=1)),
+            mode='markers', name='KDJ死叉', marker=dict(symbol='triangle-down', size=12, color=dec_color, line=dict(width=1)),
             showlegend=True, hovertemplate='KDJ死叉<br>%{x}<br>K: %{y:.1f}'))
 
-    # RSI风格超买超卖色带
-    fig.add_hrect(y0=0, y1=20, line_width=0, fillcolor="green", opacity=0.08, name="超卖区")
-    fig.add_hrect(y0=80, y1=100, line_width=0, fillcolor="red", opacity=0.08, name="超买区")
+    # 超买超卖色带
+    fig.add_hrect(y0=0, y1=20, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=80, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
         title="KDJ指标 (随机指标)",
@@ -311,9 +337,9 @@ def display_signals(signals):
     with col3:
         st.subheader("KDJ")
         kdj_signal = signals.get('kdj', '暂无数据')
-        if "买入" in kdj_signal or "超卖" in kdj_signal:
+        if "金叉" in kdj_signal or "超卖" in kdj_signal:
             st.markdown(f"<span class='buy-signal'>📈 {kdj_signal}</span>", unsafe_allow_html=True)
-        elif "卖出" in kdj_signal or "超买" in kdj_signal:
+        elif "死叉" in kdj_signal or "超买" in kdj_signal:
             st.markdown(f"<span class='sell-signal'>📉 {kdj_signal}</span>", unsafe_allow_html=True)
         else:
             st.markdown(f"<span class='neutral-signal'>➖ {kdj_signal}</span>", unsafe_allow_html=True)
@@ -331,9 +357,9 @@ def display_signals(signals):
     # 综合建议
     st.divider()
     recommendation = signals.get('recommendation', '观望')
-    if "买入" in recommendation:
+    if "偏多" in recommendation:
         st.success(f"### 💡 综合建议: {recommendation}")
-    elif "卖出" in recommendation:
+    elif "偏空" in recommendation:
         st.error(f"### 💡 综合建议: {recommendation}")
     else:
         st.info(f"### 💡 综合建议: {recommendation}")
@@ -394,6 +420,21 @@ def analyze_stock_page():
     market = st.session_state.analyze_market
     period = st.session_state.analyze_period
 
+    # 配色方案选择
+    if 'color_scheme' not in st.session_state:
+        st.session_state.color_scheme = DEFAULT_COLOR_SCHEME.get(market, 'red_up')
+
+    def on_color_scheme_change():
+        st.session_state.color_scheme = st.session_state.color_scheme_select
+
+    scheme_options = list(COLOR_SCHEMES.keys())
+    scheme_labels = {k: v['label'] for k, v in COLOR_SCHEMES.items()}
+    scheme_index = scheme_options.index(st.session_state.color_scheme)
+    st.selectbox("配色方案", options=scheme_options,
+                 index=scheme_index, format_func=lambda x: scheme_labels[x],
+                 key="color_scheme_select", on_change=on_color_scheme_change,
+                 help="红涨绿跌(A股传统) | 绿涨红跌(国际惯例) | 蓝涨橙跌(色盲友好)")
+
     col_analyze, col_clear = st.columns([4, 1])
     with col_clear:
         if st.button("🔄 刷新数据", type="secondary"):
@@ -404,26 +445,45 @@ def analyze_stock_page():
     with col_analyze:
         analyze_clicked = st.button("🔍 开始分析", type="primary", use_container_width=True)
 
+    # 股票代码格式校验
+    def validate_symbol(sym, mkt):
+        """校验股票代码格式，返回(valid, error_msg)"""
+        sym = sym.strip()
+        if not sym:
+            return False, "请输入股票代码"
+        if mkt == "CN":
+            if not sym.isdigit() or len(sym) != 6:
+                return False, "A股代码应为6位数字，如: 000001, 600519"
+        elif mkt == "US":
+            if not sym.isascii() or not sym.replace('.', '').replace('-', '').isalpha() or len(sym) > 10:
+                return False, "美股代码应为纯字母，如: AAPL, TSLA, BRK.B"
+        elif mkt == "HK":
+            if not sym.isdigit() or len(sym) < 1 or len(sym) > 5:
+                return False, "港股代码应为1-5位数字，如: 00700, 9988"
+        return True, ""
+
     if analyze_clicked:
+        is_valid, err_msg = validate_symbol(symbol, market)
+        if not is_valid:
+            st.error(f"❌ {err_msg}")
+            st.stop()
 
         # 使用进度条显示加载状态
         progress_bar = st.progress(0)
         status_text = st.empty()
 
         status_text.text("⏳ 正在获取股票信息...")
-        progress_bar.progress(10)
-
-        # 并行获取基本信息和实时行情
+        progress_bar.progress(5)
         info = get_cached_stock_info(symbol, market)
-        progress_bar.progress(30)
+        progress_bar.progress(20)
 
         status_text.text("⏳ 正在获取实时行情...")
         quote = get_cached_realtime_quote(symbol, market)
-        progress_bar.progress(50)
+        progress_bar.progress(40)
 
-        status_text.text("⏳ 正在获取历史数据...")
+        status_text.text("⏳ 正在获取历史K线数据...")
         data = get_cached_stock_data(symbol, period, market)
-        progress_bar.progress(70)
+        progress_bar.progress(60)
 
         # 调试信息
         if data is None:
@@ -460,12 +520,11 @@ def analyze_stock_page():
         if len(data) < 30:
             st.warning(f"⚠️ {symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
-        status_text.text("⏳ 正在合并实时数据...")
+        status_text.text("⏳ 正在合并实时行情...")
         # 如果有实时行情，合并到历史数据中
         if quote and data is not None and not data.empty:
             from datetime import datetime
             now = datetime.now()
-            # 创建实时数据行
             realtime_row = pd.DataFrame({
                 'open': [quote['open']],
                 'high': [quote['high']],
@@ -473,13 +532,14 @@ def analyze_stock_page():
                 'close': [quote['price']],
                 'volume': [quote['volume']]
             }, index=[now])
-            # 合并数据
             data = pd.concat([data, realtime_row])
-            st.write(f"✅ 已合并实时数据，共 {len(data)} 天")
+        progress_bar.progress(75)
 
-        status_text.text("⏳ 正在计算技术指标...")
-        # 计算指标（包含实时数据）
+        status_text.text("⏳ 正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
         data = TechnicalIndicators.calculate_all(data)
+        progress_bar.progress(90)
+
+        status_text.text("⏳ 正在生成交易信号...")
         signals = TechnicalIndicators.get_signals(data)
         progress_bar.progress(100)
 
@@ -528,9 +588,17 @@ def analyze_stock_page():
             with cols[2]:
                 st.metric("最低", f"{quote['low']:.2f}")
             with cols[3]:
-                volume = quote['volume'] / 10000 if quote['volume'] > 10000 else quote['volume']
-                unit = "万" if quote['volume'] > 10000 else ""
-                st.metric("成交量", f"{volume:.0f}{unit}")
+                vol = quote['volume']
+                if vol >= 1e8:
+                    volume = vol / 1e8
+                    unit = "亿"
+                elif vol >= 1e4:
+                    volume = vol / 1e4
+                    unit = "万"
+                else:
+                    volume = vol
+                    unit = ""
+                st.metric("成交量", f"{volume:.1f}{unit}")
             with cols[4]:
                 st.metric("今开", f"{quote['open']:.2f}")
 
@@ -1030,7 +1098,11 @@ def compare_stocks_page():
                             '名称': fetcher.get_stock_name(symbol, market),
                             '最新价': f"{latest['close']:.2f}",
                             '涨跌幅': f"{change_pct:.2f}%",
-                            '成交量': f"{latest['volume']/10000:.0f}万",
+                            '成交量': (
+                                f"{latest['volume']/1e8:.1f}亿" if latest['volume'] >= 1e8 else
+                                f"{latest['volume']/1e4:.0f}万" if latest['volume'] >= 1e4 else
+                                f"{latest['volume']:.0f}"
+                            ),
                             'RSI(6)': f"{latest['rsi_6']:.1f}",
                             'MACD': f"{latest['macd']:.3f}",
                             'KDJ-K': f"{latest['kdj_k']:.1f}",
