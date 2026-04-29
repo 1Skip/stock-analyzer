@@ -56,7 +56,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 自定义CSS样式
+# 自定义CSS样式（暗色/亮色主题兼容：使用半透明色和继承色）
 st.markdown("""
 <style>
     .main-header {
@@ -65,12 +65,6 @@ st.markdown("""
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 0.5rem 0;
     }
     .buy-signal {
         color: #cc0000;
@@ -81,18 +75,17 @@ st.markdown("""
         font-weight: bold;
     }
     .neutral-signal {
-        color: #7f8c8d;
+        opacity: 0.7;
     }
     .stock-card {
-        background-color: #ffffff;
-        border: 1px solid #e0e0e0;
+        background-color: rgba(128, 128, 128, 0.08);
+        border: 1px solid rgba(128, 128, 128, 0.2);
         border-radius: 10px;
         padding: 1rem;
         margin: 0.5rem 0;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
     .watchlist-item {
-        background-color: #f8f9fa;
+        background-color: rgba(128, 128, 128, 0.06);
         border-radius: 5px;
         padding: 0.5rem;
         margin: 0.25rem 0;

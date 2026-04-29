@@ -38,3 +38,4 @@ update.json
 *.b64.clean
 *.b64.oneline
 .stock_cache.json
+watchlist.json

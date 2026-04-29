@@ -20,7 +20,7 @@
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义(苹果概念/特斯拉/电力/算力租赁)，多因子评分(0-100) |
-| `watchlist.py` | 自选股管理 | 仅存 Streamlit session state，未持久化 |
+| `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存 |
 | `debug_recommendation.py` | 调试脚本 | 引用的 `get_short_term_recommendations` 等方法可能不存在 |
 | `sector_recommend.py` | 板块推荐入口 | 独立脚本，依赖 `holdings.json` 和 `sectors_config.json` |
 | `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare |
@@ -61,7 +61,6 @@
 
 - `debug_recommendation.py` 调用 `get_short_term_recommendations()` 和 `get_sector_short_term_recommendations()` 可能报错 —— 已接近废弃
 - `chart_plotter.py` 与 `app.py` 的图表逻辑重复，改图表需两边同步
-- watchlist 无持久化，刷新页面丢失
 - 港股/美股热门排行功能远弱于 A 股
 - **根目录历史遗留文件**（可在确认无引用后清理）：
   - `app.py.b64` / `app.py.b64.clean` / `app.py.b64.oneline` —— 旧版 base64 备份
