@@ -59,14 +59,8 @@
 
 ## 6. 已知问题（修改时注意）
 
-- `debug_recommendation.py` 调用 `get_short_term_recommendations()` 和 `get_sector_short_term_recommendations()` 可能报错 —— 已接近废弃
 - `chart_plotter.py` 与 `app.py` 的图表逻辑重复，改图表需两边同步
 - 港股/美股热门排行功能远弱于 A 股
-- **根目录历史遗留文件**（可在确认无引用后清理）：
-  - `app.py.b64` / `app.py.b64.clean` / `app.py.b64.oneline` —— 旧版 base64 备份
-  - `update.json` / `update_github.py` / `update_github.bat` —— 旧版更新脚本
-  - 多个功能重叠的 `.bat` / `.vbs` / `.ps1` 便捷脚本
-- **项目当前无任何自动化测试**，详见测试策略建议（SKILL.md:testing-expert）
 
 ## 7. 常用命令
 

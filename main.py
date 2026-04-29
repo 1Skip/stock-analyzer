@@ -15,7 +15,6 @@ from technical_indicators import TechnicalIndicators
 from chart_plotter import ChartPlotter
 from stock_recommendation import StockRecommender
 
-import pandas as pd
 from datetime import datetime
 
 
@@ -94,7 +93,7 @@ class StockAnalyzer:
 
         # RSI
         print(f"├" + "─"*50 + "┤")
-        print(f"│ RSI(14): {signals['rsi']:17s} │")
+        print(f"│ RSI(6): {signals['rsi']:18s} │")
 
         # KDJ
         print(f"├" + "─"*50 + "┤")
@@ -118,7 +117,7 @@ class StockAnalyzer:
         # 综合建议
         print(f"├" + "─"*50 + "┤")
         recommendation = signals['recommendation']
-        rec_symbol = "★" if "买入" in recommendation else "▼" if "卖出" in recommendation else "○"
+        rec_symbol = "★" if "偏多" in recommendation else "▼" if "偏空" in recommendation else "○"
         print(f"│ 综合建议: {rec_symbol} {recommendation:15s} │")
         print(f"└" + "─"*50 + "┘")
 
@@ -206,11 +205,11 @@ class StockAnalyzer:
         for i, stock in enumerate(recommended, 1):
             # 获取关键信号
             key_signals = []
-            if "买入" in stock['signals']['macd']:
+            if "金叉" in stock['signals']['macd']:
                 key_signals.append("MACD金叉")
             if "超卖" in stock['signals']['rsi']:
                 key_signals.append("RSI超卖")
-            if "买入" in stock['signals']['kdj']:
+            if "金叉" in stock['signals']['kdj']:
                 key_signals.append("KDJ金叉")
 
             key_signal_str = ", ".join(key_signals) if key_signals else "趋势向好"
@@ -226,7 +225,7 @@ class StockAnalyzer:
             print(f"\n{i}. {stock['symbol']} {stock['name']} (评分: {stock['score']})")
             print(f"   当前价格: {stock['latest_price']:.2f}")
             print(f"   技术指标:")
-            print(f"     - RSI(14): {stock['indicators']['rsi']}")
+            print(f"     - RSI(6): {stock['indicators']['rsi']}")
             print(f"     - MACD: {stock['indicators']['macd']:.3f} (Signal: {stock['indicators']['macd_signal']:.3f})")
             print(f"     - KDJ: K={stock['indicators']['kdj_k']:.1f}, D={stock['indicators']['kdj_d']:.1f}, J={stock['indicators']['kdj_j']:.1f}")
             print(f"     - BOLL: 上轨={stock['indicators']['boll_upper']:.2f}, 中轨={stock['indicators']['boll_mid']:.2f}, 下轨={stock['indicators']['boll_lower']:.2f}")
