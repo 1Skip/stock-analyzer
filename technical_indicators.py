@@ -32,10 +32,10 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_macd(data, fast=12, slow=26, signal=9):
         """
-        计算MACD指标
-        MACD = EMA(fast) - EMA(slow)
-        Signal = EMA(MACD, signal)
-        Histogram = MACD - Signal
+        计算MACD指标 — 同花顺标准算法
+        DIF = EMA(fast) - EMA(slow)
+        DEA = EMA(DIF, signal)
+        MACD柱 = 2 × (DIF - DEA)
         """
         df = data.copy()
 
@@ -43,14 +43,14 @@ class TechnicalIndicators:
         ema_fast = df['close'].ewm(span=fast, adjust=False).mean()
         ema_slow = df['close'].ewm(span=slow, adjust=False).mean()
 
-        # MACD线
+        # DIF线（同花顺：DIF = EMA(fast) - EMA(slow)）
         df['macd'] = ema_fast - ema_slow
 
-        # 信号线
+        # DEA线（同花顺：DEA = EMA(DIF, signal)）
         df['macd_signal'] = df['macd'].ewm(span=signal, adjust=False).mean()
 
-        # MACD柱状图 (MACD - Signal)
-        df['macd_hist'] = df['macd'] - df['macd_signal']
+        # MACD柱状图（同花顺标准：2倍柱 = 2 × (DIF - DEA)）
+        df['macd_hist'] = 2 * (df['macd'] - df['macd_signal'])
 
         return df
 

@@ -32,9 +32,9 @@ class TestMACD:
         assert len(df) == len(uptrend_data)
 
     def test_macd_hist_equals_diff(self, uptrend_data):
-        """MACD柱 = MACD线 - 信号线"""
+        """MACD柱 = 2 × (MACD线 - 信号线) 同花顺标准"""
         df = TechnicalIndicators.calculate_macd(uptrend_data)
-        expected = df['macd'] - df['macd_signal']
+        expected = 2 * (df['macd'] - df['macd_signal'])
         pd.testing.assert_series_equal(
             df['macd_hist'].round(6), expected.round(6), check_names=False
         )
