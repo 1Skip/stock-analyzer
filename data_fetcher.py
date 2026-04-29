@@ -497,7 +497,7 @@ class StockDataFetcher:
                         data = match.group(1).split(',')
                         if len(data) >= 1 and data[0]:
                             return data[0]
-            except:
+            except Exception:
                 pass
 
             # 备选：查映射表

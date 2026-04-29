@@ -26,23 +26,23 @@ from config import (
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_STOCK_DATA, show_spinner=False)
 def get_cached_stock_data(symbol, period, market):
-    """缓存股票数据获取 - 30秒缓存确保数据新鲜"""
+    """缓存股票数据获取"""
     try:
         return fetcher.get_stock_data(symbol, period=period, market=market)
     except Exception as e:
         return None
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_STOCK_INFO, show_spinner=False)
 def get_cached_stock_info(symbol, market):
-    """缓存股票基本信息 - 30秒缓存"""
+    """缓存股票基本信息"""
     try:
         return fetcher.get_stock_info(symbol, market)
     except Exception as e:
         return {}
 
-@st.cache_data(ttl=10, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_REALTIME, show_spinner=False)
 def get_cached_realtime_quote(symbol, market):
     """缓存实时行情 - 10秒缓存确保实时性"""
     try:
@@ -75,11 +75,11 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     .buy-signal {
-        color: #e74c3c;
+        color: #cc0000;
         font-weight: bold;
     }
     .sell-signal {
-        color: #27ae60;
+        color: #008844;
         font-weight: bold;
     }
     .neutral-signal {
@@ -145,11 +145,13 @@ def plot_candlestick_chart(data, title="K线图"):
 
     # 移动平均线
     if 'ma5' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma5'], name='MA5', line=dict(color='orange')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['ma5'], name='MA5', line=dict(color='orange', width=1)), row=1, col=1)
+    if 'ma10' in data.columns:
+        fig.add_trace(go.Scatter(x=data.index, y=data['ma10'], name='MA10', line=dict(color='cyan', width=1)), row=1, col=1)
     if 'ma20' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma20'], name='MA20', line=dict(color='blue')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['ma20'], name='MA20', line=dict(color='blue', width=1)), row=1, col=1)
     if 'ma60' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma60'], name='MA60', line=dict(color='purple')), row=1, col=1)
+        fig.add_trace(go.Scatter(x=data.index, y=data['ma60'], name='MA60', line=dict(color='purple', width=1)), row=1, col=1)
 
     # 成交量
     if 'volume' in data.columns:
@@ -663,7 +665,7 @@ def analyze_stock_page():
         with st.expander("查看原始数据"):
             st.dataframe(data.tail(20))
 
-@st.cache_data(ttl=180, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
 def get_cached_hot_stocks(market):
     """缓存热门股票数据"""
     recommender = StockRecommender()
@@ -780,7 +782,7 @@ def hot_stocks_page():
             else:
                 st.info("暂无美股热门数据")
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_RECOMMENDED, show_spinner=False)
 def get_cached_recommended_stocks(num_stocks):
     """缓存推荐股票数据"""
     recommender = StockRecommender()
@@ -826,13 +828,13 @@ def display_recommendation_list(recommended, strategy_name):
 
             st.divider()
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_SHORT_TERM, show_spinner=False)
 def get_cached_short_term_stocks(num_stocks):
     """获取短线推荐股票（基于短期技术指标）"""
     recommender = StockRecommender()
     return recommender.get_short_term_recommendations(num_stocks=num_stocks)
 
-@st.cache_data(ttl=600, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_SECTOR, show_spinner=False)
 def get_cached_sector_stocks(sector_name, num_stocks):
     """获取板块短线推荐股票"""
     recommender = StockRecommender()
@@ -1140,7 +1142,7 @@ def compare_stocks_page():
                                 name=f"{symbol} ({fetcher.get_stock_name(symbol, market)})",
                                 mode='lines'
                             ))
-                        except:
+                        except Exception:
                             continue
 
                 fig.update_layout(

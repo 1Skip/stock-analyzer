@@ -113,7 +113,7 @@ class StockRecommender:
                     '成交额': int(latest['Volume'] * latest['Close']),
                     '热度分数': round(abs(change), 2)
                 }
-            except:
+            except Exception:
                 return None
 
         # 使用线程池加速
@@ -169,7 +169,7 @@ class StockRecommender:
                     'volume': int(latest['Volume']),
                     'market_cap': info.get('marketCap', 0)
                 }
-            except:
+            except Exception:
                 return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
