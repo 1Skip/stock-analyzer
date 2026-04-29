@@ -5,7 +5,7 @@
 """
 import pandas as pd
 import numpy as np
-from MyTT import EMA, MA, STD, KDJ, RSI
+from MyTT import EMA, MA, KDJ, RSI
 
 
 class TechnicalIndicators:
@@ -80,16 +80,16 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_boll(data, period=20, std_dev=2):
         """
-        计算布林带 (BOLL) 指标 — MyTT底层MA+STD（跳过RD舍入，与同花顺完全一致）
+        计算布林带 (BOLL) 指标 — 样本标准差ddof=1（同花顺标准算法）
         中轨 = N日移动平均线
-        上轨 = 中轨 + N日标准差 × 倍数
-        下轨 = 中轨 - N日标准差 × 倍数
+        上轨 = 中轨 + N日样本标准差 × 倍数
+        下轨 = 中轨 - N日样本标准差 × 倍数
         """
         df = data.copy()
         close = df['close'].values.astype(np.float64)
 
         mid = MA(close, period)
-        std = STD(close, period)
+        std = pd.Series(close).rolling(period).std(ddof=1).values
         upper = mid + std * std_dev
         lower = mid - std * std_dev
 
