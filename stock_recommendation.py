@@ -10,7 +10,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # 导入热门股票列表
-from data_fetcher import POPULAR_CN_STOCKS, POPULAR_US_STOCKS
+from data_fetcher import POPULAR_CN_STOCKS, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
 
 # 板块股票定义 - 短线龙头股
 SECTOR_STOCKS = {
@@ -141,6 +141,76 @@ class StockRecommender:
         stocks = self.get_hot_stocks_cn(limit=30)
         losers = [s for s in stocks if s['涨跌幅'] < 0]
         losers.sort(key=lambda x: x['涨跌幅'])
+        return losers[:limit]
+
+    def get_hot_stocks_hk(self, limit=20):
+        """获取港股热门股票（使用yfinance数据源）"""
+        results = []
+
+        def fetch_stock_info(stock):
+            try:
+                symbol = stock['code']
+                ticker = yf.Ticker(f"{symbol}.HK")
+                hist = ticker.history(period="5d")
+                info = ticker.info
+
+                if hist.empty or len(hist) < 2:
+                    return None
+
+                latest = hist.iloc[-1]
+                prev = hist.iloc[-2]
+                change = ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
+
+                return {
+                    '代码': symbol,
+                    '名称': stock['name'],
+                    '最新价': round(latest['Close'], 2),
+                    '涨跌幅': round(change, 2),
+                    '换手率': None,
+                    '成交量': int(latest['Volume']),
+                    '成交额': int(latest['Volume'] * latest['Close']),
+                    '热度分数': round(abs(change), 2)
+                }
+            except Exception:
+                return None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(fetch_stock_info, stock): stock
+                      for stock in POPULAR_HK_STOCKS[:limit]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        results.sort(key=lambda x: x['热度分数'], reverse=True)
+        return results[:limit]
+
+    def get_top_gainers_hk(self, limit=10):
+        """获取港股涨幅榜"""
+        stocks = self.get_hot_stocks_hk(limit=30)
+        gainers = [s for s in stocks if s['涨跌幅'] > 0]
+        gainers.sort(key=lambda x: x['涨跌幅'], reverse=True)
+        return gainers[:limit]
+
+    def get_top_losers_hk(self, limit=10):
+        """获取港股跌幅榜"""
+        stocks = self.get_hot_stocks_hk(limit=30)
+        losers = [s for s in stocks if s['涨跌幅'] < 0]
+        losers.sort(key=lambda x: x['涨跌幅'])
+        return losers[:limit]
+
+    def get_top_gainers_us(self, limit=10):
+        """获取美股涨幅榜"""
+        stocks = self.get_hot_stocks_us(limit=30)
+        gainers = [s for s in stocks if s['change'] > 0]
+        gainers.sort(key=lambda x: x['change'], reverse=True)
+        return gainers[:limit]
+
+    def get_top_losers_us(self, limit=10):
+        """获取美股跌幅榜"""
+        stocks = self.get_hot_stocks_us(limit=30)
+        losers = [s for s in stocks if s['change'] < 0]
+        losers.sort(key=lambda x: x['change'])
         return losers[:limit]
 
     def get_hot_stocks_us(self, limit=20):

@@ -7,7 +7,8 @@ import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
 import pandas as pd
 
-from config import COLOR_SCHEMES, DEFAULT_COLOR_SCHEME
+from config import RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD
+from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
 
 # 设置中文显示
 plt.rcParams['font.sans-serif'] = ['SimHei', 'DejaVu Sans', 'Arial Unicode MS']
@@ -18,10 +19,23 @@ class ChartPlotter:
     """图表绘制器"""
 
     @staticmethod
-    def _get_colors(color_scheme='red_up'):
-        """获取配色方案"""
-        scheme = COLOR_SCHEMES.get(color_scheme, COLOR_SCHEMES['red_up'])
-        return scheme['increasing'], scheme['decreasing']
+    def _draw_candlestick_bars(ax, df, up_color, down_color):
+        """在 matplotlib Axes 上绘制K线蜡烛（实体矩形+影线）"""
+        for idx, row in df.iterrows():
+            if row['close'] >= row['open']:
+                color = up_color
+                edgecolor = up_color
+            else:
+                color = down_color
+                edgecolor = down_color
+
+            height = abs(row['close'] - row['open'])
+            bottom = min(row['close'], row['open'])
+            rect = Rectangle((idx - 0.3, bottom), 0.6, height,
+                           facecolor=color, edgecolor=edgecolor, linewidth=1)
+            ax.add_patch(rect)
+            ax.plot([idx, idx], [row['low'], row['high']],
+                   color=edgecolor, linewidth=1)
 
     @staticmethod
     def plot_candlestick(data, title="K线图", save_path=None, show_volume=True, color_scheme='red_up'):
@@ -32,7 +46,9 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
-        up_color, down_color = ChartPlotter._get_colors(color_scheme)
+        scheme = resolve_color_scheme(color_scheme)
+        up_color = scheme['increasing']
+        down_color = scheme['decreasing']
         df = data.copy()
 
         # 创建子图
@@ -45,26 +61,7 @@ class ChartPlotter:
             ax2 = None
 
         # 绘制K线
-        for idx, row in df.iterrows():
-            x = idx
-
-            if row['close'] >= row['open']:
-                color = up_color
-                edgecolor = up_color
-            else:
-                color = down_color
-                edgecolor = down_color
-
-            # 绘制实体
-            height = abs(row['close'] - row['open'])
-            bottom = min(row['close'], row['open'])
-            rect = Rectangle((x - 0.3, bottom), 0.6, height,
-                            facecolor=color, edgecolor=edgecolor, linewidth=1)
-            ax1.add_patch(rect)
-
-            # 绘制影线
-            ax1.plot([x, x], [row['low'], row['high']],
-                    color=edgecolor, linewidth=1)
+        ChartPlotter._draw_candlestick_bars(ax1, df, up_color, down_color)
 
         # 设置标题和标签
         ax1.set_title(title, fontsize=16, fontweight='bold')
@@ -73,8 +70,7 @@ class ChartPlotter:
 
         # 绘制成交量
         if ax2 is not None and 'volume' in df.columns:
-            colors = [up_color if df['close'].iloc[i] >= df['open'].iloc[i]
-                     else down_color for i in range(len(df))]
+            colors = get_volume_colors(df, up_color, down_color)
             ax2.bar(df.index, df['volume'], color=colors, alpha=0.7, width=0.6)
             ax2.set_ylabel('成交量', fontsize=12)
             ax2.set_xlabel('日期', fontsize=12)
@@ -103,7 +99,9 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
-        up_color, down_color = ChartPlotter._get_colors(color_scheme)
+        scheme = resolve_color_scheme(color_scheme)
+        up_color = scheme['increasing']
+        down_color = scheme['decreasing']
         df = data.copy()
 
         # 创建6个子图: K线+MA, 成交量, MACD, RSI, KDJ, BOLL
@@ -118,32 +116,14 @@ class ChartPlotter:
         ax6 = fig.add_subplot(gs[5], sharex=ax1)  # BOLL
 
         # 1. 绘制K线和移动平均线
-        for idx, row in df.iterrows():
-            x = idx
-            if row['close'] >= row['open']:
-                color = up_color
-                edgecolor = up_color
-            else:
-                color = down_color
-                edgecolor = down_color
-
-            height = abs(row['close'] - row['open'])
-            bottom = min(row['close'], row['open'])
-            rect = Rectangle((x - 0.3, bottom), 0.6, height,
-                            facecolor=color, edgecolor=edgecolor, linewidth=1)
-            ax1.add_patch(rect)
-            ax1.plot([x, x], [row['low'], row['high']],
-                    color=edgecolor, linewidth=1)
+        ChartPlotter._draw_candlestick_bars(ax1, df, up_color, down_color)
 
         # 绘制移动平均线
-        if 'ma5' in df.columns:
-            ax1.plot(df.index, df['ma5'], label='MA5', color='orange', linewidth=1)
-        if 'ma10' in df.columns:
-            ax1.plot(df.index, df['ma10'], label='MA10', color='blue', linewidth=1)
-        if 'ma20' in df.columns:
-            ax1.plot(df.index, df['ma20'], label='MA20', color='purple', linewidth=1)
-        if 'ma60' in df.columns:
-            ax1.plot(df.index, df['ma60'], label='MA60', color='green', linewidth=1)
+        for ma_conf in MA_CONFIG.values():
+            col_name = f'ma{ma_conf["period"]}'
+            if col_name in df.columns:
+                ax1.plot(df.index, df[col_name], label=ma_conf['label'],
+                        color=ma_conf['color'], linewidth=1)
 
         ax1.set_title(title, fontsize=16, fontweight='bold')
         ax1.legend(loc='upper left')
@@ -152,8 +132,7 @@ class ChartPlotter:
 
         # 2. 成交量
         if 'volume' in df.columns:
-            colors = [up_color if df['close'].iloc[i] >= df['open'].iloc[i]
-                     else down_color for i in range(len(df))]
+            colors = get_volume_colors(df, up_color, down_color)
             ax2.bar(df.index, df['volume'], color=colors, alpha=0.7, width=0.6)
         ax2.set_ylabel('成交量')
         ax2.grid(True, alpha=0.3)
@@ -165,7 +144,7 @@ class ChartPlotter:
 
             # MACD柱状图
             macd_hist = df['macd_hist']
-            colors = [up_color if v >= 0 else down_color for v in macd_hist]
+            colors = get_macd_hist_colors(macd_hist, up_color, down_color)
             ax3.bar(df.index, macd_hist, color=colors, alpha=0.7, width=0.6)
             ax3.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
 
@@ -176,9 +155,9 @@ class ChartPlotter:
         # 4. RSI
         if 'rsi' in df.columns:
             ax4.plot(df.index, df['rsi'], label='RSI', color='purple', linewidth=1.5)
-            ax4.axhline(y=70, color='red', linestyle='--', linewidth=1, label='超买(70)')
-            ax4.axhline(y=30, color='green', linestyle='--', linewidth=1, label='超卖(30)')
-            ax4.fill_between(df.index, 30, 70, alpha=0.1, color='gray')
+            ax4.axhline(y=RSI_OVERBOUGHT, color='red', linestyle='--', linewidth=1, label=f'超买({RSI_OVERBOUGHT})')
+            ax4.axhline(y=RSI_OVERSOLD, color='green', linestyle='--', linewidth=1, label=f'超卖({RSI_OVERSOLD})')
+            ax4.fill_between(df.index, RSI_OVERSOLD, RSI_OVERBOUGHT, alpha=0.1, color='gray')
             ax4.set_ylim(0, 100)
 
         ax4.set_ylabel('RSI')
@@ -190,8 +169,8 @@ class ChartPlotter:
             ax5.plot(df.index, df['kdj_k'], label='K', color='blue', linewidth=1)
             ax5.plot(df.index, df['kdj_d'], label='D', color='orange', linewidth=1)
             ax5.plot(df.index, df['kdj_j'], label='J', color='purple', linewidth=1)
-            ax5.axhline(y=80, color='red', linestyle='--', linewidth=1)
-            ax5.axhline(y=20, color='green', linestyle='--', linewidth=1)
+            ax5.axhline(y=KDJ_OVERBOUGHT, color='red', linestyle='--', linewidth=1)
+            ax5.axhline(y=KDJ_OVERSOLD, color='green', linestyle='--', linewidth=1)
             ax5.set_ylabel('KDJ')
             ax5.legend(loc='upper left')
             ax5.grid(True, alpha=0.3)
@@ -231,7 +210,9 @@ class ChartPlotter:
             print("无数据可绘制")
             return
 
-        up_color, down_color = ChartPlotter._get_colors(color_scheme)
+        scheme = resolve_color_scheme(color_scheme)
+        up_color = scheme['increasing']
+        down_color = scheme['decreasing']
         df = data.copy()
         fig, axes = plt.subplots(2, 1, figsize=(14, 8),
                                 gridspec_kw={'height_ratios': [2, 1]},
@@ -240,22 +221,7 @@ class ChartPlotter:
         ax1, ax2 = axes
 
         # 上图: K线
-        for idx, row in df.iterrows():
-            x = idx
-            if row['close'] >= row['open']:
-                color = up_color
-                edgecolor = up_color
-            else:
-                color = down_color
-                edgecolor = down_color
-
-            height = abs(row['close'] - row['open'])
-            bottom = min(row['close'], row['open'])
-            rect = Rectangle((x - 0.3, bottom), 0.6, height,
-                            facecolor=color, edgecolor=edgecolor, linewidth=1)
-            ax1.add_patch(rect)
-            ax1.plot([x, x], [row['low'], row['high']],
-                    color=edgecolor, linewidth=1)
+        ChartPlotter._draw_candlestick_bars(ax1, df, up_color, down_color)
 
         ax1.set_title(title or f"{indicator.upper()} 指标分析", fontsize=14, fontweight='bold')
         ax1.grid(True, alpha=0.3)
@@ -265,16 +231,16 @@ class ChartPlotter:
         if indicator == 'macd' and 'macd' in df.columns:
             ax2.plot(df.index, df['macd'], label='MACD', color='blue', linewidth=1.5)
             ax2.plot(df.index, df['macd_signal'], label='Signal', color='red', linewidth=1.5)
-            colors = [up_color if v >= 0 else down_color for v in df['macd_hist']]
+            colors = get_macd_hist_colors(df['macd_hist'], up_color, down_color)
             ax2.bar(df.index, df['macd_hist'], color=colors, alpha=0.7, width=0.6)
             ax2.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
             ax2.set_ylabel('MACD')
 
         elif indicator == 'rsi' and 'rsi' in df.columns:
             ax2.plot(df.index, df['rsi'], label='RSI', color='purple', linewidth=2)
-            ax2.axhline(y=70, color='red', linestyle='--', linewidth=1.5, label='超买(70)')
-            ax2.axhline(y=30, color='green', linestyle='--', linewidth=1.5, label='超卖(30)')
-            ax2.fill_between(df.index, 30, 70, alpha=0.1, color='gray')
+            ax2.axhline(y=RSI_OVERBOUGHT, color='red', linestyle='--', linewidth=1.5, label=f'超买({RSI_OVERBOUGHT})')
+            ax2.axhline(y=RSI_OVERSOLD, color='green', linestyle='--', linewidth=1.5, label=f'超卖({RSI_OVERSOLD})')
+            ax2.fill_between(df.index, RSI_OVERSOLD, RSI_OVERBOUGHT, alpha=0.1, color='gray')
             ax2.set_ylim(0, 100)
             ax2.set_ylabel('RSI')
 
@@ -282,8 +248,8 @@ class ChartPlotter:
             ax2.plot(df.index, df['kdj_k'], label='K', color='blue', linewidth=1.5)
             ax2.plot(df.index, df['kdj_d'], label='D', color='orange', linewidth=1.5)
             ax2.plot(df.index, df['kdj_j'], label='J', color='purple', linewidth=1.5)
-            ax2.axhline(y=80, color='red', linestyle='--', linewidth=1)
-            ax2.axhline(y=20, color='green', linestyle='--', linewidth=1)
+            ax2.axhline(y=KDJ_OVERBOUGHT, color='red', linestyle='--', linewidth=1)
+            ax2.axhline(y=KDJ_OVERSOLD, color='green', linestyle='--', linewidth=1)
             ax2.set_ylabel('KDJ')
 
         elif indicator == 'boll' and 'boll_upper' in df.columns:

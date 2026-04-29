@@ -19,7 +19,8 @@
 | `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance 三级回退，带健康检查和离线缓存 |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
-| `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义(苹果概念/特斯拉/电力/算力租赁)，多因子评分(0-100) |
+| `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
+| `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义(苹果概念/特斯拉/电力/算力租赁)，多因子评分(0-100)，支持 CN/US/HK |
 | `config.py` | 集中配置 | 所有参数 + 三种配色方案 + 评分权重 + 信号阈值，支持环境变量覆盖 |
 | `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存 |
 | `tests/` | 测试框架 | conftest.py 夹具 + test_technical_indicators.py（37 测试） |
@@ -59,8 +60,7 @@
 
 ## 6. 已知问题（修改时注意）
 
-- `chart_plotter.py` 与 `app.py` 的图表逻辑重复，改图表需两边同步
-- 港股/美股热门排行功能远弱于 A 股
+- 暂无，待发现新问题后补充。
 
 ## 7. 常见错误与解决方案
 

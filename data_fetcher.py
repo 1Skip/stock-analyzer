@@ -723,7 +723,8 @@ CN_STOCK_NAMES_EXTENDED = {
     '000027': '深圳能源', '600900': '长江电力', '601985': '中国核电', '603920': '世运电路'
 }
 
-POPULAR_US_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'AMD', 'INTC']
+POPULAR_US_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'AMD', 'INTC',
+                   'JPM', 'V', 'WMT', 'JNJ', 'MA', 'PG', 'UNH', 'HD', 'BAC', 'DIS']
 
 POPULAR_CN_STOCKS = [
     {'code': '000001', 'name': '平安银行'}, {'code': '000002', 'name': '万科A'},
@@ -740,4 +741,27 @@ POPULAR_CN_STOCKS = [
     {'code': '601628', 'name': '中国人寿'}, {'code': '000568', 'name': '泸州老窖'},
     {'code': '000651', 'name': '格力电器'}, {'code': '002475', 'name': '立讯精密'},
     {'code': '603501', 'name': '韦尔股份'}, {'code': '603019', 'name': '中科曙光'}
+]
+
+POPULAR_HK_STOCKS = [
+    {'code': '00700', 'name': '腾讯控股'},
+    {'code': '09988', 'name': '阿里巴巴'},
+    {'code': '03690', 'name': '美团'},
+    {'code': '00005', 'name': '汇丰控股'},
+    {'code': '01299', 'name': '友邦保险'},
+    {'code': '00388', 'name': '香港交易所'},
+    {'code': '00939', 'name': '建设银行'},
+    {'code': '01398', 'name': '工商银行'},
+    {'code': '03988', 'name': '中国银行'},
+    {'code': '02318', 'name': '中国平安'},
+    {'code': '00941', 'name': '中国移动'},
+    {'code': '00883', 'name': '中国海油'},
+    {'code': '01810', 'name': '小米集团'},
+    {'code': '01211', 'name': '比亚迪股份'},
+    {'code': '09618', 'name': '京东集团'},
+    {'code': '09999', 'name': '网易'},
+    {'code': '09888', 'name': '百度集团'},
+    {'code': '01024', 'name': '快手'},
+    {'code': '00992', 'name': '联想集团'},
+    {'code': '00981', 'name': '中芯国际'},
 ]

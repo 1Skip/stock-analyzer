@@ -175,6 +175,41 @@ class StockAnalyzer:
                 print(f"{stock['代码']:<8} {stock['名称']:<12} "
                       f"{stock['最新价']:<10.2f} {stock['涨跌幅']:.2f}%")
 
+        elif market == 'HK':
+            hot_stocks = self.recommender.get_hot_stocks_hk(limit=limit)
+
+            print(f"\n{'排名':<4} {'代码':<8} {'名称':<10} {'价格':<10} {'涨跌幅':<10} {'换手率':<8}")
+            print("-" * 60)
+
+            for i, stock in enumerate(hot_stocks, 1):
+                change = stock['涨跌幅']
+                change_str = f"+{change:.2f}%" if change > 0 else f"{change:.2f}%"
+                turnover = stock['换手率'] or 0
+                print(f"{i:<4} {stock['代码']:<8} {stock['名称']:<10} "
+                      f"{stock['最新价']:<10.2f} {change_str:<10} {turnover:.2f}%")
+
+            # 显示涨幅榜
+            print(f"\n{'='*60}")
+            print("涨幅榜 TOP 10")
+            print(f"{'='*60}")
+            gainers = self.recommender.get_top_gainers_hk(limit=10)
+            print(f"{'代码':<8} {'名称':<12} {'价格':<10} {'涨跌幅':<10}")
+            print("-" * 50)
+            for stock in gainers:
+                print(f"{stock['代码']:<8} {stock['名称']:<12} "
+                      f"{stock['最新价']:<10.2f} +{stock['涨跌幅']:.2f}%")
+
+            # 显示跌幅榜
+            print(f"\n{'='*60}")
+            print("跌幅榜 TOP 10")
+            print(f"{'='*60}")
+            losers = self.recommender.get_top_losers_hk(limit=10)
+            print(f"{'代码':<8} {'名称':<12} {'价格':<10} {'涨跌幅':<10}")
+            print("-" * 50)
+            for stock in losers:
+                print(f"{stock['代码']:<8} {stock['名称']:<12} "
+                      f"{stock['最新价']:<10.2f} {stock['涨跌幅']:.2f}%")
+
         else:
             hot_stocks = self.recommender.get_hot_stocks_us(limit=limit)
             print(f"\n{'排名':<4} {'代码':<8} {'名称':<15} {'价格':<10} {'涨跌幅':<10} {'成交量':<12}")
@@ -185,6 +220,28 @@ class StockAnalyzer:
                 volume = stock['volume'] / 1000000  # 百万
                 print(f"{i:<4} {stock['symbol']:<8} {stock['name']:<15} "
                       f"{stock['price']:<10.2f} {change_str:<10} {volume:.2f}M")
+
+            # 显示涨幅榜
+            print(f"\n{'='*60}")
+            print("涨幅榜 TOP 10")
+            print(f"{'='*60}")
+            gainers = self.recommender.get_top_gainers_us(limit=10)
+            print(f"{'代码':<8} {'名称':<15} {'价格':<10} {'涨跌幅':<10}")
+            print("-" * 55)
+            for stock in gainers:
+                print(f"{stock['symbol']:<8} {stock['name']:<15} "
+                      f"{stock['price']:<10.2f} +{stock['change']:.2f}%")
+
+            # 显示跌幅榜
+            print(f"\n{'='*60}")
+            print("跌幅榜 TOP 10")
+            print(f"{'='*60}")
+            losers = self.recommender.get_top_losers_us(limit=10)
+            print(f"{'代码':<8} {'名称':<15} {'价格':<10} {'涨跌幅':<10}")
+            print("-" * 55)
+            for stock in losers:
+                print(f"{stock['symbol']:<8} {stock['name']:<15} "
+                      f"{stock['price']:<10.2f} {stock['change']:.2f}%")
 
     def show_recommended_stocks(self, num_stocks=10):
         """显示推荐股票"""
@@ -258,7 +315,7 @@ class StockAnalyzer:
                 self.analyze_stock(symbol, market=market, period=period, show_chart=True)
 
             elif choice == '2':
-                market = input("市场 (CN/US, 默认CN): ").strip().upper() or 'CN'
+                market = input("市场 (CN/US/HK, 默认CN): ").strip().upper() or 'CN'
                 self.show_hot_stocks(market=market)
 
             elif choice == '3':

@@ -15,11 +15,12 @@ from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
 from config import (
-    COLOR_SCHEMES, DEFAULT_COLOR_SCHEME,
     CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO,
     CACHE_TTL_HOT_STOCKS, CACHE_TTL_INDICATORS,
     CACHE_TTL_RECOMMENDED, CACHE_TTL_SHORT_TERM, CACHE_TTL_SECTOR,
+    RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD,
 )
+from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
 
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
@@ -97,17 +98,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-def get_chart_colors():
-    """获取当前配色方案（根据市场和用户选择）"""
-    market = st.session_state.get('analyze_market', 'CN')
-    scheme_name = st.session_state.get('color_scheme')
-    if not scheme_name:
-        scheme_name = DEFAULT_COLOR_SCHEME.get(market, 'red_up')
-    return COLOR_SCHEMES.get(scheme_name, COLOR_SCHEMES['red_up'])
-
 def plot_candlestick_chart(data, title="K线图"):
     """使用Plotly绘制K线图"""
-    colors = get_chart_colors()
+    scheme_name = st.session_state.get('color_scheme')
+    market = st.session_state.get('analyze_market', 'CN')
+    colors = resolve_color_scheme(scheme_name, market)
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
@@ -135,19 +130,15 @@ def plot_candlestick_chart(data, title="K线图"):
     )
 
     # 移动平均线
-    if 'ma5' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma5'], name='MA5', line=dict(color='orange', width=1)), row=1, col=1)
-    if 'ma10' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma10'], name='MA10', line=dict(color='cyan', width=1)), row=1, col=1)
-    if 'ma20' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma20'], name='MA20', line=dict(color='blue', width=1)), row=1, col=1)
-    if 'ma60' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['ma60'], name='MA60', line=dict(color='purple', width=1)), row=1, col=1)
+    for ma_conf in MA_CONFIG.values():
+        col_name = f'ma{ma_conf["period"]}'
+        if col_name in data.columns:
+            fig.add_trace(go.Scatter(x=data.index, y=data[col_name], name=ma_conf['label'],
+                                     line=dict(color=ma_conf['color'], width=1)), row=1, col=1)
 
     # 成交量
     if 'volume' in data.columns:
-        vol_colors = [inc_color if data['close'].iloc[i] >= data['open'].iloc[i] else dec_color
-                      for i in range(len(data))]
+        vol_colors = get_volume_colors(data, inc_color, dec_color)
         fig.add_trace(
             go.Bar(x=data.index, y=data['volume'], name='成交量', marker_color=vol_colors),
             row=2, col=1
@@ -159,7 +150,7 @@ def plot_candlestick_chart(data, title="K线图"):
         fig.add_trace(go.Scatter(x=data.index, y=data['macd_signal'], name='Signal', line=dict(color='red')), row=3, col=1)
 
         # MACD柱状图
-        colors_macd = [inc_color if v >= 0 else dec_color for v in data['macd_hist']]
+        colors_macd = get_macd_hist_colors(data['macd_hist'], inc_color, dec_color)
         fig.add_trace(
             go.Bar(x=data.index, y=data['macd_hist'], name='MACD Hist', marker_color=colors_macd),
             row=3, col=1
@@ -201,7 +192,9 @@ def plot_candlestick_chart(data, title="K线图"):
 
 def plot_rsi_chart(data):
     """绘制RSI图表"""
-    colors = get_chart_colors()
+    scheme_name = st.session_state.get('color_scheme')
+    market = st.session_state.get('analyze_market', 'CN')
+    colors = resolve_color_scheme(scheme_name, market)
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
@@ -211,12 +204,12 @@ def plot_rsi_chart(data):
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_6'], name='RSI(6)', line=dict(color='red', width=2)))
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_12'], name='RSI(12)', line=dict(color='orange', width=2)))
     fig.add_trace(go.Scatter(x=data.index, y=data['rsi_24'], name='RSI(24)', line=dict(color='purple', width=2)))
-    fig.add_hline(y=70, line_dash="dash", line_color=dec_color, annotation_text="超买(70)")
-    fig.add_hline(y=30, line_dash="dash", line_color=inc_color, annotation_text="超卖(30)")
+    fig.add_hline(y=RSI_OVERBOUGHT, line_dash="dash", line_color=dec_color, annotation_text=f"超买({RSI_OVERBOUGHT})")
+    fig.add_hline(y=RSI_OVERSOLD, line_dash="dash", line_color=inc_color, annotation_text=f"超卖({RSI_OVERSOLD})")
 
     # 超买超卖色带
-    fig.add_hrect(y0=0, y1=30, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
-    fig.add_hrect(y0=70, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
+    fig.add_hrect(y0=0, y1=RSI_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=RSI_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
         title="RSI指标 (6日/12日/24日)",
@@ -229,7 +222,9 @@ def plot_rsi_chart(data):
 
 def plot_kdj_chart(data):
     """绘制KDJ图表"""
-    colors = get_chart_colors()
+    scheme_name = st.session_state.get('color_scheme')
+    market = st.session_state.get('analyze_market', 'CN')
+    colors = resolve_color_scheme(scheme_name, market)
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
@@ -238,8 +233,8 @@ def plot_kdj_chart(data):
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_k'], name='K', line=dict(color='blue')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_d'], name='D', line=dict(color='orange')))
     fig.add_trace(go.Scatter(x=data.index, y=data['kdj_j'], name='J', line=dict(color='purple')))
-    fig.add_hline(y=80, line_dash="dash", line_color=dec_color, annotation_text="超买(80)")
-    fig.add_hline(y=20, line_dash="dash", line_color=inc_color, annotation_text="超卖(20)")
+    fig.add_hline(y=KDJ_OVERBOUGHT, line_dash="dash", line_color=dec_color, annotation_text=f"超买({KDJ_OVERBOUGHT})")
+    fig.add_hline(y=KDJ_OVERSOLD, line_dash="dash", line_color=inc_color, annotation_text=f"超卖({KDJ_OVERSOLD})")
 
     # KDJ金叉/死叉标记
     k_vals = data['kdj_k'].values
@@ -260,8 +255,8 @@ def plot_kdj_chart(data):
             showlegend=True, hovertemplate='KDJ死叉<br>%{x}<br>K: %{y:.1f}'))
 
     # 超买超卖色带
-    fig.add_hrect(y0=0, y1=20, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
-    fig.add_hrect(y0=80, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
+    fig.add_hrect(y0=0, y1=KDJ_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
+    fig.add_hrect(y0=KDJ_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
         title="KDJ指标 (随机指标)",
@@ -666,8 +661,18 @@ def get_cached_hot_stocks(market):
             'gainers': recommender.get_top_gainers_cn(limit=10),
             'losers': recommender.get_top_losers_cn(limit=10)
         }
+    elif market == "HK":
+        return {
+            'hot': recommender.get_hot_stocks_hk(limit=20),
+            'gainers': recommender.get_top_gainers_hk(limit=10),
+            'losers': recommender.get_top_losers_hk(limit=10)
+        }
     else:
-        return {'hot': recommender.get_hot_stocks_us(limit=20)}
+        return {
+            'hot': recommender.get_hot_stocks_us(limit=20),
+            'gainers': recommender.get_top_gainers_us(limit=10),
+            'losers': recommender.get_top_losers_us(limit=10)
+        }
 
 def hot_stocks_page():
     """热门股票页面"""
@@ -681,10 +686,10 @@ def hot_stocks_page():
         st.session_state.hot_market = st.session_state.hot_market_select
         st.session_state.hot_data_loaded = False  # 市场切换时重新加载
 
-    market_index = ["CN", "US"].index(st.session_state.hot_market)
-    market = st.selectbox("选择市场", options=["CN", "US"],
+    market_index = ["CN", "US", "HK"].index(st.session_state.hot_market) if st.session_state.hot_market in ["CN", "US", "HK"] else 0
+    market = st.selectbox("选择市场", options=["CN", "US", "HK"],
                          index=market_index,
-                         format_func=lambda x: {"CN": "A股", "US": "美股"}[x],
+                         format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
                          key="hot_market_select",
                          on_change=on_hot_market_change)
 
@@ -708,7 +713,7 @@ def hot_stocks_page():
         data = st.session_state.get('hot_data')
 
     if data:
-        if market == "CN":
+        if market in ("CN", "HK"):
             hot = data.get('hot', [])
             gainers = data.get('gainers', [])
             losers = data.get('losers', [])
@@ -767,11 +772,33 @@ def hot_stocks_page():
 
         else:
             hot = data.get('hot', [])
+            gainers = data.get('gainers', [])
+            losers = data.get('losers', [])
+
+            if not hot:
+                st.warning("暂无美股热门数据，请稍后重试")
+                return
+
+            st.subheader("📈 美股热门 TOP 20")
             df_hot = pd.DataFrame(hot)
             if not df_hot.empty:
                 st.dataframe(df_hot, use_container_width=True)
             else:
-                st.info("暂无美股热门数据")
+                st.info("暂无热门股票数据")
+
+            st.subheader("📊 涨幅榜 TOP 10")
+            df_gainers = pd.DataFrame(gainers)
+            if not df_gainers.empty:
+                st.dataframe(df_gainers, use_container_width=True)
+            else:
+                st.info("暂无涨幅榜数据")
+
+            st.subheader("📉 跌幅榜 TOP 10")
+            df_losers = pd.DataFrame(losers)
+            if not df_losers.empty:
+                st.dataframe(df_losers, use_container_width=True)
+            else:
+                st.info("暂无跌幅榜数据")
 
 @st.cache_data(ttl=CACHE_TTL_RECOMMENDED, show_spinner=False)
 def get_cached_recommended_stocks(num_stocks):
