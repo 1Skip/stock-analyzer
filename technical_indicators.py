@@ -57,9 +57,9 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_rsi(data, periods=[6, 12, 24]):
         """
-        计算RSI指标 (相对强弱指数)
+        计算RSI指标 (相对强弱指数) — 同花顺标准SMA算法
         RSI = 100 - (100 / (1 + RS))
-        RS = 平均上涨 / 平均下跌
+        RS = N日平均上涨 / N日平均下跌（简单移动平均）
         默认计算6日、12日、24日RSI
         """
         df = data.copy()
@@ -72,9 +72,9 @@ class TechnicalIndicators:
             gain = delta.where(delta > 0, 0)
             loss = -delta.where(delta < 0, 0)
 
-            # 使用指数移动平均计算RSI (Wilder's method)
-            avg_gain = gain.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-            avg_loss = loss.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+            # SMA平滑（同花顺/通达信/东方财富等国内平台标准）
+            avg_gain = gain.rolling(window=period, min_periods=period).mean()
+            avg_loss = loss.rolling(window=period, min_periods=period).mean()
 
             # 计算RS和RSI
             rs = avg_gain / avg_loss
@@ -105,8 +105,8 @@ class TechnicalIndicators:
         # 中轨 (简单移动平均线)
         df['boll_mid'] = df['close'].rolling(window=period).mean()
 
-        # 标准差
-        rolling_std = df['close'].rolling(window=period).std()
+        # 标准差（总体标准差，同花顺标准）
+        rolling_std = df['close'].rolling(window=period).std(ddof=0)
 
         # 上轨和下轨
         df['boll_upper'] = df['boll_mid'] + (rolling_std * std_dev)
@@ -123,11 +123,12 @@ class TechnicalIndicators:
     @staticmethod
     def calculate_kdj(data, n=9, m1=3, m2=3):
         """
-        计算KDJ指标 (随机指标)
+        计算KDJ指标 (随机指标) — 同花顺标准算法
         RSV = (当日收盘价 - N日内最低价) / (N日内最高价 - N日内最低价) * 100
         K = (m1-1)/m1 * 前一日K + 1/m1 * 当日RSV
         D = (m2-1)/m2 * 前一日D + 1/m2 * 当日K
         J = 3K - 2D
+        初始值：前n-1天K=D=50，第n天从50开始用EMA递推
         """
         df = data.copy()
 
@@ -155,18 +156,18 @@ class TechnicalIndicators:
         k_values = []
         d_values = []
 
-        # 同花顺初始值计算：前n-1天的K、D使用50
-        # 第n天开始，K和D使用RSV的3日EMA
+        # 同花顺初始值：前n-1天K=D=50，第n天从50开始EMA递推
         for i in range(len(df)):
             if i < n - 1:
                 # 前n-1天无有效值
                 k_values.append(50)
                 d_values.append(50)
             elif i == n - 1:
-                # 第n天，K和D使用RSV的EMA（同花顺标准做法）
-                # 从第n天开始，K = RSV, D = RSV
-                k_values.append(rsv.iloc[i])
-                d_values.append(rsv.iloc[i])
+                # 第n天，K和D从50开始用EMA计算（同花顺标准做法）
+                k = (1 - alpha_k) * 50 + alpha_k * rsv.iloc[i]
+                d = (1 - alpha_d) * 50 + alpha_d * k
+                k_values.append(k)
+                d_values.append(d)
             else:
                 # 递推公式
                 k = (1 - alpha_k) * k_values[-1] + alpha_k * rsv.iloc[i]
