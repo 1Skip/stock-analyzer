@@ -1,7 +1,9 @@
 """
 热门股票和推荐股票模块
-针对Streamlit Cloud优化（使用yfinance数据源）
+A股使用新浪财经批量行情，港股美股使用yfinance
 """
+import requests
+import re
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -66,64 +68,90 @@ class StockRecommender:
 
     def get_hot_stocks_cn(self, limit=20):
         """
-        获取A股热门股票（使用yfinance数据源）
+        获取A股热门股票（使用新浪财经批量行情，一次请求全部获取）
         """
         results = []
+        stocks = POPULAR_CN_STOCKS[:max(limit, 30)]  # 至少取30只用于涨跌幅榜
 
-        def fetch_stock_info(stock):
-            try:
-                symbol = stock['code']
-                ticker = yf.Ticker(f"{symbol}.SS")
-                hist = ticker.history(period="5d")
-                info = ticker.info
+        try:
+            # 为每只股票构造新浪代码（优先上海，尝试深圳）
+            headers = {
+                'Referer': 'https://finance.sina.com.cn',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
 
-                if hist.empty or len(hist) < 2:
-                    # 尝试深圳交易所
-                    ticker = yf.Ticker(f"{symbol}.SZ")
-                    hist = ticker.history(period="5d")
-                    info = ticker.info
+            # 先尝试批量获取上海（6开头）
+            sh_stocks = [s for s in stocks if s['code'].startswith(('600', '601', '603', '605', '688'))]
+            sz_stocks = [s for s in stocks if s not in sh_stocks]
 
-                if hist.empty or len(hist) < 2:
-                    return None
+            all_quotes = {}
 
-                latest = hist.iloc[-1]
-                prev = hist.iloc[-2]
-                change = ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-
-                # 尝试从全市场快照获取真实换手率
-                turnover = None
+            # 批量获取上海股票
+            if sh_stocks:
+                codes = [f"sh{s['code']}" for s in sh_stocks]
+                url = f"https://hq.sinajs.cn/list={','.join(codes)}"
                 try:
-                    from data_fetcher import StockDataFetcher
-                    spot_df = StockDataFetcher._get_spot_snapshot()
-                    if spot_df is not None:
-                        spot_row = spot_df[spot_df['代码'] == symbol]
-                        if not spot_row.empty:
-                            turnover = float(spot_row.iloc[0].get('换手率', None))
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        for line in resp.text.strip().split('\n'):
+                            match = re.search(r'hq_str_sh(\d+)="([^"]*)"', line)
+                            if match:
+                                code = match.group(1)
+                                data = match.group(2).split(',')
+                                if len(data) >= 33:
+                                    all_quotes[code] = data
                 except Exception:
                     pass
 
-                return {
-                    '代码': symbol,
-                    '名称': stock['name'],
-                    '最新价': round(latest['Close'], 2),
-                    '涨跌幅': round(change, 2),
-                    '换手率': round(turnover, 2) if turnover is not None else None,
-                    '成交量': int(latest['Volume']),
-                    '成交额': int(latest['Volume'] * latest['Close']),
-                    '热度分数': round(abs(change), 2)
-                }
-            except Exception:
-                return None
+            # 批量获取深圳股票
+            if sz_stocks:
+                codes = [f"sz{s['code']}" for s in sz_stocks]
+                url = f"https://hq.sinajs.cn/list={','.join(codes)}"
+                try:
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        for line in resp.text.strip().split('\n'):
+                            match = re.search(r'hq_str_sz(\d+)="([^"]*)"', line)
+                            if match:
+                                code = match.group(1)
+                                data = match.group(2).split(',')
+                                if len(data) >= 33:
+                                    all_quotes[code] = data
+                except Exception:
+                    pass
 
-        # 使用线程池加速
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(fetch_stock_info, stock): stock
-                      for stock in POPULAR_CN_STOCKS[:limit]}
+            # 解析行情数据
+            for stock in stocks:
+                code = stock['code']
+                data = all_quotes.get(code)
+                if not data:
+                    continue
 
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
+                try:
+                    name = data[0]
+                    open_price = float(data[1])
+                    prev_close = float(data[2])
+                    price = float(data[3])
+                    high = float(data[4])
+                    low = float(data[5])
+                    volume = int(float(data[8]))  # 成交量（股）
+                    change = float(data[32])  # 涨跌幅%
+
+                    results.append({
+                        '代码': code,
+                        '名称': name,
+                        '最新价': round(price, 2),
+                        '涨跌幅': round(change, 2),
+                        '换手率': None,  # 新浪批量接口不含换手率
+                        '成交量': volume,
+                        '成交额': int(volume * price) if volume > 0 else 0,
+                        '热度分数': round(abs(change), 2)
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+        except Exception:
+            pass
 
         # 按热度分数排序
         results.sort(key=lambda x: x['热度分数'], reverse=True)

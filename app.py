@@ -415,12 +415,44 @@ def display_signals(signals):
     # 综合建议
     st.divider()
     recommendation = signals.get('recommendation', '观望')
+
+    # 汇总各指标理由
+    reasons = []
+    macd_sig = signals.get('macd', '')
+    if "金叉" in macd_sig:
+        reasons.append(f"MACD {macd_sig}")
+    elif "死叉" in macd_sig:
+        reasons.append(f"MACD {macd_sig}")
+
+    rsi_sig = signals.get('rsi', '')
+    if "超买" in rsi_sig:
+        reasons.append(f"RSI {rsi_sig}")
+    elif "超卖" in rsi_sig:
+        reasons.append(f"RSI {rsi_sig}")
+
+    kdj_sig = signals.get('kdj', '')
+    if "金叉" in kdj_sig:
+        reasons.append(f"KDJ {kdj_sig}")
+    elif "死叉" in kdj_sig:
+        reasons.append(f"KDJ {kdj_sig}")
+    elif "超买" in kdj_sig or "超卖" in kdj_sig:
+        reasons.append(f"KDJ {kdj_sig}")
+
+    boll_sig = signals.get('boll', '')
+    if "反弹" in boll_sig or "回调" in boll_sig:
+        reasons.append(f"BOLL {boll_sig}")
+
+    reason_text = "；".join(reasons) if reasons else "各指标均处于中性区间"
+
     if "偏多" in recommendation:
         st.success(f"### 综合建议: {recommendation}")
+        st.caption(f"判断依据：{reason_text}")
     elif "偏空" in recommendation:
         st.error(f"### 综合建议: {recommendation}")
+        st.caption(f"判断依据：{reason_text}")
     else:
         st.info(f"### 综合建议: {recommendation}")
+        st.caption(f"判断依据：{reason_text}")
 
 def analyze_stock_page():
     """个股分析页面"""
@@ -1002,9 +1034,6 @@ def recommended_stocks_page():
                     try:
                         result = results.get(stock['code'])
                         if result and result['success']:
-                            from technical_indicators import TechnicalIndicators
-                            from stock_recommendation import StockRecommender
-
                             df = TechnicalIndicators.calculate_all(result['data'])
                             analysis = StockRecommender()._analyze_short_term(stock['code'], market='CN')
                             if analysis:
