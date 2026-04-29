@@ -135,7 +135,8 @@ class StockRecommender:
                     high = float(data[4])
                     low = float(data[5])
                     volume = int(float(data[8]))  # 成交量（股）
-                    change = float(data[32])  # 涨跌幅%
+                    # 自己算涨跌幅（新浪字段32不可靠，有时为"00"）
+                    change = ((price - prev_close) / prev_close * 100) if prev_close > 0 else 0
 
                     results.append({
                         '代码': code,
