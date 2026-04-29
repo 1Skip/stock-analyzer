@@ -59,7 +59,6 @@
 
 ## 6. 已知问题（修改时注意）
 
-- `stock_recommendation.py:99` 换手率用的是 `np.random.uniform()` 随机模拟数据
 - `debug_recommendation.py` 调用 `get_short_term_recommendations()` 和 `get_sector_short_term_recommendations()` 可能报错 —— 已接近废弃
 - `chart_plotter.py` 与 `app.py` 的图表逻辑重复，改图表需两边同步
 - watchlist 无持久化，刷新页面丢失
@@ -106,6 +105,7 @@ pip-audit
 - 新增 Streamlit 页面时，在侧边栏导航中注册
 - 图表修改：Plotly 和 Matplotlib 版本行为不同，建议改完后在 Web 和 CLI 都验证
 - 修改技术指标计算逻辑后，必须用真实数据验证输出值范围（如 RSI 0-100、BOLL 上轨≥中轨≥下轨）
+- **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
 - **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#10-安全注意事项)）
 
