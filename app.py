@@ -713,9 +713,9 @@ def analyze_stock_page():
 
         with cols[0]:
             st.subheader("MACD")
-            st.write(f"DIF: {latest['macd']:.3f}")
-            st.write(f"DEA: {latest['macd_signal']:.3f}")
-            st.write(f"MACD: {latest['macd_hist']:.3f}")
+            st.write(f"DIF: {latest['macd']:.2f}")
+            st.write(f"DEA: {latest['macd_signal']:.2f}")
+            st.write(f"MACD: {latest['macd_hist']:.2f}")
 
         with cols[1]:
             st.subheader("RSI")
@@ -975,7 +975,7 @@ def display_recommendation_list(recommended, strategy_name):
             # 显示详细指标
             cols = st.columns(4)
             with cols[0]:
-                st.write("**MACD:**", f"{stock['indicators']['macd']:.3f}")
+                st.write("**MACD:**", f"{stock['indicators']['macd']:.2f}")
                 st.caption(stock['signals']['macd'])
             with cols[1]:
                 st.write("**RSI:**", f"{stock['indicators']['rsi']}")
@@ -1266,7 +1266,7 @@ def compare_stocks_page():
                                 f"{latest['volume']:.0f}"
                             ),
                             'RSI(6)': f"{latest['rsi_6']:.1f}",
-                            'MACD': f"{latest['macd']:.3f}",
+                            'MACD': f"{latest['macd']:.2f}",
                             'KDJ-K': f"{latest['kdj_k']:.1f}",
                             '布林位置': '上轨附近' if latest['close'] > latest['boll_upper'] * 0.98 else '中轨附近' if latest['close'] > latest['boll_mid'] * 0.98 else '下轨附近'
                         })
