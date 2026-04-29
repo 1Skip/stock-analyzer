@@ -8,6 +8,14 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import time
+
+# 绕过Windows系统代理（系统代理127.0.0.1:7897不可用时会导致所有数据源失败）
+# requests 默认从 Windows 注册表读取代理配置，通过 monkey-patch 关闭
+_original_session_init = requests.Session.__init__
+def _patched_session_init(self):
+    _original_session_init(self)
+    self.trust_env = False
+requests.Session.__init__ = _patched_session_init
 import random
 import json
 import os
@@ -168,8 +176,13 @@ class StockDataFetcher:
             if not os.path.exists(self._offline_cache_file):
                 return None
 
-            with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
-                cache_data = json.load(f)
+            try:
+                with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+            except json.JSONDecodeError:
+                # 缓存文件损坏，删除后重建
+                os.remove(self._offline_cache_file)
+                return None
 
             if symbol not in cache_data:
                 return None
@@ -231,16 +244,16 @@ class StockDataFetcher:
             offline_mode = False
 
             if market == "CN":
-                # A股数据获取，按优先级尝试不同数据源
+                # A股数据获取，按优先级尝试不同数据源（新浪优先，直连稳定）
                 sources_to_try = []
 
                 # 根据用户偏好或健康状态决定顺序
-                if self.preferred_source == 'akshare' or self.preferred_source == 'auto':
-                    if self._health_status['akshare']['healthy']:
-                        sources_to_try.append(('akshare', self._get_cn_stock_data_akshare))
                 if self.preferred_source == 'sina' or self.preferred_source == 'auto':
                     if self._health_status['sina']['healthy']:
                         sources_to_try.append(('sina', self._get_cn_stock_data_sina_fallback))
+                if self.preferred_source == 'akshare' or self.preferred_source == 'auto':
+                    if self._health_status['akshare']['healthy']:
+                        sources_to_try.append(('akshare', self._get_cn_stock_data_akshare))
                 if self.preferred_source == 'yfinance' or self.preferred_source == 'auto':
                     if self._health_status['yfinance']['healthy']:
                         sources_to_try.append(('yfinance', self._get_cn_stock_data_yfinance))
@@ -356,30 +369,36 @@ class StockDataFetcher:
             period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
             days = period_days.get(period, 365)
 
-            url = f"https://quotes.sina.cn/cn/api/quotes.php?symbol={symbol}&scale=240&ma=5&datalen={days}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            # 设置8秒超时
-            response = requests.get(url, headers=headers, timeout=8)
+            # 判断交易所后缀
+            if symbol.startswith(('600', '601', '603', '605', '688')):
+                sina_symbol = f"sh{symbol}"
+            else:
+                sina_symbol = f"sz{symbol}"
 
-            if response.status_code == 200:
+            url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={sina_symbol}&scale=240&ma=5&datalen={days}"
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://finance.sina.com.cn/'
+            }
+            response = requests.get(url, headers=headers, timeout=10)
+
+            if response.status_code == 200 and response.text.strip():
                 import json
                 data = json.loads(response.text)
-                if data and len(data) >= 10:
+                if data and isinstance(data, list) and len(data) >= 10:
                     df = pd.DataFrame(data)
-                    df['date'] = pd.to_datetime(df['day'])
-                    df.set_index('date', inplace=True)
                     df.rename(columns={
-                        'open': 'open', 'high': 'high', 'low': 'low',
-                        'close': 'close', 'volume': 'volume'
+                        'day': 'date', 'open': 'open', 'high': 'high',
+                        'low': 'low', 'close': 'close', 'volume': 'volume'
                     }, inplace=True)
+                    df['date'] = pd.to_datetime(df['date'])
+                    df.set_index('date', inplace=True)
                     for col in ['open', 'high', 'low', 'close', 'volume']:
                         if col in df.columns:
                             df[col] = pd.to_numeric(df[col], errors='coerce')
                     df = df.dropna(subset=['open', 'high', 'low', 'close'])
                     if len(df) >= 10:
-                        df.attrs['adjust_method'] = '未复权（新浪接口）'
+                        df.attrs['adjust_method'] = '未复权（新浪财经）'
                         return df
         except requests.exceptions.Timeout:
             print(f"新浪财经请求超时 {symbol}")
