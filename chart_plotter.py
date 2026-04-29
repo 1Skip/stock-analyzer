@@ -5,10 +5,7 @@
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from matplotlib.patches import Rectangle
-from matplotlib.lines import Line2D
 import pandas as pd
-import numpy as np
-from datetime import datetime
 
 from config import COLOR_SCHEMES, DEFAULT_COLOR_SCHEME
 

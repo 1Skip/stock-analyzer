@@ -5,11 +5,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
 import html
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import time
 
 # 导入原有模块
 from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED, POPULAR_CN_STOCKS
@@ -26,7 +24,7 @@ from config import (
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
 
-@st.cache_data(ttl=CACHE_TTL_STOCK_DATA, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
 def get_cached_stock_data(symbol, period, market):
     """缓存股票数据获取"""
     try:
@@ -34,7 +32,7 @@ def get_cached_stock_data(symbol, period, market):
     except Exception as e:
         return None
 
-@st.cache_data(ttl=CACHE_TTL_STOCK_INFO, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_STOCK_INFO, max_entries=128, show_spinner=False)
 def get_cached_stock_info(symbol, market):
     """缓存股票基本信息"""
     try:
@@ -42,7 +40,7 @@ def get_cached_stock_info(symbol, market):
     except Exception as e:
         return {}
 
-@st.cache_data(ttl=CACHE_TTL_REALTIME, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_REALTIME, max_entries=64, show_spinner=False)
 def get_cached_realtime_quote(symbol, market):
     """缓存实时行情 - 10秒缓存确保实时性"""
     try:
