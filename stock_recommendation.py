@@ -441,10 +441,10 @@ class StockRecommender:
             'indicators': {
                 'macd': round(latest['macd'], 3),
                 'macd_signal': round(latest['macd_signal'], 3),
-                'rsi': round(latest['rsi'], 1),
-                'kdj_k': round(latest['kdj_k'], 1),
-                'kdj_d': round(latest['kdj_d'], 1),
-                'kdj_j': round(latest['kdj_j'], 1),
+                'rsi': round(latest['rsi'], 2),
+                'kdj_k': round(latest['kdj_k'], 2),
+                'kdj_d': round(latest['kdj_d'], 2),
+                'kdj_j': round(latest['kdj_j'], 2),
                 'boll_upper': round(latest['boll_upper'], 2),
                 'boll_mid': round(latest['boll_mid'], 2),
                 'boll_lower': round(latest['boll_lower'], 2)
@@ -650,10 +650,10 @@ class StockRecommender:
             'indicators': {
                 'macd': round(latest['macd'], 3),
                 'macd_signal': round(latest['macd_signal'], 3),
-                'rsi': round(latest['rsi'], 1),
-                'kdj_k': round(latest['kdj_k'], 1),
-                'kdj_d': round(latest['kdj_d'], 1),
-                'kdj_j': round(latest['kdj_j'], 1),
+                'rsi': round(latest['rsi'], 2),
+                'kdj_k': round(latest['kdj_k'], 2),
+                'kdj_d': round(latest['kdj_d'], 2),
+                'kdj_j': round(latest['kdj_j'], 2),
                 'boll_lower': round(latest['boll_lower'], 2),
                 'boll_upper': round(latest['boll_upper'], 2),
             }

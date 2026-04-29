@@ -978,15 +978,15 @@ def display_recommendation_list(recommended, strategy_name):
                 st.write("**MACD:**", f"{stock['indicators']['macd']:.2f}")
                 st.caption(stock['signals']['macd'])
             with cols[1]:
-                st.write("**RSI:**", f"{stock['indicators']['rsi']}")
+                st.write("**RSI:**", f"{stock['indicators']['rsi']:.2f}")
                 st.caption(stock['signals']['rsi'])
             with cols[2]:
-                st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.1f} D:{stock['indicators']['kdj_d']:.1f}")
+                st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.2f} D:{stock['indicators']['kdj_d']:.2f}")
                 st.caption(stock['signals']['kdj'])
             with cols[3]:
                 boll_lower = stock['indicators'].get('boll_lower', 0)
                 boll_upper = stock['indicators'].get('boll_upper', 0)
-                st.write("**布林带:**", f"{boll_lower:.1f}-{boll_upper:.1f}")
+                st.write("**布林带:**", f"{boll_lower:.2f}-{boll_upper:.2f}")
                 st.caption(stock['signals']['boll'])
 
             st.divider()
@@ -1265,9 +1265,9 @@ def compare_stocks_page():
                                 f"{latest['volume']/1e4:.0f}万" if latest['volume'] >= 1e4 else
                                 f"{latest['volume']:.0f}"
                             ),
-                            'RSI(6)': f"{latest['rsi_6']:.1f}",
+                            'RSI(6)': f"{latest['rsi_6']:.2f}",
                             'MACD': f"{latest['macd']:.2f}",
-                            'KDJ-K': f"{latest['kdj_k']:.1f}",
+                            'KDJ-K': f"{latest['kdj_k']:.2f}",
                             '布林位置': '上轨附近' if latest['close'] > latest['boll_upper'] * 0.98 else '中轨附近' if latest['close'] > latest['boll_mid'] * 0.98 else '下轨附近'
                         })
                     except Exception as e:
