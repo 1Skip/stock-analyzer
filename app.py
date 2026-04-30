@@ -431,7 +431,7 @@ def plot_boll_chart(data):
 
 
 def plot_intraday_chart(df, quote):
-    """分时图 — 当日1分钟价格走势 + 均价线（数据来自东方财富）"""
+    """分时图 — 当日5分钟价格走势 + 均价线（数据来自新浪财经）"""
     if df is None or df.empty:
         return None
 
@@ -472,9 +472,16 @@ def plot_intraday_chart(df, quote):
     change_pct = quote.get('change', 0) if quote else 0
     title_color = '#cc0000' if change_pct > 0 else '#008844' if change_pct < 0 else '#808080'
 
+    # 30分钟间隔刻度（A股交易时段）
+    today = pd.Timestamp.now().date()
+    tick_times = ['09:30','10:00','10:30','11:00','11:30',
+                  '13:00','13:30','14:00','14:30','15:00']
+    tickvals = [pd.Timestamp.combine(today, pd.Timestamp(t).time()) for t in tick_times]
+    x_range = [tickvals[0], tickvals[-1]]  # 固定X轴范围覆盖完整交易时段
+
     fig.update_layout(
         title=dict(text=f"分时走势", font=dict(size=14, color=title_color)),
-        xaxis=dict(title='', type='category', tickformat='%H:%M', nticks=8,
+        xaxis=dict(title='', tickvals=tickvals, range=x_range, tickformat='%H:%M',
                     showgrid=False, zeroline=False),
         yaxis=dict(title='价格', side='left', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
         yaxis2=dict(title='', overlaying='y', side='right', showticklabels=False,
@@ -784,7 +791,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         with cols[4]:
             st.metric("今开", f"{quote['open']:.2f}")
 
-    # 分时图（仅A股，交易时段内显示当日走势）
+    # 分时图（仅A股，新浪财经5分钟线）
     if market == "CN":
         intraday = get_cached_intraday_data(symbol, market)
         if intraday is not None and not intraday.empty:

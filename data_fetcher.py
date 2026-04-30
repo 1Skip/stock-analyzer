@@ -668,8 +668,8 @@ class StockDataFetcher:
         return None
 
     def get_intraday_data(self, symbol, market="CN"):
-        """获取当日分钟K线数据，用于分时图（仅A股，数据来自东方财富）"""
-        if market != "CN" or not AKSHARE_AVAILABLE:
+        """获取当日分钟K线数据，用于分时图（仅A股，新浪优先，东方财富备用）"""
+        if market != "CN":
             return None
 
         cache_key = f"intraday_{symbol}"
@@ -678,6 +678,51 @@ class StockDataFetcher:
             if datetime.now() - cache_time < timedelta(minutes=1):
                 return cache_data
 
+        df = self._fetch_intraday_sina(symbol, cache_key)
+        if df is None and AKSHARE_AVAILABLE:
+            df = self._fetch_intraday_akshare(symbol, cache_key)
+        return df
+
+    def _fetch_intraday_sina(self, symbol, cache_key):
+        """新浪财经分钟数据（稳定，5分钟线）"""
+        try:
+            prefix = 'sh' if symbol.startswith('6') else 'sz'
+            sina_symbol = f'{prefix}{symbol}'
+            url = ('https://quotes.sina.cn/cn/api/json_v2.php/'
+                   f'CN_MarketDataService.getKLineData?symbol={sina_symbol}'
+                   '&scale=5&ma=no&datalen=240')
+            r = requests.get(url, timeout=10)
+            if r.status_code != 200:
+                return None
+            data = r.json()
+            if not data or not isinstance(data, list):
+                return None
+            df = pd.DataFrame(data)
+            df.rename(columns={
+                'day': 'time', 'open': 'open', 'high': 'high',
+                'low': 'low', 'close': 'close', 'volume': 'volume',
+                'amount': 'amount'
+            }, inplace=True)
+            df['time'] = pd.to_datetime(df['time'])
+            for col in ['open', 'high', 'low', 'close']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            df['volume'] = pd.to_numeric(df['volume'], errors='coerce').astype(int)
+            if 'amount' in df.columns:
+                df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+                # 计算均价 = 累计成交额 / 累计成交量
+                df['avg_price'] = df['amount'].cumsum() / df['volume'].cumsum().replace(0, float('nan'))
+            # 仅保留当日数据
+            today = pd.Timestamp.now().date()
+            df = df[df['time'].dt.date == today].copy()
+            if df.empty:
+                return None
+            self.cache[cache_key] = (datetime.now(), df, "新浪财经")
+            return df
+        except Exception:
+            return None
+
+    def _fetch_intraday_akshare(self, symbol, cache_key):
+        """东方财富分钟数据（备用，1分钟线）"""
         try:
             df = ak.stock_zh_a_hist_min_em(symbol=symbol, period='1', adjust='')
             if df is not None and len(df) > 0:
@@ -689,8 +734,8 @@ class StockDataFetcher:
                 df['time'] = pd.to_datetime(df['time'])
                 self.cache[cache_key] = (datetime.now(), df, "AKShare(东方财富)")
                 return df
-        except Exception as e:
-            print(f"获取分时数据失败 {symbol}: {str(e)}")
+        except Exception:
+            pass
         return None
 
     @staticmethod
