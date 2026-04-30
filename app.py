@@ -979,16 +979,18 @@ def get_cached_hot_stocks(market):
             'sectors': recommender.get_hot_sectors_cn(limit=30)
         }
     elif market == "HK":
+        hot = recommender.get_hot_stocks_hk(limit=20)
         return {
-            'hot': recommender.get_hot_stocks_hk(limit=20),
-            'gainers': recommender.get_top_gainers_hk(limit=10),
-            'losers': recommender.get_top_losers_hk(limit=10)
+            'hot': hot,
+            'gainers': recommender.get_top_gainers_hk(limit=10, hot_stocks=hot),
+            'losers': recommender.get_top_losers_hk(limit=10, hot_stocks=hot)
         }
     else:
+        hot = recommender.get_hot_stocks_us(limit=20)
         return {
-            'hot': recommender.get_hot_stocks_us(limit=20),
-            'gainers': recommender.get_top_gainers_us(limit=10),
-            'losers': recommender.get_top_losers_us(limit=10)
+            'hot': hot,
+            'gainers': recommender.get_top_gainers_us(limit=10, hot_stocks=hot),
+            'losers': recommender.get_top_losers_us(limit=10, hot_stocks=hot)
         }
 
 def hot_stocks_page():
@@ -1259,57 +1261,12 @@ def recommended_stocks_page():
 
     if st.button("生成推荐", type="primary") or not st.session_state.rec_data_loaded:
         with st.spinner(f"正在分析{sector}板块，请稍候..."):
+            recommender = StockRecommender()
             if sector == "全部":
-                # 使用并发获取加速
-                from data_fetcher import StockDataFetcher
-
-                stocks_to_analyze = POPULAR_CN_STOCKS[:25]
-                stock_codes = [s['code'] for s in stocks_to_analyze]
-
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                status_text.text("正在并发获取股票数据...")
-
-                # 并发获取所有股票数据
-                results = StockDataFetcher.fetch_multiple_stocks(
-                    stocks_to_analyze, period='1mo', market='CN', max_workers=5
-                )
-
-                progress_bar.progress(50)
-                status_text.text("正在分析技术指标...")
-
-                recommended = []
-                for stock in stocks_to_analyze:
-                    try:
-                        result = results.get(stock['code'])
-                        if result and result['success']:
-                            df = TechnicalIndicators.calculate_all(result['data'])
-                            analysis = StockRecommender()._analyze_short_term(stock['code'], market='CN')
-                            if analysis:
-                                analysis['name'] = stock['name']
-                                recommended.append(analysis)
-                    except Exception as e:
-                        continue
-
-                progress_bar.progress(100)
-                progress_bar.empty()
-                status_text.empty()
-
-                # 按评分排序
-                recommended.sort(key=lambda x: x['score'], reverse=True)
-                recommended = recommended[:num_stocks]
-
-                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票（分析了 {len(stocks_to_analyze)} 只）")
-                if not recommended:
-                    st.error("未找到符合条件的推荐股票")
-                    with st.expander("可能原因"):
-                        success_count = sum(1 for r in results.values() if r['success'])
-                        st.write(f"- 成功获取数据: {success_count}/{len(stocks_to_analyze)} 只")
-                        st.write("- 可能网络不稳定或股票代码有误")
-
+                recommended = recommender.get_short_term_recommendations(num_stocks)
+                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
                 display_recommendation_list(recommended, "短线推荐")
             else:
-                recommender = StockRecommender()
                 recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
                 st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
                 display_recommendation_list(recommended, f"{sector} 短线龙头股")
@@ -1342,9 +1299,6 @@ def display_watchlist_sidebar():
 def display_data_source_selector():
     """显示数据源选择器"""
     with st.expander("数据源设置"):
-        from data_fetcher import StockDataFetcher
-
-        fetcher = StockDataFetcher()
         current_source = fetcher.get_preferred_source()
 
         source_options = {
@@ -1368,9 +1322,6 @@ def display_data_source_selector():
 
 def display_health_status():
     """显示数据源健康状态"""
-    from data_fetcher import StockDataFetcher
-
-    fetcher = StockDataFetcher()
     health = fetcher.check_health()
 
     with st.expander("数据源健康状态"):

@@ -270,30 +270,30 @@ class StockRecommender:
         results.sort(key=lambda x: x['热度分数'], reverse=True)
         return results[:limit]
 
-    def get_top_gainers_hk(self, limit=10):
-        """获取港股涨幅榜"""
-        stocks = self.get_hot_stocks_hk(limit=30)
+    def get_top_gainers_hk(self, limit=10, hot_stocks=None):
+        """获取港股涨幅榜（可传入预取的 hot_stocks 避免重复请求）"""
+        stocks = hot_stocks if hot_stocks is not None else self.get_hot_stocks_hk(limit=30)
         gainers = [s for s in stocks if s['涨跌幅'] > 0]
         gainers.sort(key=lambda x: x['涨跌幅'], reverse=True)
         return gainers[:limit]
 
-    def get_top_losers_hk(self, limit=10):
-        """获取港股跌幅榜"""
-        stocks = self.get_hot_stocks_hk(limit=30)
+    def get_top_losers_hk(self, limit=10, hot_stocks=None):
+        """获取港股跌幅榜（可传入预取的 hot_stocks 避免重复请求）"""
+        stocks = hot_stocks if hot_stocks is not None else self.get_hot_stocks_hk(limit=30)
         losers = [s for s in stocks if s['涨跌幅'] < 0]
         losers.sort(key=lambda x: x['涨跌幅'])
         return losers[:limit]
 
-    def get_top_gainers_us(self, limit=10):
-        """获取美股涨幅榜"""
-        stocks = self.get_hot_stocks_us(limit=30)
+    def get_top_gainers_us(self, limit=10, hot_stocks=None):
+        """获取美股涨幅榜（可传入预取的 hot_stocks 避免重复请求）"""
+        stocks = hot_stocks if hot_stocks is not None else self.get_hot_stocks_us(limit=30)
         gainers = [s for s in stocks if s['change'] > 0]
         gainers.sort(key=lambda x: x['change'], reverse=True)
         return gainers[:limit]
 
-    def get_top_losers_us(self, limit=10):
-        """获取美股跌幅榜"""
-        stocks = self.get_hot_stocks_us(limit=30)
+    def get_top_losers_us(self, limit=10, hot_stocks=None):
+        """获取美股跌幅榜（可传入预取的 hot_stocks 避免重复请求）"""
+        stocks = hot_stocks if hot_stocks is not None else self.get_hot_stocks_us(limit=30)
         losers = [s for s in stocks if s['change'] < 0]
         losers.sort(key=lambda x: x['change'])
         return losers[:limit]
@@ -454,53 +454,59 @@ class StockRecommender:
     def get_recommended_stocks_cn(self, num_stocks=10):
         """
         获取推荐股票列表（基于技术分析）
-        使用预设的热门股票池
+        使用预设的热门股票池，并发分析加速
         """
         results = []
 
-        # 分析预设的股票池
-        for stock in POPULAR_CN_STOCKS[:20]:
+        def analyze_one(stock):
             try:
                 analysis = self.analyze_stock(stock['code'], market='CN', period='3mo')
                 if analysis and analysis['score'] >= 60:
                     analysis['name'] = stock['name']
-                    results.append(analysis)
-            except Exception as e:
-                continue
+                    return analysis
+            except Exception:
+                pass
+            return None
 
-        # 按评分排序
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:20]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
     def get_short_term_recommendations(self, num_stocks=10):
         """
-        获取短线推荐股票（基于短期动量指标）
-        - 使用1个月数据
-        - 更敏感的指标权重（KDJ、RSI权重更高）
-        - 追求短期波动机会
+        获取短线推荐股票（基于短期动量指标），并发分析加速
         """
         results = []
 
-        for stock in POPULAR_CN_STOCKS[:25]:
+        def analyze_one(stock):
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
                 if analysis:
                     analysis['name'] = stock['name']
-                    results.append(analysis)
-                    print(f"短线分析 {stock['code']}: 评分={analysis['score']}")
-                else:
-                    print(f"短线分析 {stock['code']}: 返回None")
-            except Exception as e:
-                print(f"短线分析 {stock['code']} 异常: {str(e)}")
-                continue
+                    return analysis
+            except Exception:
+                pass
+            return None
 
-        # 按评分排序，返回前num_stocks个
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
     def get_sector_short_term_recommendations(self, sector_name, num_stocks=5):
         """
-        获取指定板块的短线龙头股推荐
+        获取指定板块的短线龙头股推荐，并发分析加速
         """
         if sector_name not in SECTOR_STOCKS:
             return []
@@ -508,21 +514,24 @@ class StockRecommender:
         results = []
         sector_stocks = SECTOR_STOCKS[sector_name]
 
-        for stock in sector_stocks:
+        def analyze_one(stock):
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
                 if analysis:
                     analysis['name'] = stock['name']
                     analysis['sector'] = sector_name
-                    results.append(analysis)
-                    print(f"板块{sector_name}分析 {stock['code']}: 评分={analysis['score']}")
-                else:
-                    print(f"板块{sector_name}分析 {stock['code']}: 返回None")
-            except Exception as e:
-                print(f"板块{sector_name}分析 {stock['code']} 异常: {str(e)}")
-                continue
+                    return analysis
+            except Exception:
+                pass
+            return None
 
-        # 按评分排序，返回前num_stocks个
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 

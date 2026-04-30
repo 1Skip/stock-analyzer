@@ -235,7 +235,7 @@ class StockDataFetcher:
             # 检查内存缓存
             if use_cache and cache_key in self.cache:
                 cache_time, cache_data, cache_source = self.cache[cache_key]
-                if datetime.now() - cache_time < timedelta(minutes=1):
+                if datetime.now() - cache_time < timedelta(minutes=2):
                     if isinstance(cache_data, pd.DataFrame):
                         cache_data.attrs['data_source'] = cache_source
                     return cache_data
