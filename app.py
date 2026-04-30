@@ -549,7 +549,7 @@ def _detect_provider(api_key):
     return None
 
 
-def _show_setup_form():
+def _show_setup_form(symbol="", period=""):
     """显示 API Key 和模型配置表单"""
     st.markdown("#### 设置 API Key")
     api_key = st.text_input("API Key", type="password", key="ai_setup_key",
@@ -580,7 +580,9 @@ def _show_setup_form():
             else:
                 st.session_state.ai_api_key = api_key.strip()
                 st.session_state.ai_model = model
-                st.success("配置已保存，当前会话有效")
+                if symbol:
+                    st.session_state[f"ai_change_cfg_{symbol}_{period}"] = False
+                st.rerun()
     st.caption("获取 API Key: [Google AI Studio](https://aistudio.google.com/app/apikey)")
 
 
@@ -647,7 +649,7 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
         if key:
             _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
             if st.checkbox("更换配置", key=f"ai_change_cfg_{symbol}_{period}"):
-                _show_setup_form()
+                _show_setup_form(symbol, period)
         else:
             _show_setup_form()
 
