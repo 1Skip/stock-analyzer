@@ -221,12 +221,16 @@ class StockRecommender:
             return []
 
     def get_top_gainers_cn(self, limit=10):
-        """获取A股全市场涨幅榜（新浪财经实时排行）"""
-        return self._get_market_ranking(sort_asc=False, limit=limit)
+        """获取A股全市场涨幅榜（新浪财经实时排行，过滤非上涨股）"""
+        ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5)
+        gainers = [s for s in ranking if s['涨跌幅'] > 0]
+        return gainers[:limit]
 
     def get_top_losers_cn(self, limit=10):
-        """获取A股全市场跌幅榜（新浪财经实时排行）"""
-        return self._get_market_ranking(sort_asc=True, limit=limit)
+        """获取A股全市场跌幅榜（新浪财经实时排行，过滤非下跌股）"""
+        ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5)
+        losers = [s for s in ranking if s['涨跌幅'] < 0]
+        return losers[:limit]
 
     def get_hot_stocks_hk(self, limit=20):
         """获取港股热门股票（使用yfinance数据源）"""

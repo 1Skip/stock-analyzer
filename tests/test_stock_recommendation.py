@@ -183,11 +183,8 @@ class TestGetHotStocksCN:
 class TestGetTopGainersCN:
 
     def test_returns_list(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.requests.get',
-                            lambda url, params, headers, timeout: _mock_sina_ranking(False))
-        # 还需要 mock _get_market_ranking 的 requests.get
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=False, limit=10: _make_mock_ranking(limit, sort_asc))
+                            lambda self, sort_asc=False, limit=10: _make_mock_ranking(10, False))
         result = recommender.get_top_gainers_cn(limit=5)
         assert isinstance(result, list)
         assert len(result) <= 5
@@ -199,6 +196,35 @@ class TestGetTopGainersCN:
         result = recommender.get_top_gainers_cn(limit=10)
         if len(result) >= 2:
             assert result[0]['涨跌幅'] >= result[-1]['涨跌幅']
+
+    def test_filters_out_zero_and_negative(self, recommender, monkeypatch):
+        """涨幅榜不应包含涨跌幅≤0的股票（修复0.00%显示bug）"""
+        # 构造包含0和负值的mock数据
+        mock_data = [
+            {'代码': '000001', '名称': '涨股1', '最新价': 15.0, '涨跌幅': 5.0, '换手率': 1.0, '成交量': 1000, '成交额': 15000},
+            {'代码': '000002', '名称': '涨股2', '最新价': 12.0, '涨跌幅': 3.0, '换手率': 0.8, '成交量': 2000, '成交额': 24000},
+            {'代码': '000003', '名称': '平盘股', '最新价': 10.0, '涨跌幅': 0.0, '换手率': 0.5, '成交量': 500, '成交额': 5000},
+            {'代码': '000004', '名称': '涨股3', '最新价': 8.0, '涨跌幅': 1.0, '换手率': 0.3, '成交量': 800, '成交额': 6400},
+            {'代码': '000005', '名称': '跌股1', '最新价': 9.0, '涨跌幅': -2.0, '换手率': 0.6, '成交量': 600, '成交额': 5400},
+        ]
+        monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
+                            lambda self, sort_asc=False, limit=10: mock_data)
+        result = recommender.get_top_gainers_cn(limit=5)
+        # 只应包含涨跌幅>0的股票
+        for stock in result:
+            assert stock['涨跌幅'] > 0, f"{stock['名称']} 涨跌幅={stock['涨跌幅']}，不应出现在涨幅榜"
+        assert len(result) == 3  # 只有3只涨的
+
+    def test_all_zero_returns_empty(self, recommender, monkeypatch):
+        """全部平盘时涨幅榜应为空"""
+        mock_data = [
+            {'代码': '000001', '名称': '平盘1', '最新价': 10.0, '涨跌幅': 0.0, '换手率': 0.1, '成交量': 100, '成交额': 1000},
+            {'代码': '000002', '名称': '平盘2', '最新价': 12.0, '涨跌幅': 0.0, '换手率': 0.2, '成交量': 200, '成交额': 2400},
+        ]
+        monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
+                            lambda self, sort_asc=False, limit=10: mock_data)
+        result = recommender.get_top_gainers_cn(limit=5)
+        assert result == []
 
 
 class TestGetTopLosersCN:
@@ -220,7 +246,23 @@ class TestGetTopLosersCN:
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking', mock_ranking)
         recommender.get_top_losers_cn(limit=8)
         assert called_with['asc'] is True
-        assert called_with['limit'] == 8
+        assert called_with['limit'] == 13  # limit=8 → 请求 8+5=13
+
+    def test_filters_out_zero_and_positive(self, recommender, monkeypatch):
+        """跌幅榜不应包含涨跌幅≥0的股票"""
+        mock_data = [
+            {'代码': '000001', '名称': '跌股1', '最新价': 8.0, '涨跌幅': -5.0, '换手率': 1.0, '成交量': 1000, '成交额': 8000},
+            {'代码': '000002', '名称': '跌股2', '最新价': 9.0, '涨跌幅': -3.0, '换手率': 0.8, '成交量': 2000, '成交额': 18000},
+            {'代码': '000003', '名称': '平盘股', '最新价': 10.0, '涨跌幅': 0.0, '换手率': 0.5, '成交量': 500, '成交额': 5000},
+            {'代码': '000004', '名称': '涨股1', '最新价': 11.0, '涨跌幅': 2.0, '换手率': 0.3, '成交量': 800, '成交额': 8800},
+            {'代码': '000005', '名称': '跌股3', '最新价': 7.0, '涨跌幅': -1.0, '换手率': 0.6, '成交量': 600, '成交额': 4200},
+        ]
+        monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
+                            lambda self, sort_asc=True, limit=10: mock_data)
+        result = recommender.get_top_losers_cn(limit=5)
+        for stock in result:
+            assert stock['涨跌幅'] < 0, f"{stock['名称']} 涨跌幅={stock['涨跌幅']}，不应出现在跌幅榜"
+        assert len(result) == 3  # 只有3只跌的
 
 
 # ============================================================
