@@ -2,6 +2,7 @@
 股票分析系统 - Web版本 (优化版)
 使用Streamlit构建，带缓存加速
 """
+import re
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -617,14 +618,20 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
 
     result = st.session_state[cache_key]
     if result:
+        def _clean(text):
+            """去除 LLM 回复中可能的 markdown 标题，防止出现视觉重复"""
+            if not isinstance(text, str):
+                return text
+            return re.sub(r'^#{1,3}\s*', '', text, flags=re.MULTILINE)
+
         st.markdown("#### 核心结论")
-        st.markdown(result.get("核心结论", "无"))
+        st.markdown(_clean(result.get("核心结论", "无")))
 
         risks = result.get("风险提示", [])
         if risks:
             st.markdown("#### 风险提示")
             for r in risks:
-                st.markdown(f"- {r}")
+                st.markdown(f"- {_clean(r)}")
 
         levels = result.get("关键点位", {})
         if levels:
@@ -637,7 +644,7 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
         suggestion = result.get("操作参考", "")
         if suggestion:
             st.markdown("#### 操作参考")
-            st.markdown(suggestion)
+            st.markdown(_clean(suggestion))
 
         st.caption(f"模型: {model_label} | 以上为 AI 自动分析，不构成投资建议")
 
