@@ -522,11 +522,32 @@ AI_MODEL_OPTIONS = {
 }
 
 
+def _detect_provider(api_key):
+    """根据 API Key 前缀自动检测厂商"""
+    if not api_key:
+        return None
+    key = api_key.strip()
+    if key.startswith("AIza"):
+        return ("gemini", "gemini/gemini-2.5-flash")
+    if key.startswith("sk-ant"):
+        return ("claude", "claude-sonnet-4-6")
+    return None
+
+
 def _show_setup_form():
     """显示 API Key 和模型配置表单"""
     st.markdown("#### 设置 API Key")
     api_key = st.text_input("API Key", type="password", key="ai_setup_key",
                             placeholder="输入你的 API Key")
+
+    # 自动检测厂商
+    detected = _detect_provider(api_key)
+    if detected:
+        provider_name, default_model_key = detected
+        if st.session_state.get("ai_model") != default_model_key:
+            st.session_state.ai_model = default_model_key
+            st.info(f"检测到 {provider_name.upper()} API Key，已自动匹配模型")
+
     default_model = st.session_state.get("ai_model") or AI_MODEL
     model_keys = list(AI_MODEL_OPTIONS.keys())
     default_index = model_keys.index(default_model) if default_model in model_keys else 0
