@@ -512,56 +512,102 @@ def display_signals(signals):
         st.caption(f"判断依据：{reason_text}")
 
 
+AI_MODEL_OPTIONS = {
+    "gemini/gemini-2.5-flash": "Gemini 2.5 Flash（免费，推荐）",
+    "gemini/gemini-2.5-pro": "Gemini 2.5 Pro",
+    "claude-sonnet-4-6": "Claude Sonnet 4.6",
+    "claude-opus-4-7": "Claude Opus 4.7",
+    "deepseek/deepseek-chat": "DeepSeek V3",
+    "openai/gpt-4o": "GPT-4o",
+}
+
+
+def _show_setup_form():
+    """显示 API Key 和模型配置表单"""
+    st.markdown("#### 设置 API Key")
+    api_key = st.text_input("API Key", type="password", key="ai_setup_key",
+                            placeholder="输入你的 API Key")
+    default_model = st.session_state.get("ai_model") or AI_MODEL
+    model_keys = list(AI_MODEL_OPTIONS.keys())
+    default_index = model_keys.index(default_model) if default_model in model_keys else 0
+    model = st.selectbox("模型", options=model_keys,
+                         format_func=lambda x: AI_MODEL_OPTIONS[x],
+                         index=default_index,
+                         key="ai_setup_model")
+    if st.button("保存配置", type="primary"):
+        if not api_key.strip():
+            st.error("API Key 不能为空")
+        else:
+            st.session_state.ai_api_key = api_key.strip()
+            st.session_state.ai_model = model
+            st.success("配置已保存，当前会话有效")
+            st.rerun()
+    st.caption("获取 API Key: [Google AI Studio](https://aistudio.google.com/app/apikey)")
+
+
+def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model):
+    """显示 AI 分析按钮和结果"""
+    cache_key = f"ai_result_{symbol}_{period}"
+
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = None
+
+    col_btn, col_info = st.columns([1, 3])
+    with col_btn:
+        if st.button("AI 分析", type="primary", key=f"ai_btn_{symbol}_{period}"):
+            with st.spinner("AI 正在分析技术指标..."):
+                try:
+                    snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
+                    result = call_ai_analysis(
+                        snapshot, model, api_key, AI_BASE_URL, AI_TEMPERATURE
+                    )
+                    st.session_state[cache_key] = result
+                except Exception as e:
+                    st.error(f"分析失败：{e}")
+                    return
+    with col_info:
+        model_label = AI_MODEL_OPTIONS.get(model, model)
+        st.caption(f"当前模型: {model_label}")
+
+    result = st.session_state[cache_key]
+    if result:
+        st.markdown("#### 核心结论")
+        st.markdown(result.get("核心结论", "无"))
+
+        risks = result.get("风险提示", [])
+        if risks:
+            st.markdown("#### 风险提示")
+            for r in risks:
+                st.markdown(f"- {r}")
+
+        levels = result.get("关键点位", {})
+        if levels:
+            st.markdown("#### 关键点位")
+            cols = st.columns(len(levels))
+            for i, (name, value) in enumerate(levels.items()):
+                with cols[i]:
+                    st.metric(name, value)
+
+        suggestion = result.get("操作参考", "")
+        if suggestion:
+            st.markdown("#### 操作参考")
+            st.markdown(suggestion)
+
+        st.caption(f"模型: {model_label} | 以上为 AI 自动分析，不构成投资建议")
+
+
 def display_ai_analysis_card(data, signals, symbol, stock_name, period):
-    """AI 智能解读卡片"""
-    if not AI_API_KEY:
-        return
-
+    """AI 智能解读卡片 — 配置入口 + 分析功能"""
     with st.expander("AI 智能解读", expanded=False):
-        cache_key = f"ai_result_{symbol}_{period}"
+        key = st.session_state.get("ai_api_key") or AI_API_KEY
+        model = st.session_state.get("ai_model") or AI_MODEL
 
-        if cache_key not in st.session_state:
-            st.session_state[cache_key] = None
-
-        col_btn, col_status = st.columns([1, 3])
-        with col_btn:
-            if st.button("AI 分析", type="primary", key=f"ai_btn_{symbol}_{period}"):
-                with st.spinner("AI 正在分析技术指标..."):
-                    try:
-                        snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
-                        result = call_ai_analysis(
-                            snapshot, AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE
-                        )
-                        st.session_state[cache_key] = result
-                    except Exception as e:
-                        st.error(f"分析失败：{e}")
-                        return
-
-        result = st.session_state[cache_key]
-        if result:
-            st.markdown("#### 核心结论")
-            st.markdown(result.get("核心结论", "无"))
-
-            risks = result.get("风险提示", [])
-            if risks:
-                st.markdown("#### 风险提示")
-                for r in risks:
-                    st.markdown(f"- {r}")
-
-            levels = result.get("关键点位", {})
-            if levels:
-                st.markdown("#### 关键点位")
-                cols = st.columns(len(levels))
-                for i, (name, value) in enumerate(levels.items()):
-                    with cols[i]:
-                        st.metric(name, value)
-
-            suggestion = result.get("操作参考", "")
-            if suggestion:
-                st.markdown("#### 操作参考")
-                st.markdown(suggestion)
-
-            st.caption(f"模型: {AI_MODEL} | 以上为 AI 自动分析，不构成投资建议")
+        if key:
+            _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
+            if st.checkbox("更换配置", key=f"ai_change_cfg_{symbol}_{period}"):
+                _show_setup_form()
+        else:
+            _show_setup_form()
 
 
 def analyze_stock_page():
