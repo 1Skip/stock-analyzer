@@ -173,7 +173,7 @@ RATING_THRESHOLDS = {
 # AI 分析配置
 # ============================================================
 AI_ENABLED = os.getenv("AI_ENABLED", "true").lower() == "true"
-AI_MODEL = os.getenv("AI_MODEL", "gemini/gemini-2.5-flash")
+AI_MODEL = os.getenv("AI_MODEL", "deepseek/deepseek-chat")
 AI_API_KEY = os.getenv("AI_API_KEY", None)
 AI_BASE_URL = os.getenv("AI_BASE_URL", None)
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))

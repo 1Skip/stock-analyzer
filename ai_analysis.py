@@ -87,6 +87,7 @@ def call_ai_analysis(snapshot, model, api_key, base_url, temperature=0.2):
         ],
         temperature=temperature,
         max_tokens=1024,
+        timeout=30,
     )
 
     raw = response.choices[0].message.content

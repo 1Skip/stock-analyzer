@@ -513,12 +513,24 @@ def display_signals(signals):
 
 
 AI_MODEL_OPTIONS = {
-    "gemini/gemini-2.5-flash": "Gemini 2.5 Flash（免费，推荐）",
+    # 国内模型
+    "deepseek/deepseek-chat": "DeepSeek V3",
+    "deepseek/deepseek-reasoner": "DeepSeek R1",
+    "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
+    "zhipuai/glm-4-flash": "智谱 GLM-4 Flash（免费）",
+    "zhipuai/glm-4": "智谱 GLM-4",
+    "moonshot/moonshot-v1-8k": "Kimi (Moonshot)",
+    "moonshot/moonshot-v1-32k": "Kimi 32K (Moonshot)",
+    "dashscope/qwen-plus": "通义千问 Qwen-Plus",
+    "dashscope/qwen-max": "通义千问 Qwen-Max",
+    "baichuan/baichuan2-turbo": "百川 Baichuan2-Turbo",
+    "baichuan/baichuan3-turbo": "百川 Baichuan3-Turbo",
+    # 国际模型
+    "gemini/gemini-2.5-flash": "Gemini 2.5 Flash（免费）",
     "gemini/gemini-2.5-pro": "Gemini 2.5 Pro",
+    "openai/gpt-4o": "GPT-4o",
     "claude-sonnet-4-6": "Claude Sonnet 4.6",
     "claude-opus-4-7": "Claude Opus 4.7",
-    "deepseek/deepseek-chat": "DeepSeek V3",
-    "openai/gpt-4o": "GPT-4o",
 }
 
 
@@ -531,6 +543,9 @@ def _detect_provider(api_key):
         return ("gemini", "gemini/gemini-2.5-flash")
     if key.startswith("sk-ant"):
         return ("claude", "claude-sonnet-4-6")
+    if "." in key and len(key) > 30 and not key.startswith("sk-"):
+        # 智谱 API Key 格式：{id}.{secret}
+        return ("zhipuai", "zhipuai/glm-4-flash")
     return None
 
 
@@ -546,7 +561,8 @@ def _show_setup_form():
         provider_name, default_model_key = detected
         if st.session_state.get("ai_model") != default_model_key:
             st.session_state.ai_model = default_model_key
-            st.info(f"检测到 {provider_name.upper()} API Key，已自动匹配模型")
+            st.session_state.ai_setup_model = default_model_key
+            st.toast(f"检测到 {provider_name.upper()} API Key，已自动匹配模型")
 
     default_model = st.session_state.get("ai_model") or AI_MODEL
     model_keys = list(AI_MODEL_OPTIONS.keys())
@@ -578,16 +594,19 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
     col_btn, col_info = st.columns([1, 3])
     with col_btn:
         if st.button("AI 分析", type="primary", key=f"ai_btn_{symbol}_{period}"):
-            with st.spinner("AI 正在分析技术指标..."):
-                try:
+            error_msg = None
+            try:
+                with st.spinner("AI 正在分析技术指标..."):
                     snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
                     result = call_ai_analysis(
                         snapshot, model, api_key, AI_BASE_URL, AI_TEMPERATURE
                     )
                     st.session_state[cache_key] = result
-                except Exception as e:
-                    st.error(f"分析失败：{e}")
-                    return
+            except Exception as e:
+                st.session_state[cache_key] = None
+                error_msg = str(e)
+            if error_msg:
+                st.error(f"分析失败：{error_msg}")
     with col_info:
         model_label = AI_MODEL_OPTIONS.get(model, model)
         st.caption(f"当前模型: {model_label}")
