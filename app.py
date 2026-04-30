@@ -648,17 +648,23 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
 
 
 def display_ai_analysis_card(data, signals, symbol, stock_name, period):
-    """AI 智能解读卡片 — 配置入口 + 分析功能"""
-    with st.expander("AI 智能解读", expanded=False):
-        key = st.session_state.get("ai_api_key") or AI_API_KEY
-        model = st.session_state.get("ai_model") or AI_MODEL
+    """AI 智能解读 — 独立区域，与交易信号平级，避免嵌套渲染"""
+    st.divider()
+    st.subheader("AI 智能解读")
 
-        if key:
-            _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
-            if st.checkbox("更换配置", key=f"ai_change_cfg_{symbol}_{period}"):
-                _show_setup_form(symbol, period)
-        else:
+    key = st.session_state.get("ai_api_key") or AI_API_KEY
+    model = st.session_state.get("ai_model") or AI_MODEL
+
+    if not key:
+        with st.expander("设置 API Key", expanded=True):
             _show_setup_form()
+        return
+
+    # 已配置：显示 AI 分析功能
+    _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
+
+    if st.checkbox("更换配置", key=f"ai_change_cfg_{symbol}_{period}"):
+        _show_setup_form(symbol, period)
 
 
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period):
