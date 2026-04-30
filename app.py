@@ -551,18 +551,20 @@ def _show_setup_form():
     default_model = st.session_state.get("ai_model") or AI_MODEL
     model_keys = list(AI_MODEL_OPTIONS.keys())
     default_index = model_keys.index(default_model) if default_model in model_keys else 0
-    model = st.selectbox("模型", options=model_keys,
-                         format_func=lambda x: AI_MODEL_OPTIONS[x],
-                         index=default_index,
-                         key="ai_setup_model")
-    if st.button("保存配置", type="primary"):
-        if not api_key.strip():
-            st.error("API Key 不能为空")
-        else:
-            st.session_state.ai_api_key = api_key.strip()
-            st.session_state.ai_model = model
-            st.success("配置已保存，当前会话有效")
-            st.rerun()
+
+    # 用 form 包裹，防止 selectbox 变化触发 rerun 导致分析数据丢失
+    with st.form(key="ai_setup_form"):
+        model = st.selectbox("模型", options=model_keys,
+                             format_func=lambda x: AI_MODEL_OPTIONS[x],
+                             index=default_index,
+                             key="ai_setup_model")
+        if st.form_submit_button("保存配置", type="primary"):
+            if not api_key.strip():
+                st.error("API Key 不能为空")
+            else:
+                st.session_state.ai_api_key = api_key.strip()
+                st.session_state.ai_model = model
+                st.success("配置已保存，当前会话有效")
     st.caption("获取 API Key: [Google AI Studio](https://aistudio.google.com/app/apikey)")
 
 
