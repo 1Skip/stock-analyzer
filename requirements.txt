@@ -6,3 +6,4 @@ numpy==1.26.2
 requests==2.31.0
 akshare==1.11.88
 MyTT==2.9.3
+litellm>=1.80

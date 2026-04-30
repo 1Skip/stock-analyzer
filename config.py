@@ -170,6 +170,17 @@ RATING_THRESHOLDS = {
 }
 
 # ============================================================
+# AI 分析配置
+# ============================================================
+AI_ENABLED = os.getenv("AI_ENABLED", "true").lower() == "true"
+AI_MODEL = os.getenv("AI_MODEL", "gemini/gemini-2.5-flash")
+AI_API_KEY = os.getenv("AI_API_KEY", None)
+AI_BASE_URL = os.getenv("AI_BASE_URL", None)
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
+AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1024"))
+AI_CACHE_TTL_SECONDS = int(os.getenv("AI_CACHE_TTL", "300"))
+
+# ============================================================
 # 数据源配置
 # ============================================================
 DEFAULT_DATA_SOURCE = os.getenv("STOCK_DATA_SOURCE", "auto")
