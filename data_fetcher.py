@@ -667,6 +667,32 @@ class StockDataFetcher:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
         return None
 
+    def get_intraday_data(self, symbol, market="CN"):
+        """获取当日分钟K线数据，用于分时图（仅A股，数据来自东方财富）"""
+        if market != "CN" or not AKSHARE_AVAILABLE:
+            return None
+
+        cache_key = f"intraday_{symbol}"
+        if cache_key in self.cache:
+            cache_time, cache_data, _ = self.cache[cache_key]
+            if datetime.now() - cache_time < timedelta(minutes=1):
+                return cache_data
+
+        try:
+            df = ak.stock_zh_a_hist_min_em(symbol=symbol, period='1', adjust='')
+            if df is not None and len(df) > 0:
+                df.rename(columns={
+                    '时间': 'time', '开盘': 'open', '收盘': 'close',
+                    '最高': 'high', '最低': 'low', '成交量': 'volume',
+                    '成交额': 'amount', '均价': 'avg_price'
+                }, inplace=True)
+                df['time'] = pd.to_datetime(df['time'])
+                self.cache[cache_key] = (datetime.now(), df, "AKShare(东方财富)")
+                return df
+        except Exception as e:
+            print(f"获取分时数据失败 {symbol}: {str(e)}")
+        return None
+
     @staticmethod
     def fetch_multiple_stocks(symbols, period="3mo", market="CN", max_workers=5):
         """

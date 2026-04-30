@@ -54,6 +54,14 @@ def get_cached_realtime_quote(symbol, market):
     except Exception as e:
         return None
 
+
+def get_cached_intraday_data(symbol, market):
+    """缓存分时数据 - 60秒缓存，仅A股"""
+    try:
+        return fetcher.get_intraday_data(symbol, market)
+    except Exception:
+        return None
+
 # 页面配置
 st.set_page_config(
     page_title="股票分析系统",
@@ -421,6 +429,67 @@ def plot_boll_chart(data):
 
     return fig
 
+
+def plot_intraday_chart(df, quote):
+    """分时图 — 当日1分钟价格走势 + 均价线（数据来自东方财富）"""
+    if df is None or df.empty:
+        return None
+
+    # 价格折线
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=df['time'], y=df['close'],
+        mode='lines', name='价格',
+        line=dict(color='#1a73e8', width=1.5),
+        hovertemplate='%{y:.2f}<extra></extra>'
+    ))
+
+    # 均价线
+    if 'avg_price' in df.columns and df['avg_price'].notna().any():
+        fig.add_trace(go.Scatter(
+            x=df['time'], y=df['avg_price'],
+            mode='lines', name='均价',
+            line=dict(color='#f9ab00', width=1, dash='dash'),
+            hovertemplate='均价 %{y:.2f}<extra></extra>'
+        ))
+
+    # 昨收线
+    if quote and quote.get('prev_close'):
+        prev = quote['prev_close']
+        fig.add_hline(y=prev, line=dict(color='#808080', width=0.8, dash='dot'),
+                      annotation_text=f'昨收 {prev:.2f}')
+
+    # 成交量柱状图（叠加在底部）
+    fig.add_trace(go.Bar(
+        x=df['time'], y=df['volume'],
+        name='量', yaxis='y2',
+        marker=dict(color='rgba(26,115,232,0.15)'),
+        hovertemplate='量 %{y:.0f}<extra></extra>'
+    ))
+
+    # 双Y轴布局
+    change_pct = quote.get('change', 0) if quote else 0
+    title_color = '#cc0000' if change_pct > 0 else '#008844' if change_pct < 0 else '#808080'
+
+    fig.update_layout(
+        title=dict(text=f"分时走势", font=dict(size=14, color=title_color)),
+        xaxis=dict(title='', type='category', tickformat='%H:%M', nticks=8,
+                    showgrid=False, zeroline=False),
+        yaxis=dict(title='价格', side='left', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
+        yaxis2=dict(title='', overlaying='y', side='right', showticklabels=False,
+                     showgrid=False),
+        hovermode='x unified',
+        height=280,
+        bargap=0,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        margin=dict(l=20, r=20, t=40, b=20),
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+    )
+
+    return fig
+
+
 def display_signals(signals):
     """显示交易信号"""
     # 处理错误情况
@@ -714,6 +783,15 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
             st.metric("成交量", f"{volume:.1f}{unit}")
         with cols[4]:
             st.metric("今开", f"{quote['open']:.2f}")
+
+    # 分时图（仅A股，交易时段内显示当日走势）
+    if market == "CN":
+        intraday = get_cached_intraday_data(symbol, market)
+        if intraday is not None and not intraday.empty:
+            intraday_fig = plot_intraday_chart(intraday, quote)
+            if intraday_fig:
+                st.plotly_chart(intraday_fig, use_container_width=True,
+                                config={'displayModeBar': False})
 
     st.divider()
 
