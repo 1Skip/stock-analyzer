@@ -907,7 +907,7 @@ def analyze_stock_page():
             st.error(f"数据获取失败: {symbol}")
             st.error("**可能原因：**\n1. 股票代码不存在或已退市\n2. 所有数据源暂时不可用\n3. 网络连接问题")
             with st.expander("查看调试信息"):
-                st.info("已尝试以下数据源：\n1. AKShare (同花顺/东方财富)\n2. 新浪财经\n3. Yahoo Finance")
+                st.info("已尝试以下数据源：\n1. AKShare\n2. 新浪财经\n3. Yahoo Finance")
             progress_bar.empty()
             status_text.empty()
             return
@@ -925,13 +925,13 @@ def analyze_stock_page():
         offline_mode = data.attrs.get('offline_mode', False)
         is_fallback = "AKShare" not in data_source and not offline_mode
 
-        # 显示数据源信息
+        # 数据源标注 — 常态透明不打扰，异常温和提示
         if offline_mode:
-            st.error(f"离线模式 | 数据源: {data_source} | 网络异常，显示缓存数据")
+            st.caption(f"🔴 离线缓存 · {data_source}")
         elif is_fallback:
-            st.warning(f"当前数据源: {data_source} | 同花顺数据源暂不可用，正在使用备选数据源")
+            st.caption(f"🟡 备选数据源 · {data_source}")
         else:
-            st.success(f"数据源: {data_source}")
+            st.caption(f"数据源 · {data_source}")
 
         # 检查数据是否足够（至少需要30天数据）
         if len(data) < 30:

@@ -265,7 +265,7 @@ class StockDataFetcher:
                         result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
                             data_source = {
-                                'akshare': 'AKShare（腾讯财经）',
+                                'akshare': 'AKShare',
                                 'sina': '新浪财经',
                                 'yfinance': 'Yahoo Finance'
                             }.get(source_name, source_name)
