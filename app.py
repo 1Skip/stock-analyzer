@@ -610,8 +610,6 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
                 error_msg = str(e)
             if error_msg:
                 st.error(f"分析失败：{error_msg}")
-            else:
-                st.rerun()
     with col_info:
         model_label = AI_MODEL_OPTIONS.get(model, model)
         st.caption(f"当前模型: {model_label}")
