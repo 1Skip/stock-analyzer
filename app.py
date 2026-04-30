@@ -633,6 +633,120 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
             _show_setup_form()
 
 
+def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period):
+    """渲染个股分析结果（从 session_state 恢复或首次显示）"""
+    st.divider()
+
+    # 股票标题 + 自选股按钮
+    col_title, col_watchlist = st.columns([3, 1])
+    with col_title:
+        st.header(f"{symbol} {stock_name}")
+    with col_watchlist:
+        if is_in_watchlist(symbol, market):
+            if st.button("移除自选", key="remove_watchlist"):
+                success, msg = remove_from_watchlist(symbol, market)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+        else:
+            if st.button("加入自选", key="add_watchlist"):
+                success, msg = add_to_watchlist(symbol, stock_name, market)
+                if success:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.warning(msg)
+
+    # 实时行情卡片
+    if quote:
+        cols = st.columns(5)
+        with cols[0]:
+            st.metric("最新价", f"{quote['price']:.2f}", f"{quote['change']:.2f}%")
+        with cols[1]:
+            st.metric("最高", f"{quote['high']:.2f}")
+        with cols[2]:
+            st.metric("最低", f"{quote['low']:.2f}")
+        with cols[3]:
+            vol = quote['volume']
+            if vol >= 1e8:
+                volume = vol / 1e8
+                unit = "亿"
+            elif vol >= 1e4:
+                volume = vol / 1e4
+                unit = "万"
+            else:
+                volume = vol
+                unit = ""
+            st.metric("成交量", f"{volume:.1f}{unit}")
+        with cols[4]:
+            st.metric("今开", f"{quote['open']:.2f}")
+
+    st.divider()
+
+    # 交易信号
+    display_signals(signals)
+
+    # AI 智能解读
+    if AI_ENABLED:
+        display_ai_analysis_card(data, signals, symbol, stock_name, period)
+
+    st.divider()
+
+    # 指标数值
+    latest = data.iloc[-1]
+    cols = st.columns(4)
+
+    with cols[0]:
+        st.subheader("MACD")
+        st.write(f"DIF: {latest['macd']:.2f}")
+        st.write(f"DEA: {latest['macd_signal']:.2f}")
+        st.write(f"MACD: {latest['macd_hist']:.2f}")
+
+    with cols[1]:
+        st.subheader("RSI")
+        st.write(f"RSI(6): {latest['rsi_6']:.2f}")
+        st.write(f"RSI(12): {latest['rsi_12']:.2f}")
+        st.write(f"RSI(24): {latest['rsi_24']:.2f}")
+
+    with cols[2]:
+        st.subheader("KDJ")
+        st.write(f"K: {latest['kdj_k']:.2f}")
+        st.write(f"D: {latest['kdj_d']:.2f}")
+        st.write(f"J: {latest['kdj_j']:.2f}")
+
+    with cols[3]:
+        st.subheader("布林带")
+        st.write(f"上轨: {latest['boll_upper']:.2f}")
+        st.write(f"中轨: {latest['boll_mid']:.2f}")
+        st.write(f"下轨: {latest['boll_lower']:.2f}")
+        st.write(f"带宽: {latest['boll_width']*100:.2f}%")
+
+    st.divider()
+
+    # 图表
+    tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
+
+    with tab1:
+        fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab2:
+        fig = plot_rsi_chart(data)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab3:
+        fig = plot_kdj_chart(data)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with tab4:
+        fig = plot_boll_chart(data)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # 原始数据
+    with st.expander("查看原始数据"):
+        st.dataframe(data.tail(20))
+
+
 def analyze_stock_page():
     """个股分析页面"""
     st.markdown('<h1 class="main-header">股票技术分析</h1>', unsafe_allow_html=True)
@@ -828,136 +942,28 @@ def analyze_stock_page():
         progress_bar.empty()
         status_text.empty()
 
-        # 显示基本信息
-        st.divider()
-
-        # 股票标题 - 使用增强的get_stock_name方法
+        # 获取股票名称并保存分析结果到 session_state
         stock_name = fetcher.get_stock_name(symbol, market)
 
-        # 标题和自选股按钮并排
-        col_title, col_watchlist = st.columns([3, 1])
-        with col_title:
-            st.header(f"{symbol} {stock_name}")
-        with col_watchlist:
-            # 自选股按钮
-            if is_in_watchlist(symbol, market):
-                if st.button("移除自选", key="remove_watchlist"):
-                    success, msg = remove_from_watchlist(symbol, market)
-                    if success:
-                        st.success(msg)
-                        st.rerun()
-            else:
-                if st.button("加入自选", key="add_watchlist"):
-                    success, msg = add_to_watchlist(symbol, stock_name, market)
-                    if success:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.warning(msg)
-
-        # 实时行情卡片
-        if quote:
-            cols = st.columns(5)
-            with cols[0]:
-                st.metric("最新价", f"{quote['price']:.2f}", f"{quote['change']:.2f}%")
-            with cols[1]:
-                st.metric("最高", f"{quote['high']:.2f}")
-            with cols[2]:
-                st.metric("最低", f"{quote['low']:.2f}")
-            with cols[3]:
-                vol = quote['volume']
-                if vol >= 1e8:
-                    volume = vol / 1e8
-                    unit = "亿"
-                elif vol >= 1e4:
-                    volume = vol / 1e4
-                    unit = "万"
-                else:
-                    volume = vol
-                    unit = ""
-                st.metric("成交量", f"{volume:.1f}{unit}")
-            with cols[4]:
-                st.metric("今开", f"{quote['open']:.2f}")
-
-        st.divider()
-
-        # 显示交易信号
-        display_signals(signals)
-
-        # 保存到 session_state（st.rerun() 后可恢复）
         st.session_state.analyzed_data = data
         st.session_state.analyzed_signals = signals
+        st.session_state.analyzed_quote = quote
         st.session_state.analyzed_stock_name = stock_name
 
-        # AI 智能解读
-        if AI_ENABLED:
-            display_ai_analysis_card(data, signals, symbol, stock_name, period)
+        # 渲染分析结果
+        _render_analysis_results(data, signals, quote, symbol, stock_name, market, period)
 
-        st.divider()
-
-        # 显示指标数值
-        latest = data.iloc[-1]
-        cols = st.columns(4)
-
-        with cols[0]:
-            st.subheader("MACD")
-            st.write(f"DIF: {latest['macd']:.2f}")
-            st.write(f"DEA: {latest['macd_signal']:.2f}")
-            st.write(f"MACD: {latest['macd_hist']:.2f}")
-
-        with cols[1]:
-            st.subheader("RSI")
-            st.write(f"RSI(6): {latest['rsi_6']:.2f}")
-            st.write(f"RSI(12): {latest['rsi_12']:.2f}")
-            st.write(f"RSI(24): {latest['rsi_24']:.2f}")
-
-        with cols[2]:
-            st.subheader("KDJ")
-            st.write(f"K: {latest['kdj_k']:.2f}")
-            st.write(f"D: {latest['kdj_d']:.2f}")
-            st.write(f"J: {latest['kdj_j']:.2f}")
-
-        with cols[3]:
-            st.subheader("布林带")
-            st.write(f"上轨: {latest['boll_upper']:.2f}")
-            st.write(f"中轨: {latest['boll_mid']:.2f}")
-            st.write(f"下轨: {latest['boll_lower']:.2f}")
-            st.write(f"带宽: {latest['boll_width']*100:.2f}%")
-
-        st.divider()
-
-        # 绘制图表
-        tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
-
-        with tab1:
-            fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
-            st.plotly_chart(fig, use_container_width=True)
-
-        with tab2:
-            fig = plot_rsi_chart(data)
-            st.plotly_chart(fig, use_container_width=True)
-
-        with tab3:
-            fig = plot_kdj_chart(data)
-            st.plotly_chart(fig, use_container_width=True)
-
-        with tab4:
-            fig = plot_boll_chart(data)
-            st.plotly_chart(fig, use_container_width=True)
-
-        # 显示原始数据
-        with st.expander("查看原始数据"):
-            st.dataframe(data.tail(20))
-
-    # AI 智能解读（rerun 后恢复：st.rerun() 时 analyze_clicked=False，从 session_state 读取）
-    if AI_ENABLED and not analyze_clicked:
+    # rerun 恢复：st.rerun() 后 analyze_clicked=False，从 session_state 恢复全部结果
+    if not analyze_clicked:
         cached_data = st.session_state.get("analyzed_data")
         if cached_data is not None:
-            display_ai_analysis_card(
+            _render_analysis_results(
                 cached_data,
                 st.session_state.get("analyzed_signals", {}),
+                st.session_state.get("analyzed_quote"),
                 symbol,
                 st.session_state.get("analyzed_stock_name", ""),
+                market,
                 period
             )
 
