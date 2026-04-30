@@ -1,10 +1,48 @@
 """
 测试夹具和共享工具
 """
+import sys
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+
+# ============================================================
+# Streamlit Mock — 在收集阶段设置，供所有测试使用
+# ============================================================
+
+class _MockSessionState(dict):
+    def get(self, key, default=None):
+        return super().get(key, default)
+    def __getattr__(self, key):
+        if key in self:
+            return self[key]
+        raise AttributeError(key)
+    def __setattr__(self, key, value):
+        self[key] = value
+
+
+if 'streamlit' not in sys.modules:
+    _mock_st = type(sys)('streamlit_mock')
+    _mock_st.session_state = _MockSessionState()
+    _mock_st.cache_data = lambda f=None, **kw: (lambda g: g) if f is None else f
+    _mock_st.set_page_config = lambda **kw: None
+    _mock_st.markdown = lambda *args, **kw: None
+    _mock_st.sidebar = type(sys)('sidebar')
+    _mock_st.columns = lambda n, **kw: [type(sys)('col') for _ in range(n)]
+    _mock_st.button = lambda label, **kw: False
+    _mock_st.selectbox = lambda label, options, **kw: options[0] if options else None
+    _mock_st.text_input = lambda label, **kw: ''
+    _mock_st.info = lambda *args, **kw: None
+    _mock_st.warning = lambda *args, **kw: None
+    _mock_st.error = lambda *args, **kw: None
+    _mock_st.success = lambda *args, **kw: None
+    _mock_st.empty = lambda: type(sys)('empty')
+    _mock_st.spinner = lambda text: type(sys)('spinner')
+    _mock_st.form = lambda key: type(sys)('form')
+    _mock_st.form_submit_button = lambda label, **kw: False
+    _mock_st.tabs = lambda labels: [type(sys)('tab') for _ in labels]
+    sys.modules['streamlit'] = _mock_st
 
 
 def _make_data(prices, start_date=None):

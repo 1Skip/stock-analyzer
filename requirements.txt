@@ -7,3 +7,6 @@ requests==2.31.0
 akshare==1.11.88
 MyTT==2.9.3
 litellm>=1.80
+pytest>=8.0
+pytest-mock>=3.12
+matplotlib>=3.8

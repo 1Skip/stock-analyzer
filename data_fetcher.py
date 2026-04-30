@@ -17,6 +17,7 @@ def _patched_session_init(self):
     self.trust_env = False
 requests.Session.__init__ = _patched_session_init
 import random
+import io
 import json
 import os
 from threading import Lock
@@ -155,7 +156,7 @@ class StockDataFetcher:
                     cache_data = json.load(f)
 
             # 只保存最近20个股票
-            if len(cache_data) > 20:
+            if len(cache_data) >= 20:
                 # 删除最早的条目
                 oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k].get('timestamp', 0))
                 del cache_data[oldest_key]
@@ -197,7 +198,7 @@ class StockDataFetcher:
             # 恢复DataFrame（新格式用json/orient='split'保留index类型，旧格式兼容from_dict）
             raw = cached['data']
             if isinstance(raw, str):
-                df = pd.read_json(raw, orient='split')
+                df = pd.read_json(io.StringIO(raw), orient='split')
             else:
                 df = pd.DataFrame.from_dict(raw)
                 if 'date' in df.columns:
@@ -471,7 +472,7 @@ class StockDataFetcher:
                 ticker = yf.Ticker(symbol)
                 return ticker.info
 
-        info = self._retry_with_backoff(_fetch_info)
+        info = self._retry_with_backoff(_fetch_info, 'yfinance')
         if info is None:
             return {'shortName': symbol, 'symbol': symbol}
         return info
@@ -602,7 +603,7 @@ class StockDataFetcher:
                                 'low': float(data[5]),
                                 'volume': int(float(data[8]) / 100),
                                 'prev_close': float(data[2]),
-                                'change': float(data[32])
+                                'change': (float(data[3]) / float(data[2]) - 1) * 100
                             }
 
                 # 备选：使用yfinance
