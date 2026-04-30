@@ -118,7 +118,10 @@ class TestBuildIndicatorSnapshot:
     def test_signals_included(self, sample_snapshot, sample_signals):
         signals = sample_snapshot['交易信号']
         assert signals['MACD'] == sample_signals['macd']
-        assert signals['综合建议'] == sample_signals['recommendation']
+        assert signals['RSI'] == sample_signals['rsi']
+        assert signals['KDJ'] == sample_signals['kdj']
+        assert signals['布林带'] == sample_signals['boll']
+        # "综合建议" 已从 snapshot 移除，AI 应独立分析不依赖系统信号
 
     def test_boll_bandwidth_format(self, sample_snapshot):
         bw = sample_snapshot['技术指标']['布林带']['带宽']
