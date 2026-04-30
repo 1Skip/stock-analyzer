@@ -319,7 +319,7 @@ class StockDataFetcher:
 
         try:
             # 转换period为天数
-            period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
             days = period_days.get(period, 365)
 
             # 判断交易所，构造 AKShare 所需前缀
@@ -362,7 +362,7 @@ class StockDataFetcher:
     def _get_cn_stock_data_sina_fallback(self, symbol, period, **kwargs):
         """获取A股数据 - 新浪财经（备选数据源，带超时）"""
         try:
-            period_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}
+            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
             days = period_days.get(period, 365)
 
             # 判断交易所后缀

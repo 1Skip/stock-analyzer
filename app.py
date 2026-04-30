@@ -823,8 +823,15 @@ def analyze_stock_page():
 
     with col3:
         # 默认使用3个月数据，加载更快
-        period_options = ["1mo", "3mo", "6mo", "1y"]
-        period_labels = {"1mo": "1个月", "3mo": "3个月", "6mo": "6个月", "1y": "1年"}
+        period_options = ["1wk", "1mo", "3mo", "6mo", "1y", "2y"]
+        period_labels = {
+            "1wk": "1周 · 短线异动",
+            "1mo": "1个月 · 短线择时",
+            "3mo": "3个月 · 波段确认",
+            "6mo": "6个月 · 趋势判断",
+            "1y": "1年 · 长线布局",
+            "2y": "2年 · 历史锚点",
+        }
         period_index = period_options.index(st.session_state.analyze_period)
         period = st.selectbox("时间周期", options=period_options,
                              index=period_index,
