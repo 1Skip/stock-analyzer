@@ -861,6 +861,11 @@ def analyze_stock_page():
         # 显示交易信号
         display_signals(signals)
 
+        # 保存到 session_state（st.rerun() 后可恢复）
+        st.session_state.analyzed_data = data
+        st.session_state.analyzed_signals = signals
+        st.session_state.analyzed_stock_name = stock_name
+
         # AI 智能解读
         if AI_ENABLED:
             display_ai_analysis_card(data, signals, symbol, stock_name, period)
@@ -920,6 +925,18 @@ def analyze_stock_page():
         # 显示原始数据
         with st.expander("查看原始数据"):
             st.dataframe(data.tail(20))
+
+    # AI 智能解读（rerun 后恢复：st.rerun() 时 analyze_clicked=False，从 session_state 读取）
+    if AI_ENABLED and not analyze_clicked:
+        cached_data = st.session_state.get("analyzed_data")
+        if cached_data is not None:
+            display_ai_analysis_card(
+                cached_data,
+                st.session_state.get("analyzed_signals", {}),
+                symbol,
+                st.session_state.get("analyzed_stock_name", ""),
+                period
+            )
 
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
 def get_cached_hot_stocks(market):

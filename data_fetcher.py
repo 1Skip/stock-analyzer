@@ -551,7 +551,7 @@ class StockDataFetcher:
                             'low': float(row['最低']),
                             'volume': int(float(row['成交量']) / 100),  # 转换为手
                             'prev_close': float(row['昨收']),
-                            'change': float(row['涨跌幅'])
+                            'change': (float(row['最新价']) / float(row['昨收']) - 1) * 100
                         }
 
                 # 第二优先：新浪财经实时行情
@@ -579,7 +579,7 @@ class StockDataFetcher:
                                 'low': float(data[5]),
                                 'volume': int(float(data[8]) / 100),  # 转换为手
                                 'prev_close': float(data[2]),
-                                'change': float(data[32])  # 涨跌幅
+                                'change': (float(data[3]) / float(data[2]) - 1) * 100
                             }
 
                 # 如果深圳失败，尝试上海
