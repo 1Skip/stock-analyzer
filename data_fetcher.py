@@ -245,19 +245,28 @@ class StockDataFetcher:
             offline_mode = False
 
             if market == "CN":
-                # A股数据获取，按优先级尝试不同数据源（AKShare 优先，数据最全）
-                sources_to_try = []
+                # A股数据获取：始终构建完整回退链，按用户偏好排序
+                all_sources = [
+                    ('akshare', self._get_cn_stock_data_akshare, 'AKShare'),
+                    ('sina', self._get_cn_stock_data_sina_fallback, '新浪财经'),
+                ]
+                # yfinance 对 A 股数据不稳定，仅作最后兜底（不暴露为可选偏好）
+                all_sources.append(('yfinance', self._get_cn_stock_data_yfinance, 'Yahoo Finance'))
 
-                # 根据用户偏好或健康状态决定顺序
-                if self.preferred_source == 'akshare' or self.preferred_source == 'auto':
-                    if self._health_status['akshare']['healthy']:
-                        sources_to_try.append(('akshare', self._get_cn_stock_data_akshare))
-                if self.preferred_source == 'sina' or self.preferred_source == 'auto':
-                    if self._health_status['sina']['healthy']:
-                        sources_to_try.append(('sina', self._get_cn_stock_data_sina_fallback))
-                if self.preferred_source == 'yfinance' or self.preferred_source == 'auto':
-                    if self._health_status['yfinance']['healthy']:
-                        sources_to_try.append(('yfinance', self._get_cn_stock_data_yfinance))
+                sources_to_try = []
+                if self.preferred_source == 'auto':
+                    # 自动模式：按默认健康顺序
+                    for src_name, src_func, src_label in all_sources:
+                        if self._health_status[src_name]['healthy']:
+                            sources_to_try.append((src_name, src_func))
+                else:
+                    # 用户指定偏好源：该源排第一，其余健康源作回退
+                    for src_name, src_func, src_label in all_sources:
+                        if src_name == self.preferred_source and self._health_status[src_name]['healthy']:
+                            sources_to_try.append((src_name, src_func))
+                    for src_name, src_func, src_label in all_sources:
+                        if src_name != self.preferred_source and self._health_status[src_name]['healthy']:
+                            sources_to_try.append((src_name, src_func))
 
                 # 尝试所有数据源
                 for source_name, source_func in sources_to_try:
@@ -281,19 +290,36 @@ class StockDataFetcher:
                         offline_mode = True
 
             elif market == "HK":
+                # 港股：Yahoo Finance 历史K线（国内可直连），新浪实时行情
                 result = self._retry_with_backoff(
                     lambda s, p: yf.Ticker(f"{s}.HK").history(period=p, interval=interval),
                     'yfinance', symbol, period
                 )
                 if result is not None and not result.empty:
                     data_source = "Yahoo Finance"
-            else:
-                result = self._retry_with_backoff(
-                    lambda s, p: yf.Ticker(s).history(period=p, interval=interval),
-                    'yfinance', symbol, period
-                )
-                if result is not None and not result.empty:
-                    data_source = "Yahoo Finance"
+                # 失败则尝试离线缓存
+                if result is None:
+                    result = self._load_offline_cache(symbol)
+                    if result is not None:
+                        data_source = result.attrs.get('data_source', '离线缓存')
+                        offline_mode = True
+            elif market == "US":
+                # 美股：新浪财经历史日K（国内直连），AKShare 备用
+                result = self._get_us_stock_data_sina(symbol, period)
+                if result is not None:
+                    data_source = "新浪财经"
+                if result is None:
+                    result = self._retry_with_backoff(
+                        lambda s, p: yf.Ticker(s).history(period=p, interval=interval),
+                        'yfinance', symbol, period
+                    )
+                    if result is not None and not result.empty:
+                        data_source = "Yahoo Finance"
+                if result is None:
+                    result = self._load_offline_cache(symbol)
+                    if result is not None:
+                        data_source = result.attrs.get('data_source', '离线缓存')
+                        offline_mode = True
 
             if result is None or (isinstance(result, pd.DataFrame) and result.empty):
                 print(f"未找到股票 {symbol} 的数据")
@@ -311,6 +337,42 @@ class StockDataFetcher:
 
             self.cache[cache_key] = (datetime.now(), result, data_source)
             return result
+
+    def _get_us_stock_data_sina(self, symbol, period, **kwargs):
+        """使用新浪财经获取美股历史日K数据"""
+        try:
+            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            days = period_days.get(period, 365)
+            # 美股约252个交易日/年，加10条余量
+            datalen = max(int(days * 252 / 365) + 10, 10)
+
+            url = 'https://stock.finance.sina.com.cn/usstock/api/json_v2.php/US_MinKService.getDailyK'
+            params = {'symbol': symbol.lower(), 'type': 'day', 'datalen': datalen}
+            headers = {
+                'Referer': 'https://finance.sina.com.cn',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            if resp.status_code != 200:
+                return None
+
+            data = resp.json()
+            if not data or not isinstance(data, list) or len(data) < 10:
+                return None
+
+            df = pd.DataFrame(data)
+            df = df.rename(columns={'d': 'date', 'o': 'open', 'h': 'high',
+                                    'l': 'low', 'c': 'close', 'v': 'volume'})
+            df['date'] = pd.to_datetime(df['date'])
+            df.set_index('date', inplace=True)
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+
+            if len(df) >= 10:
+                return df
+        except Exception as e:
+            print(f"新浪美股历史数据获取失败 {symbol}: {str(e)}")
+        return None
 
     def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
         """使用 AKShare 获取A股历史数据（腾讯财经数据源，直连稳定）"""
@@ -627,6 +689,11 @@ class StockDataFetcher:
                     }
 
             elif market == "HK":
+                # 港股实时行情：新浪财经优先
+                quote = self._get_sina_realtime(symbol, "hk")
+                if quote:
+                    return quote
+                # 备选：Yahoo Finance
                 ticker = yf.Ticker(f"{symbol}.HK")
                 hist = ticker.history(period="5d")
                 info = ticker.info
@@ -645,6 +712,11 @@ class StockDataFetcher:
                         'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
                     }
             else:
+                # 美股实时行情：新浪财经优先
+                quote = self._get_sina_realtime(symbol, "us")
+                if quote:
+                    return quote
+                # 备选：Yahoo Finance
                 ticker = yf.Ticker(symbol)
                 hist = ticker.history(period="5d")
                 info = ticker.info
@@ -665,6 +737,59 @@ class StockDataFetcher:
 
         except Exception as e:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
+        return None
+
+    def _get_sina_realtime(self, symbol, market):
+        """新浪财经实时行情 — 支持 us / hk"""
+        import re
+        if market == "hk":
+            sina_sym = f"hk{symbol}"
+        elif market == "us":
+            sina_sym = f"gb_{symbol.lower()}"
+        else:
+            return None
+
+        url = f"https://hq.sinajs.cn/list={sina_sym}"
+        headers = {
+            'Referer': 'https://finance.sina.com.cn',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=5)
+            if resp.status_code != 200:
+                return None
+            match = re.search(r'"([^"]*)"', resp.text)
+            if not match:
+                return None
+            data = match.group(1).split(',')
+        except Exception:
+            return None
+
+        if market == "hk" and len(data) >= 17:
+            return {
+                'symbol': symbol,
+                'name': data[1] if data[1] else data[0],
+                'price': float(data[4]),          # 最新价
+                'open': float(data[3]),           # 今开
+                'high': float(data[2]),           # 最高
+                'low': float(data[6]),            # 最低
+                'volume': int(float(data[12])),   # 成交量（股）
+                'prev_close': float(data[5]),     # 昨收
+                'change': float(data[8]),         # 涨跌幅(%)
+            }
+        elif market == "us" and len(data) >= 11:
+            # 新浪美股: 名称, 最新价, 涨跌幅(%), 时间, 涨跌额($), 今开, 最高, 最低, ...
+            return {
+                'symbol': symbol,
+                'name': data[0],
+                'price': float(data[1]),
+                'open': float(data[5]),
+                'high': float(data[6]),
+                'low': float(data[7]),
+                'volume': int(float(data[10])),
+                'prev_close': float(data[1]) - float(data[4]),  # 昨收 = 最新价 - 涨跌额($)
+                'change': float(data[2]),  # 涨跌幅(%)
+            }
         return None
 
     def get_intraday_data(self, symbol, market="CN"):

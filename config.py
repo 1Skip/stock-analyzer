@@ -56,25 +56,25 @@ CACHE_TTL_SECTOR = 600        # 板块推荐
 # ============================================================
 # 配色方案
 # ============================================================
-# A股传统配色（红涨绿跌），WCAG AA 达标（对比度 ≥4.5:1）
+# A股传统配色（红涨绿跌）
 COLOR_RED_UP = {
-    "increasing": "#cc0000",   # 涨（红），对比度 ~5.5:1
-    "decreasing": "#008844",   # 跌（绿），对比度 ~4.6:1
-    "volume_up": "#cc0000",
-    "volume_down": "#008844",
-    "macd_hist_up": "#cc0000",
-    "macd_hist_down": "#008844",
+    "increasing": "#e53935",   # 涨（红），对比度 ~5.1:1
+    "decreasing": "#2e7d32",   # 跌（绿），对比度 ~5.3:1
+    "volume_up": "#e53935",
+    "volume_down": "#2e7d32",
+    "macd_hist_up": "#e53935",
+    "macd_hist_down": "#2e7d32",
     "label": "A股传统（红涨绿跌）",
 }
 
 # 国际惯例配色（绿涨红跌）
 COLOR_GREEN_UP = {
-    "increasing": "#008844",   # 涨（绿）
-    "decreasing": "#cc0000",   # 跌（红）
-    "volume_up": "#008844",
-    "volume_down": "#cc0000",
-    "macd_hist_up": "#008844",
-    "macd_hist_down": "#cc0000",
+    "increasing": "#2e7d32",   # 涨（绿）
+    "decreasing": "#e53935",   # 跌（红）
+    "volume_up": "#2e7d32",
+    "volume_down": "#e53935",
+    "macd_hist_up": "#2e7d32",
+    "macd_hist_down": "#e53935",
     "label": "国际惯例（绿涨红跌）",
 }
 

@@ -26,6 +26,7 @@ from config import (
 )
 from ai_analysis import build_indicator_snapshot, call_ai_analysis
 from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
+from streamlit_lightweight_charts import renderLightweightCharts
 
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
@@ -70,35 +71,66 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 自定义CSS样式 — 苹果极简风（暗色/亮色主题兼容：使用半透明色和继承色）
+# 自定义CSS样式 — Apple × Tesla 设计体系
+# 8px间距梯度 / 四级字体层级 / 完整色板 / 亮暗双主题兼容
 st.markdown("""
 <style>
+    /* ===== 设计变量 ===== */
+    :root {
+        --space-4: 4px;
+        --space-8: 8px;
+        --space-12: 12px;
+        --space-16: 16px;
+        --space-24: 24px;
+        --space-32: 32px;
+        --space-48: 48px;
+        --font-title: 1.5rem;
+        --font-section: 1.1rem;
+        --font-body: 0.9rem;
+        --font-caption: 0.75rem;
+        --color-primary: #1a73e8;
+        --color-rise: #e53935;
+        --color-fall: #2e7d32;
+        --color-warning: #f9a825;
+        --color-flat: #757575;
+    }
+
     /* ===== 全局字体 ===== */
     html, body, [class*="css"] {
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        font-size: var(--font-body);
+        font-weight: 400;
     }
 
-    /* ===== 等宽数字 — 金融数据列对齐 ===== */
+    /* ===== 等宽数字 ===== */
     [data-testid="stMetricValue"], [data-testid="stDataFrame"] td {
         font-feature-settings: "tnum";
         font-variant-numeric: tabular-nums;
     }
 
-    /* ===== 极简标题 ===== */
+    /* ===== 页面标题 ===== */
     .main-header {
-        font-size: 2rem;
+        font-size: var(--font-title);
         font-weight: 600;
-        letter-spacing: -0.025em;
+        letter-spacing: -0.02em;
         color: inherit;
-        margin-bottom: 1.5rem;
+        margin-bottom: var(--space-24);
     }
 
-    /* ===== 信号：仅颜色区分，微加粗 ===== */
-    .buy-signal  { color: #cc0000; font-weight: 500; }
-    .sell-signal { color: #008844; font-weight: 500; }
-    .neutral-signal { opacity: 0.5; }
+    /* ===== 信号徽章 ===== */
+    .signal-badge {
+        display: inline-block;
+        padding: var(--space-4) var(--space-12);
+        border-radius: 20px;
+        font-size: var(--font-caption);
+        font-weight: 500;
+        margin: 0 2px;
+    }
+    .signal-badge.buy  { background: rgba(229,57,53,0.08); color: var(--color-rise); }
+    .signal-badge.sell { background: rgba(46,125,50,0.08); color: var(--color-fall); }
+    .signal-badge.neutral { background: rgba(128,128,128,0.06); color: inherit; opacity: 0.5; }
 
-    /* ===== 极简卡片 + 悬停动效 ===== */
+    /* ===== 卡片 ===== */
     .stock-card {
         background: rgba(128, 128, 128, 0.04);
         border-radius: 14px;
@@ -113,24 +145,25 @@ st.markdown("""
     /* ===== 自选股条目 ===== */
     .watchlist-item {
         background: rgba(128, 128, 128, 0.04);
-        border-radius: 8px;
-        padding: 0.5rem;
-        margin: 0.25rem 0;
+        border-radius: var(--space-8);
+        padding: var(--space-8);
+        margin: var(--space-4) 0;
         transition: background 0.2s ease;
     }
     .watchlist-item:hover {
         background: rgba(128, 128, 128, 0.08);
     }
 
-    /* ===== 按钮：苹果风格圆角 ===== */
+    /* ===== 按钮 ===== */
     .stButton button {
-        border-radius: 12px !important;
+        border-radius: var(--space-12) !important;
         font-weight: 500;
         border: none;
         transition: all 0.15s ease;
     }
-
-    /* ===== 主按钮：深灰代替蓝色 ===== */
+    .stButton button:active {
+        transform: scale(0.97);
+    }
     .stButton button[kind="primary"] {
         background-color: #333;
         color: #fff;
@@ -144,24 +177,20 @@ st.markdown("""
     [data-testid="stSidebar"] {
         background-color: rgba(128, 128, 128, 0.02);
     }
-
-    /* ===== 侧边栏 Radio 导航 ===== */
     [data-testid="stSidebar"] .stRadio label {
         padding: 0.4rem 0.75rem;
         border-radius: 10px;
         transition: background 0.2s ease;
     }
-
-    /* ===== 侧边栏分隔线更紧凑 ===== */
     [data-testid="stSidebar"] hr {
         margin: 0.8rem 0;
         opacity: 0.2;
     }
 
-    /* ===== Metric 指标卡片 — 特斯拉风格大数字 ===== */
+    /* ===== Metric 指标卡片 ===== */
     [data-testid="stMetric"] {
-        background: rgba(128, 128, 128, 0.03);
-        border-radius: 12px;
+        background: rgba(128, 128, 128, 0.04);
+        border-radius: var(--space-12);
         padding: 0.75rem;
         transition: background 0.2s ease;
     }
@@ -174,145 +203,186 @@ st.markdown("""
         font-weight: 500 !important;
     }
 
-    /* ===== Tab 标签 ===== */
+    /* ===== Tab ===== */
     .stTabs [role="tab"] {
         font-weight: 500;
         border-radius: 10px;
         transition: background 0.2s ease;
     }
 
-    /* ===== DataFrame 表格 ===== */
+    /* ===== DataFrame ===== */
     [data-testid="stDataFrame"] {
-        border-radius: 12px;
+        border-radius: var(--space-12);
         overflow: hidden;
     }
     [data-testid="stDataFrame"] table {
-        border-radius: 12px;
+        border-radius: var(--space-12);
     }
     [data-testid="stDataFrame"] th {
         font-weight: 500;
-        font-size: 0.8rem;
+        font-size: var(--font-caption);
         text-transform: uppercase;
         letter-spacing: 0.05em;
         opacity: 0.6;
     }
 
-    /* ===== Expander 折叠面板 ===== */
+    /* ===== Expander ===== */
     [data-testid="stExpander"] {
-        border-radius: 12px;
+        border-radius: var(--space-12);
         border: none !important;
     }
 
-    /* ===== SelectBox / TextInput 圆角 ===== */
+    /* ===== SelectBox / TextInput ===== */
     [data-testid="stTextInput"] input,
     [data-testid="stSelectbox"] div[role="combobox"],
     .stSelectbox [data-baseweb="select"] {
         border-radius: 10px !important;
     }
 
-    /* ===== Divider 分隔线更淡 ===== */
+    /* ===== Divider ===== */
     hr {
-        opacity: 0.3;
-        margin: 1.5rem 0;
+        opacity: 0.2;
+        margin: var(--space-24) 0;
+    }
+
+    /* ===== 图表区块小标题 ===== */
+    .chart-section-title {
+        font-size: var(--font-caption);
+        font-weight: 500;
+        opacity: 0.45;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin: 20px 0 6px 0;
     }
 </style>
 """, unsafe_allow_html=True)
 
-def plot_candlestick_chart(data, title="K线图"):
-    """使用Plotly绘制K线图"""
+def plot_candlestick_chart(data, title=""):
+    """使用 TradingView lightweight-charts 绘制 K 线 + 成交量 + MACD"""
+    import pandas as pd
+
     scheme_name = st.session_state.get('color_scheme')
     market = st.session_state.get('analyze_market', 'CN')
     colors = resolve_color_scheme(scheme_name, market)
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
-    fig = make_subplots(
-        rows=3, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.05,
-        row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=('价格', '成交量', 'MACD')
-    )
+    def to_time(idx):
+        if hasattr(idx, 'strftime'):
+            return idx.strftime('%Y-%m-%d')
+        return str(idx)[:10]
 
-    # K线图
-    fig.add_trace(
-        go.Candlestick(
-            x=data.index,
-            open=data['open'],
-            high=data['high'],
-            low=data['low'],
-            close=data['close'],
-            name='K线',
-            increasing_line_color=inc_color,
-            decreasing_line_color=dec_color
-        ),
-        row=1, col=1
-    )
+    chart_bg = "rgba(0,0,0,0)"
+    text_color = "#d1d4dc"
+    grid_color = "rgba(66, 66, 66, 0.3)"
+    border_color = "rgba(66, 66, 66, 0.4)"
+    uid = hash(tuple(data.index)) & 0x7fffffff
 
-    # 移动平均线
+    # --- 图1: K线 + 均线 ---
+    candles = []
+    for idx, row in data.iterrows():
+        candles.append({
+            "time": to_time(idx),
+            "open": float(row['open']),
+            "high": float(row['high']),
+            "low": float(row['low']),
+            "close": float(row['close']),
+        })
+
+    series1 = [{
+        "type": "Candlestick",
+        "data": candles,
+        "options": {
+            "upColor": inc_color,
+            "downColor": dec_color,
+            "borderVisible": False,
+            "wickUpColor": inc_color,
+            "wickDownColor": dec_color
+        }
+    }]
+
     for ma_conf in MA_CONFIG.values():
-        col_name = f'ma{ma_conf["period"]}'
-        if col_name in data.columns:
-            fig.add_trace(go.Scatter(x=data.index, y=data[col_name], name=ma_conf['label'],
-                                     line=dict(color=ma_conf['color'], width=1)), row=1, col=1)
+        col = f'ma{ma_conf["period"]}'
+        if col in data.columns:
+            ma_data = []
+            for idx, row in data.iterrows():
+                if pd.notna(row[col]):
+                    ma_data.append({"time": to_time(idx), "value": float(row[col])})
+            series1.append({
+                "type": "Line",
+                "data": ma_data,
+                "options": {"color": ma_conf['color'], "lineWidth": 1}
+            })
 
-    # 成交量
+    st.markdown("<b>K线 + 均线</b>", unsafe_allow_html=True)
+    renderLightweightCharts([{
+        "chart": {
+            "height": 400,
+            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
+            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
+            "crosshair": {"mode": 0},
+            "rightPriceScale": {"scaleMargins": {"top": 0.05, "bottom": 0.05}, "borderColor": border_color},
+            "timeScale": {"borderColor": border_color},
+        },
+        "series": series1,
+    }], f"lwc1_{uid}")
+
+    # --- 图2: 成交量 ---
+    vol_data = []
     if 'volume' in data.columns:
-        vol_colors = get_volume_colors(data, inc_color, dec_color)
-        fig.add_trace(
-            go.Bar(x=data.index, y=data['volume'], name='成交量', marker_color=vol_colors),
-            row=2, col=1
-        )
+        for idx, row in data.iterrows():
+            if pd.notna(row['volume']):
+                vol_data.append({
+                    "time": to_time(idx),
+                    "value": float(row['volume']),
+                    "color": inc_color if row['close'] >= row['open'] else dec_color
+                })
 
-    # MACD
+    st.markdown("<b>成交量</b>", unsafe_allow_html=True)
+    renderLightweightCharts([{
+        "chart": {
+            "height": 100,
+            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
+            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
+            "timeScale": {"visible": False},
+            "rightPriceScale": {"borderColor": border_color},
+        },
+        "series": [{
+            "type": "Histogram",
+            "data": vol_data,
+            "options": {"priceFormat": {"type": "volume"}},
+            "priceScale": {"scaleMargins": {"top": 0, "bottom": 0}},
+        }],
+    }], f"lwc2_{uid}")
+
+    # --- 图3: MACD ---
+    macd_line, macd_signal, macd_hist = [], [], []
     if 'macd' in data.columns:
-        fig.add_trace(go.Scatter(x=data.index, y=data['macd'], name='DIF', line=dict(color='blue')), row=3, col=1)
-        fig.add_trace(go.Scatter(x=data.index, y=data['macd_signal'], name='DEA', line=dict(color='red')), row=3, col=1)
+        for idx, row in data.iterrows():
+            t = to_time(idx)
+            if pd.notna(row.get('macd')):
+                macd_line.append({"time": t, "value": float(row['macd'])})
+            if pd.notna(row.get('macd_signal')):
+                macd_signal.append({"time": t, "value": float(row['macd_signal'])})
+            if pd.notna(row.get('macd_hist')):
+                h = float(row['macd_hist'])
+                macd_hist.append({"time": t, "value": h, "color": inc_color if h >= 0 else dec_color})
 
-        # MACD柱状图
-        colors_macd = get_macd_hist_colors(data['macd_hist'], inc_color, dec_color)
-        fig.add_trace(
-            go.Bar(x=data.index, y=data['macd_hist'], name='MACD', marker_color=colors_macd),
-            row=3, col=1
-        )
-
-        # 金叉/死叉标记
-        macd_vals = data['macd'].values
-        signal_vals = data['macd_signal'].values
-        golden_idx = np.where((macd_vals > signal_vals) & (np.roll(macd_vals <= signal_vals, 1)))[0]
-        death_idx = np.where((macd_vals < signal_vals) & (np.roll(macd_vals >= signal_vals, 1)))[0]
-        # 排除第一个元素（roll导致的不真实交叉）
-        golden_idx = golden_idx[golden_idx > 0]
-        death_idx = death_idx[death_idx > 0]
-        if len(golden_idx) > 0:
-            fig.add_trace(go.Scatter(
-                x=data.index[golden_idx], y=data['macd'].iloc[golden_idx],
-                mode='markers', name='MACD金叉', marker=dict(symbol='triangle-up', size=12, color=inc_color, line=dict(width=1)),
-                showlegend=True, hovertemplate='金叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
-        if len(death_idx) > 0:
-            fig.add_trace(go.Scatter(
-                x=data.index[death_idx], y=data['macd'].iloc[death_idx],
-                mode='markers', name='MACD死叉', marker=dict(symbol='triangle-down', size=12, color=dec_color, line=dict(width=1)),
-                showlegend=True, hovertemplate='死叉<br>%{x}<br>MACD: %{y:.4f}'), row=3, col=1)
-
-    fig.update_layout(
-        title=title,
-        xaxis_rangeslider_visible=False,
-        height=800,
-        showlegend=True,
-        hovermode='x unified',
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
-    fig.update_xaxes(rangeslider_visible=False)
-    fig.update_yaxes(title_text="价格", row=1, col=1)
-    fig.update_yaxes(title_text="成交量", row=2, col=1)
-    fig.update_yaxes(title_text="MACD", row=3, col=1)
-
-    return fig
+    st.markdown("<b>MACD</b>", unsafe_allow_html=True)
+    renderLightweightCharts([{
+        "chart": {
+            "height": 150,
+            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
+            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
+            "timeScale": {"borderColor": border_color},
+            "rightPriceScale": {"borderColor": border_color},
+        },
+        "series": [
+            {"type": "Line", "data": macd_line, "options": {"color": "#42a5f5", "lineWidth": 1}},
+            {"type": "Line", "data": macd_signal, "options": {"color": "#ff7043", "lineWidth": 1}},
+            {"type": "Histogram", "data": macd_hist, "options": {}},
+        ],
+    }], f"lwc3_{uid}")
 
 def plot_rsi_chart(data):
     """绘制RSI图表"""
@@ -336,15 +406,21 @@ def plot_rsi_chart(data):
     fig.add_hrect(y0=RSI_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
-        title="RSI指标 (6日/12日/24日)",
-        height=400,
+        title="RSI",
+        height=280,
         yaxis_range=[0, 100],
         hovermode='x unified',
+        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
+        showlegend=True,
+        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
         margin=dict(l=20, r=20, t=40, b=20)
     )
+
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig
 
@@ -387,14 +463,20 @@ def plot_kdj_chart(data):
     fig.add_hrect(y0=KDJ_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
     fig.update_layout(
-        title="KDJ指标 (随机指标)",
-        height=400,
+        title="KDJ",
+        height=280,
         hovermode='x unified',
+        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
+        showlegend=True,
+        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
         margin=dict(l=20, r=20, t=40, b=20)
     )
+
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig
 
@@ -418,14 +500,20 @@ def plot_boll_chart(data):
     ))
 
     fig.update_layout(
-        title="布林带 (BOLL)",
-        height=400,
+        title="BOLL",
+        height=300,
         hovermode='x unified',
+        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
+        showlegend=True,
+        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
         margin=dict(l=20, r=20, t=40, b=20)
     )
+
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig
 
@@ -470,7 +558,7 @@ def plot_intraday_chart(df, quote):
 
     # 双Y轴布局
     change_pct = quote.get('change', 0) if quote else 0
-    title_color = '#cc0000' if change_pct > 0 else '#008844' if change_pct < 0 else '#808080'
+    title_color = '#e53935' if change_pct > 0 else '#2e7d32' if change_pct < 0 else '#808080'
 
     # 30分钟间隔刻度（A股交易时段）
     today = pd.Timestamp.now().date()
@@ -498,96 +586,29 @@ def plot_intraday_chart(df, quote):
 
 
 def display_signals(signals):
-    """显示交易信号"""
-    # 处理错误情况
+    """显示交易信号 — 4个徽章横排 + 综合建议"""
     if 'error' in signals:
         st.warning(f"{signals['error']}")
         return
 
-    col1, col2, col3, col4 = st.columns(4)
+    def _signal_class(label):
+        if "金叉" in label or "超卖" in label or "反弹" in label or "偏多" in label:
+            return "buy"
+        if "死叉" in label or "超买" in label or "回调" in label or "偏空" in label:
+            return "sell"
+        return "neutral"
 
-    with col1:
-        st.subheader("MACD")
-        macd_signal = signals.get('macd', '暂无数据')
-        if "金叉" in macd_signal:
-            st.markdown(f"<span class='buy-signal'>{macd_signal}</span>", unsafe_allow_html=True)
-        elif "死叉" in macd_signal:
-            st.markdown(f"<span class='sell-signal'>{macd_signal}</span>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<span class='neutral-signal'>{macd_signal}</span>", unsafe_allow_html=True)
+    badges_html = ""
+    for key, label in [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]:
+        text = signals.get(label, '--')
+        cls = _signal_class(text)
+        badges_html += f'<span class="signal-badge {cls}">{key} · {text}</span>'
 
-    with col2:
-        st.subheader("RSI")
-        rsi_signal = signals.get('rsi', '暂无数据')
-        if "超卖" in rsi_signal:
-            st.markdown(f"<span class='buy-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
-        elif "超买" in rsi_signal:
-            st.markdown(f"<span class='sell-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<span class='neutral-signal'>{rsi_signal}</span>", unsafe_allow_html=True)
+    st.markdown(f'<div style="margin:12px 0">{badges_html}</div>', unsafe_allow_html=True)
 
-    with col3:
-        st.subheader("KDJ")
-        kdj_signal = signals.get('kdj', '暂无数据')
-        if "金叉" in kdj_signal or "超卖" in kdj_signal:
-            st.markdown(f"<span class='buy-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
-        elif "死叉" in kdj_signal or "超买" in kdj_signal:
-            st.markdown(f"<span class='sell-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<span class='neutral-signal'>{kdj_signal}</span>", unsafe_allow_html=True)
-
-    with col4:
-        st.subheader("布林带")
-        boll_signal = signals.get('boll', '暂无数据')
-        if "反弹" in boll_signal or "偏多" in boll_signal:
-            st.markdown(f"<span class='buy-signal'>{boll_signal}</span>", unsafe_allow_html=True)
-        elif "回调" in boll_signal or "偏空" in boll_signal:
-            st.markdown(f"<span class='sell-signal'>{boll_signal}</span>", unsafe_allow_html=True)
-        else:
-            st.markdown(f"<span class='neutral-signal'>{boll_signal}</span>", unsafe_allow_html=True)
-
-    # 综合建议
-    st.divider()
-    recommendation = signals.get('recommendation', '观望')
-
-    # 汇总各指标理由
-    reasons = []
-    macd_sig = signals.get('macd', '')
-    if "金叉" in macd_sig:
-        reasons.append(f"MACD {macd_sig}")
-    elif "死叉" in macd_sig:
-        reasons.append(f"MACD {macd_sig}")
-
-    rsi_sig = signals.get('rsi', '')
-    if "超买" in rsi_sig:
-        reasons.append(f"RSI {rsi_sig}")
-    elif "超卖" in rsi_sig:
-        reasons.append(f"RSI {rsi_sig}")
-
-    kdj_sig = signals.get('kdj', '')
-    if "金叉" in kdj_sig:
-        reasons.append(f"KDJ {kdj_sig}")
-    elif "死叉" in kdj_sig:
-        reasons.append(f"KDJ {kdj_sig}")
-    elif "超买" in kdj_sig or "超卖" in kdj_sig:
-        reasons.append(f"KDJ {kdj_sig}")
-
-    boll_sig = signals.get('boll', '')
-    if "反弹" in boll_sig or "回调" in boll_sig:
-        reasons.append(f"BOLL {boll_sig}")
-
-    reason_text = "；".join(reasons) if reasons else "各指标均处于中性区间"
-
-    if "偏多" in recommendation:
-        st.success(f"### 综合建议: {recommendation}")
-        st.caption(f"判断依据：{reason_text}")
-    elif "偏空" in recommendation:
-        st.error(f"### 综合建议: {recommendation}")
-        st.caption(f"判断依据：{reason_text}")
-    else:
-        st.info(f"### 综合建议: {recommendation}")
-        st.caption(f"判断依据：{reason_text}")
-
+    recommendation = signals.get('recommendation', '')
+    if recommendation:
+        st.caption(f"综合: {recommendation}")
 
 AI_MODEL_OPTIONS = {
     # 国内模型
@@ -744,13 +765,13 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
 
 
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period):
-    """渲染个股分析结果（从 session_state 恢复或首次显示）"""
+    """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.divider()
 
-    # 股票标题 + 自选股按钮
+    # ① 标题行
     col_title, col_watchlist = st.columns([3, 1])
     with col_title:
-        st.header(f"{symbol} {stock_name}")
+        st.markdown(f'<div style="font-size:1.25rem;font-weight:600;margin-bottom:8px;">{symbol} {stock_name}</div>', unsafe_allow_html=True)
     with col_watchlist:
         if is_in_watchlist(symbol, market):
             if st.button("移除自选", key="remove_watchlist"):
@@ -767,16 +788,26 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
                 else:
                     st.warning(msg)
 
-    # 实时行情卡片
+    # ② 核心指标 — 最新价 2x + 其余 1x
     if quote:
-        cols = st.columns(5)
-        with cols[0]:
-            st.metric("最新价", f"{quote['price']:.2f}", f"{quote['change']:.2f}%")
-        with cols[1]:
+        col_price, col_h, col_l, col_v, col_o = st.columns([2, 1, 1, 1, 1])
+        with col_price:
+            change = quote['change']
+            delta_color = "#e53935" if change >= 0 else "#2e7d32"
+            delta_sign = "+" if change >= 0 else ""
+            st.markdown(f'''
+            <div style="background:rgba(26,115,232,0.12);border:1px solid rgba(26,115,232,0.18);
+                        border-radius:12px;padding:14px 16px;box-sizing:border-box;">
+              <div style="font-size:0.8rem;margin-bottom:6px;font-weight:800;color:inherit;">最新价</div>
+              <div style="font-size:2.2rem;font-weight:700;line-height:1.2;">{quote["price"]:.2f}</div>
+              <div style="font-size:0.95rem;font-weight:500;color:{delta_color};margin-top:4px;">{delta_sign}{change:.2f}%</div>
+            </div>
+            ''', unsafe_allow_html=True)
+        with col_h:
             st.metric("最高", f"{quote['high']:.2f}")
-        with cols[2]:
+        with col_l:
             st.metric("最低", f"{quote['low']:.2f}")
-        with cols[3]:
+        with col_v:
             vol = quote['volume']
             if vol >= 1e8:
                 volume = vol / 1e8
@@ -788,10 +819,10 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
                 volume = vol
                 unit = ""
             st.metric("成交量", f"{volume:.1f}{unit}")
-        with cols[4]:
+        with col_o:
             st.metric("今开", f"{quote['open']:.2f}")
 
-    # 分时图（仅A股，新浪财经5分钟线）
+    # ③ 分时图（仅A股）
     if market == "CN":
         intraday = get_cached_intraday_data(symbol, market)
         if intraday is not None and not intraday.empty:
@@ -802,66 +833,34 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     st.divider()
 
-    # 交易信号
+    # ④ 交易信号 — 徽章横排
     display_signals(signals)
 
-    # AI 智能解读
+    # ⑤ AI 智能解读
     if AI_ENABLED:
         display_ai_analysis_card(data, signals, symbol, stock_name, period)
 
+    # ⑥ K线图（复合图：价格+成交量+MACD）
     st.divider()
+    plot_candlestick_chart(data)
 
-    # 指标数值
-    latest = data.iloc[-1]
-    cols = st.columns(4)
-
-    with cols[0]:
-        st.subheader("MACD")
-        st.write(f"DIF: {latest['macd']:.2f}")
-        st.write(f"DEA: {latest['macd_signal']:.2f}")
-        st.write(f"MACD: {latest['macd_hist']:.2f}")
-
-    with cols[1]:
-        st.subheader("RSI")
-        st.write(f"RSI(6): {latest['rsi_6']:.2f}")
-        st.write(f"RSI(12): {latest['rsi_12']:.2f}")
-        st.write(f"RSI(24): {latest['rsi_24']:.2f}")
-
-    with cols[2]:
-        st.subheader("KDJ")
-        st.write(f"K: {latest['kdj_k']:.2f}")
-        st.write(f"D: {latest['kdj_d']:.2f}")
-        st.write(f"J: {latest['kdj_j']:.2f}")
-
-    with cols[3]:
-        st.subheader("布林带")
-        st.write(f"上轨: {latest['boll_upper']:.2f}")
-        st.write(f"中轨: {latest['boll_mid']:.2f}")
-        st.write(f"下轨: {latest['boll_lower']:.2f}")
-        st.write(f"带宽: {latest['boll_width']*100:.2f}%")
-
-    st.divider()
-
-    # 图表
-    tab1, tab2, tab3, tab4 = st.tabs(["K线+MACD", "RSI", "KDJ", "布林带"])
-
-    with tab1:
-        fig = plot_candlestick_chart(data, f"{symbol} {stock_name} - K线图")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab2:
+    # ⑦ RSI + KDJ 并排
+    col_rsi, col_kdj = st.columns(2)
+    with col_rsi:
+        st.markdown('<p class="chart-section-title">RSI</p>', unsafe_allow_html=True)
         fig = plot_rsi_chart(data)
-        st.plotly_chart(fig, use_container_width=True)
-
-    with tab3:
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    with col_kdj:
+        st.markdown('<p class="chart-section-title">KDJ</p>', unsafe_allow_html=True)
         fig = plot_kdj_chart(data)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    with tab4:
-        fig = plot_boll_chart(data)
-        st.plotly_chart(fig, use_container_width=True)
+    # ⑧ 布林带
+    st.markdown('<p class="chart-section-title">布林带</p>', unsafe_allow_html=True)
+    fig = plot_boll_chart(data)
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # 原始数据
+    # ⑨ 原始数据（折叠）
     with st.expander("查看原始数据"):
         st.dataframe(data.tail(20))
 
@@ -999,7 +998,7 @@ def analyze_stock_page():
             st.error(f"数据获取失败: {symbol}")
             st.error("**可能原因：**\n1. 股票代码不存在或已退市\n2. 所有数据源暂时不可用\n3. 网络连接问题")
             with st.expander("查看调试信息"):
-                st.info("已尝试以下数据源：\n1. AKShare\n2. 新浪财经\n3. Yahoo Finance")
+                st.info("已尝试以下数据源：\n1. AKShare（腾讯财经）\n2. 新浪财经\n3. Yahoo Finance（仅美股/港股）")
             progress_bar.empty()
             status_text.empty()
             return
@@ -1170,9 +1169,9 @@ def hot_stocks_page():
                 # 涨跌幅着色
                 def color_change(val):
                     if val > 0:
-                        return 'color: #cc0000'
+                        return 'color: #e53935'
                     elif val < 0:
-                        return 'color: #008844'
+                        return 'color: #2e7d32'
                     return ''
                 df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
                 st.dataframe(df_styled, use_container_width=True, hide_index=True)
@@ -1423,21 +1422,20 @@ def display_watchlist_sidebar():
 
 
 def display_data_source_selector():
-    """显示数据源选择器"""
-    with st.expander("数据源设置"):
+    """数据源设置（含简要说明）"""
+    with st.expander("数据源"):
         current_source = fetcher.get_preferred_source()
 
         source_options = {
-            'auto': '自动选择 (推荐)',
-            'akshare': 'AKShare (同花顺/东方财富)',
+            'auto': '自动选择（推荐）',
+            'akshare': 'AKShare（腾讯财经）',
             'sina': '新浪财经',
-            'yfinance': 'Yahoo Finance'
         }
 
         selected = st.selectbox(
-            "优先数据源",
+            "优先数据源（A股）",
             options=list(source_options.keys()),
-            index=list(source_options.keys()).index(current_source),
+            index=list(source_options.keys()).index(current_source) if current_source in source_options else 0,
             format_func=lambda x: source_options[x]
         )
 
@@ -1446,41 +1444,16 @@ def display_data_source_selector():
             st.success(f"已切换到: {source_options[selected]}")
             st.info("请重新获取数据以生效")
 
-def display_health_status():
-    """显示数据源健康状态"""
-    health = fetcher.check_health()
+        with st.expander("查看详情"):
+            st.markdown("""
+            **A股** — AKShare（腾讯财经）→ 新浪财经 → 离线缓存
 
-    with st.expander("数据源健康状态"):
-        for source, status in health.items():
-            source_names = {
-                'akshare': 'AKShare (同花顺)',
-                'sina': '新浪财经',
-                'yfinance': 'Yahoo Finance'
-            }
+            **美股** — 新浪财经（实时 + 日K）
 
-            if status['healthy']:
-                icon = "✅"
-                color = "green"
-            else:
-                icon = "❌"
-                color = "red"
+            **港股** — 新浪（实时）+ Yahoo（日K）
 
-            fail_info = f" (失败{status['fail_count']}次)" if status['fail_count'] > 0 else ""
-            st.markdown(f"{icon} **{source_names.get(source, source)}**{fail_info}")
-
-def display_data_source_status():
-    """显示数据源状态说明"""
-    with st.expander("关于数据源"):
-        st.markdown("""
-        **数据源优先级：**
-        1. **AKShare（腾讯财经）** - 主要数据源，数据最全
-        2. **新浪财经** - 备选数据源
-        3. **Yahoo Finance** - 最终备选
-
-        **数据延迟：**
-        - A股：延迟约15分钟（交易所规定）
-        - 美股/港股：实时或延迟15分钟
-        """)
+            实时行情延迟 3~5 秒，历史日K收盘后更新
+            """)
 
 
 def compare_stocks_page():
@@ -1611,21 +1584,18 @@ def main():
         st.title("股票分析系统")
         st.markdown("---")
 
+        _nav_emoji = {"个股分析": "📈", "热门板块": "🔥", "智能推荐": "💡", "股票对比": "📊"}
         page = st.radio(
             "功能菜单",
             options=["个股分析", "热门板块", "智能推荐", "股票对比"],
-            format_func=lambda x: x
+            format_func=lambda x: f"{_nav_emoji.get(x, '')} {x}"
         )
-
-        st.markdown("---")
 
         # 自选股（折叠）
         display_watchlist_sidebar()
 
-        # 数据与状态（合并折叠）
+        # 数据源
         display_data_source_selector()
-        display_health_status()
-        display_data_source_status()
 
         st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
