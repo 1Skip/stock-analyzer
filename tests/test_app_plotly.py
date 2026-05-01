@@ -55,16 +55,15 @@ def sample_data():
 # ============================================================
 
 class TestPlotCandlestickChart:
+    """K线图已改用 TradingView lightweight-charts（渲染为 HTML，无返回值）"""
 
-    def test_returns_figure(self, sample_data):
+    def test_no_crash_with_full_data(self, sample_data):
+        """完整数据不崩溃"""
         from app import plot_candlestick_chart
-        fig = plot_candlestick_chart(sample_data)
-        assert fig is not None
-        from plotly.graph_objects import Figure
-        assert isinstance(fig, Figure)
+        plot_candlestick_chart(sample_data)  # 不抛异常即通过
 
-    def test_with_cross_markers(self):
-        """构造有明确金叉/死叉的数据验证标记"""
+    def test_no_crash_with_cross_signals(self):
+        """金叉/死叉数据不崩溃"""
         from app import plot_candlestick_chart
         dates = pd.date_range('2026-03-01', periods=10, freq='B')
         macd = np.array([0.1, 0.05, -0.02, -0.1, -0.05, -0.02, 0.01, 0.05, 0.1, 0.08])
@@ -76,11 +75,10 @@ class TestPlotCandlestickChart:
             'macd_hist': macd - signal,
             'ma5': [10]*10, 'ma10': [10]*10, 'ma20': [10]*10, 'ma60': [10]*10,
         }, index=dates)
-        fig = plot_candlestick_chart(df)
-        # 数据有交叉，应有Candlestick trace
-        assert len(fig.data) >= 1
+        plot_candlestick_chart(df)  # 不抛异常即通过
 
-    def test_missing_ma_columns_handled(self):
+    def test_no_crash_missing_ma_columns(self):
+        """缺失均线列不崩溃"""
         from app import plot_candlestick_chart
         dates = pd.date_range('2026-03-01', periods=5, freq='B')
         df = pd.DataFrame({
@@ -88,8 +86,7 @@ class TestPlotCandlestickChart:
             'volume': [1000000]*5,
             'macd': [0.1]*5, 'macd_signal': [0.05]*5, 'macd_hist': [0.05]*5,
         }, index=dates)
-        fig = plot_candlestick_chart(df)
-        assert fig is not None
+        plot_candlestick_chart(df)  # 不抛异常即通过
 
 
 # ============================================================

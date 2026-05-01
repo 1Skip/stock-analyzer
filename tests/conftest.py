@@ -23,7 +23,8 @@ class _MockSessionState(dict):
 
 
 if 'streamlit' not in sys.modules:
-    _mock_st = type(sys)('streamlit_mock')
+    _mock_st = type(sys)('streamlit')
+    _mock_st.__path__ = []  # 标记为 package
     _mock_st.session_state = _MockSessionState()
     _mock_st.cache_data = lambda f=None, **kw: (lambda g: g) if f is None else f
     _mock_st.set_page_config = lambda **kw: None
@@ -42,7 +43,24 @@ if 'streamlit' not in sys.modules:
     _mock_st.form = lambda key: type(sys)('form')
     _mock_st.form_submit_button = lambda label, **kw: False
     _mock_st.tabs = lambda labels: [type(sys)('tab') for _ in labels]
+
+    # streamlit.components 子模块
+    _mock_components = type(sys)('streamlit.components')
+    _mock_components.__path__ = []
+
+    # streamlit.components.v1 子模块 (被 streamlit_lightweight_charts 导入)
+    _mock_v1 = type(sys)('streamlit.components.v1')
+    _mock_v1.__path__ = []
+    _mock_v1.html = lambda html, height=None, width=None, scrolling=False: None
+    _mock_v1.iframe = lambda src, height=None, width=None, scrolling=False: None
+    _mock_v1.declare_component = lambda name, path=None, url=None: (lambda **kw: None)
+
+    _mock_components.v1 = _mock_v1
+    _mock_st.components = _mock_components
+
     sys.modules['streamlit'] = _mock_st
+    sys.modules['streamlit.components'] = _mock_components
+    sys.modules['streamlit.components.v1'] = _mock_v1
 
 
 def _make_data(prices, start_date=None):

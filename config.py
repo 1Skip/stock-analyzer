@@ -185,3 +185,26 @@ AI_CACHE_TTL_SECONDS = int(os.getenv("AI_CACHE_TTL", "300"))
 # ============================================================
 DEFAULT_DATA_SOURCE = os.getenv("STOCK_DATA_SOURCE", "auto")
 DATA_SOURCE_PRIORITY = ["akshare", "sina", "yfinance"]
+
+# ============================================================
+# 定时调度配置
+# ============================================================
+SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "15:30")  # 收盘后30分钟
+SCHEDULE_RUN_IMMEDIATELY = os.getenv("SCHEDULE_RUN_IMMEDIATELY", "false").lower() == "true"
+SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "false").lower() == "true"
+
+# ============================================================
+# 通知推送配置
+# ============================================================
+NOTIFY_CHANNELS = [c.strip() for c in os.getenv("NOTIFY_CHANNELS", "").split(",") if c.strip()]
+NOTIFY_ENABLED = len(NOTIFY_CHANNELS) > 0
+
+# 企业微信
+WECHAT_WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK_URL", "")
+
+# Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+
+# Bark（iOS 推送）
+BARK_URL = os.getenv("BARK_URL", "")

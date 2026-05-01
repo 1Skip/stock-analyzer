@@ -15,7 +15,11 @@ from unittest.mock import MagicMock
 
 def _make_ohlcv_df(days=60, base_price=10.0):
     """生成OHLCV DataFrame，列名小写"""
-    dates = pd.date_range(end=datetime.now(), periods=days, freq='B')
+    end_date = pd.Timestamp.now().normalize()
+    # 确保 end_date 是工作日，避免 pandas freq='B' 遇周末生成 N-1 个日期
+    if end_date.weekday() >= 5:
+        end_date = end_date - pd.Timedelta(days=end_date.weekday() - 4)
+    dates = pd.date_range(end=end_date, periods=days, freq='B')
     np.random.seed(days)
     data = {
         'open': np.round(base_price + np.random.uniform(-0.3, 0.3, days), 2),
@@ -470,7 +474,7 @@ class TestGetStockDataHK:
         assert result is not None
         assert len(result) == 60
 
-    def test_hk_yfinance_empty_returns_none(self, monkeypatch):
+    def test_hk_yfinance_empty_returns_none(self, monkeypatch, tmp_path):
         from data_fetcher import StockDataFetcher
 
         class MockTicker:
@@ -482,6 +486,8 @@ class TestGetStockDataHK:
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
 
         fetcher = StockDataFetcher()
+        # 防止读到项目目录下的真实离线缓存
+        StockDataFetcher._offline_cache_file = str(tmp_path / 'nonexistent.json')
         assert fetcher.get_stock_data('00700', period='1y', market='HK') is None
 
 
