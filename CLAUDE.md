@@ -14,29 +14,34 @@
 
 | 文件 | 职责 | 备注 |
 |------|------|------|
-| `app.py` | Streamlit Web UI | ~1000行，包含 Plotly 图表函数和全部页面 |
-| `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
-| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance 三级回退，带健康检查和离线缓存 |
+| `app.py` | Streamlit Web UI | ~1600行，K线图用 TradingView lightweight-charts，指标图用 Plotly |
+| `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行（`--schedule` / `--notify` 待 P1 实现） |
+| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance 三级回退，美股/港股: 新浪 → yfinance，带健康检查和离线缓存 |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
+| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多模型自动检测 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
-| `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义(苹果概念/特斯拉/电力/算力租赁)，多因子评分(0-100)，支持 CN/US/HK |
-| `config.py` | 集中配置 | 所有参数 + 三种配色方案 + 评分权重 + 信号阈值，支持环境变量覆盖 |
+| `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义，多因子评分(0-100)，支持 CN/US/HK |
+| `notification.py` | 通知推送 | 企业微信 / Telegram / Bark 三渠道，`build_analysis_report()` 格式化报告 |
+| `config.py` | 集中配置 | 所有参数 + 三种配色 + 评分权重 + 信号阈值 + 调度/通知，环境变量覆盖 |
 | `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存 |
-| `tests/` | 测试框架 | conftest.py 夹具 + test_technical_indicators.py（37 测试） |
-| `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare |
-| `.devcontainer/devcontainer.json` | Dev Container 配置 | Python 3.11，自动安装依赖并启动 Streamlit |
-| `.gitignore` | Git 忽略规则 | 已配置：缓存、虚拟环境、敏感文件、base64 文件 |
-| 根目录 `.bat` / `.vbs` / `.ps1` | 便捷启动脚本 | Windows 用户一键启动/安装/推送，详见[安全注意事项](#10-安全注意事项) |
+| `tests/` | 测试（12文件，307测试） | conftest.py 含完整 Streamlit mock（含 components.v1），pytest.ini 含 slow/network 标记 |
+| `pytest.ini` | pytest 配置 | testpaths=tests, 注册 slow/network 标记, --tb=short |
+| `requirements.txt` | 依赖 | streamlit / plotly / streamlit-lightweight-charts / yfinance / pandas / numpy / requests / akshare |
+| `.devcontainer/devcontainer.json` | Dev Container | Python 3.11，自动安装依赖并启动 Streamlit |
+| `.gitignore` | Git 忽略规则 | 缓存、虚拟环境、.env、token 文件、base64 文件 |
 
 ## 3. 架构约定
 
-- **Web 图表** → Plotly（在 `app.py` 中），交互式可缩放
+- **Web K线图** → TradingView lightweight-charts（HTML 渲染，无 Figure 返回值）
+- **Web 指标图** → Plotly（RSI/KDJ/BOLL/MACD 子图），交互式可缩放
 - **CLI 图表** → Matplotlib（在 `chart_plotter.py` 中），静态图片
-- **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒
-- **数据源优先级**（A股）：AKShare(同花顺/东方财富) > 新浪财经 > Yahoo Finance
-- **数据源健康检查**：连续失败 3 次标记为不健康，自动跳过
+- **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
+- **数据源优先级**：A股 AKShare > 新浪 > yfinance；美股/港股 新浪 > yfinance
+- **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.stock_cache.json` 24 小时内缓存
+- **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启，支持企业微信/Telegram/Bark
+- **定时调度**：默认关闭，通过 `SCHEDULE_ENABLED=true` 开启，`SCHEDULE_TIME` 设定执行时间
 
 ## 4. 技术指标细节
 
@@ -60,7 +65,9 @@
 
 ## 6. 已知问题（修改时注意）
 
-- 暂无，待发现新问题后补充。
+- `app.py` 较长（~1600行），后续可拆分为 `app_ui.py` + `app_charts.py`，但当前优先级低
+- `main.py` 尚未集成 `--schedule` / `--notify` 参数（P1 待完成）
+- `scheduler.py` 尚未创建（P1-S3 待实施）
 
 ## 7. 常见错误与解决方案
 
@@ -134,6 +141,14 @@
 | 换手率显示 None | AKShare 全市场接口返回空或字段缺失 | 在 `stock_recommendation.py` 中从 `StockDataFetcher._get_spot_snapshot()` 获取，失败则返回 None（绝不使用随机模拟数据） |
 | 全市场快照每次查询都下载 5000+ 行 | 未缓存快照结果 | 使用类级别 `_spot_cache` + 60 秒 TTL 缓存 |
 
+### 7.10 测试 Mock 与依赖
+
+| 错误现象 | 原因 | 解决方法 |
+|---------|------|---------|
+| `ModuleNotFoundError: No module named 'streamlit.components'; 'streamlit' is not a package` | 新增依赖（如 `streamlit-lightweight-charts`）导入了 `streamlit.components.v1`，但 conftest.py mock 缺少子模块层级 | conftest.py 需构造完整模块树：`streamlit` (package) → `streamlit.components` (package) → `streamlit.components.v1` (含 `html`, `iframe`, `declare_component`)，每层设 `__path__ = []` 并注册到 `sys.modules` |
+| `pd.date_range(end=dt.now(), periods=N, freq='B')` 生成 N-1 个日期 | `end` 落在周末时，pandas `freq='B'` 的 `periods` 参数会少生成 | 检查 `end_date.weekday() >= 5`，将 end_date 前移到周五 |
+| 测试读到了项目的真实 `.stock_cache.json` | `StockDataFetcher` 类级别 `_offline_cache_file` 指向项目根目录 | 测试中使用 `tmp_path` fixture，将 `_offline_cache_file` 设为临时路径 |
+
 ## 8. 常用命令
 
 ```bash
@@ -155,8 +170,17 @@ streamlit run app.py
 # 安装依赖
 pip install -r requirements.txt
 
-# 运行测试（如有）
+# 运行全部测试
 pytest tests/ -v
+
+# 跳过网络相关测试（离线环境）
+pytest tests/ -v -m "not network"
+
+# 只运行快速测试（跳过慢速网络测试）
+pytest tests/ -v -m "not slow"
+
+# 运行单个测试文件
+pytest tests/test_technical_indicators.py -v
 
 # 检查依赖安全漏洞
 pip-audit
@@ -172,9 +196,19 @@ pip-audit
 - 修改技术指标计算逻辑后，必须用真实数据验证输出值范围（如 RSI 0-100、BOLL 上轨≥中轨≥下轨）
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
-- **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#11-安全注意事项)）
+- **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#12-安全注意事项)）
 
-## 10. Agent Skills 使用指南
+## 10. 项目路线图
+
+当前实施路线图维护在 `C:\Users\skip8\.claude\plans\merry-napping-wolf.md`。要点：
+- **P0**（测试补齐）：✅ 完成，307 tests pass
+- **P1**（调度+通知）：🔄 部分完成 — S1 config.py ✅、S2 notification.py ✅、S3 scheduler.py ⬜、S4 GitHub Actions ⬜、S5 main.py 集成 ⬜
+- **P2**（回测引擎）：⬜ 待实施
+- **P3**（多Agent AI）：⬜ 待实施
+
+原则：保持 <8000 行，零数据库依赖，先 CLI 后 Web，新功能默认关闭。
+
+## 11. Agent Skills 使用指南
 
 本项目配置了 10 个项目级 Skill，按任务类型选择：
 
@@ -200,7 +234,7 @@ pip-audit
 
 **Skill 文件位置**：`.claude/skills/<skill-name>/SKILL.md`
 
-## 11. 安全注意事项
+## 12. 安全注意事项
 
 ### 敏感文件
 
