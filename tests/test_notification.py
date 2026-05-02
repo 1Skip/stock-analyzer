@@ -71,36 +71,28 @@ class TestSendPush:
 
     def test_wechat_success(self):
         with patch("notification._send_wechat", return_value=True) as mock_wc, \
-             patch("notification._send_telegram") as mock_tg:
+             patch("notification._send_feishu") as mock_fs:
             from notification import send_push
             results = send_push("test", "body", channels=["wechat"])
             assert results["wechat"] is True
             mock_wc.assert_called_once()
-            mock_tg.assert_not_called()
+            mock_fs.assert_not_called()
 
-    def test_telegram_success(self):
-        with patch("notification._send_telegram", return_value=True) as mock_tg, \
+    def test_feishu_success(self):
+        with patch("notification._send_feishu", return_value=True) as mock_fs, \
              patch("notification._send_wechat") as mock_wc:
             from notification import send_push
-            results = send_push("test", "body", channels=["telegram"])
-            assert results["telegram"] is True
-            mock_tg.assert_called_once()
+            results = send_push("test", "body", channels=["feishu"])
+            assert results["feishu"] is True
+            mock_fs.assert_called_once()
             mock_wc.assert_not_called()
-
-    def test_bark_success(self):
-        with patch("notification._send_bark", return_value=True) as mock_bark:
-            from notification import send_push
-            results = send_push("test", "body", channels=["bark"])
-            assert results["bark"] is True
-            mock_bark.assert_called_once()
 
     def test_multiple_channels(self):
         with patch("notification._send_wechat", return_value=True), \
-             patch("notification._send_telegram", return_value=True), \
-             patch("notification._send_bark", return_value=True):
+             patch("notification._send_feishu", return_value=True):
             from notification import send_push
-            results = send_push("test", "body", channels=["wechat", "telegram", "bark"])
-            assert len(results) == 3
+            results = send_push("test", "body", channels=["wechat", "feishu"])
+            assert len(results) == 2
             assert all(results.values())
 
     def test_unknown_channel(self):
@@ -165,111 +157,43 @@ class TestWechatSender:
 
 
 # ============================================================
-# TestTelegramSender
+# TestFeishuSender
 # ============================================================
 
-class TestTelegramSender:
-
-    def test_missing_config_returns_false(self):
-        with patch("notification.TELEGRAM_BOT_TOKEN", ""), \
-             patch("notification.TELEGRAM_CHAT_ID", ""):
-            from notification import _send_telegram
-            assert _send_telegram("t", "b") is False
-
-    def test_success_response(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"ok": True}
-        with patch("notification.TELEGRAM_BOT_TOKEN", "123:abc"), \
-             patch("notification.TELEGRAM_CHAT_ID", "456"), \
-             patch("requests.post", return_value=mock_resp) as mock_post:
-            from notification import _send_telegram
-            result = _send_telegram("title", "body")
-            assert result is True
-            payload = mock_post.call_args[1]["json"]
-            assert payload["parse_mode"] == "HTML"
-            assert "title" in payload["text"]
-
-    def test_ok_false(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"ok": False}
-        with patch("notification.TELEGRAM_BOT_TOKEN", "123:abc"), \
-             patch("notification.TELEGRAM_CHAT_ID", "456"), \
-             patch("requests.post", return_value=mock_resp):
-            from notification import _send_telegram
-            assert _send_telegram("t", "b") is False
-
-
-# ============================================================
-# TestBarkSender
-# ============================================================
-
-class TestBarkSender:
+class TestFeishuSender:
 
     def test_missing_url_returns_false(self):
-        with patch("notification.BARK_URL", ""):
-            from notification import _send_bark
-            assert _send_bark("t", "b") is False
+        with patch("notification.FEISHU_WEBHOOK_URL", ""):
+            from notification import _send_feishu
+            assert _send_feishu("t", "b") is False
 
     def test_success_response(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        with patch("notification.BARK_URL", "https://api.day.app/xxx"), \
+        mock_resp.json.return_value = {"code": 0}
+        with patch("notification.FEISHU_WEBHOOK_URL", "https://open.feishu.cn/hook/xxx"), \
              patch("requests.post", return_value=mock_resp) as mock_post:
-            from notification import _send_bark
-            result = _send_bark("title", "body")
+            from notification import _send_feishu
+            result = _send_feishu("title", "body")
             assert result is True
             payload = mock_post.call_args[1]["json"]
-            assert payload["title"] == "title"
-            assert payload["body"] == "body"
-
-    def test_http_error(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 403
-        with patch("notification.BARK_URL", "https://api.day.app/xxx"), \
-             patch("requests.post", return_value=mock_resp):
-            from notification import _send_bark
-            assert _send_bark("t", "b") is False
-
-
-# ============================================================
-# TestPushPlusSender
-# ============================================================
-
-class TestPushPlusSender:
-
-    def test_missing_token_returns_false(self):
-        with patch("notification.PUSHPLUS_TOKEN", ""):
-            from notification import _send_pushplus
-            assert _send_pushplus("t", "b") is False
-
-    def test_success_response(self):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {"code": 200}
-        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
-             patch("requests.post", return_value=mock_resp) as mock_post:
-            from notification import _send_pushplus
-            result = _send_pushplus("title", "body")
-            assert result is True
-            payload = mock_post.call_args[1]["json"]
-            assert payload["token"] == "test_token"
-            assert payload["template"] == "markdown"
+            assert payload["msg_type"] == "interactive"
+            assert payload["card"]["header"]["title"]["content"] == "title"
+            assert payload["card"]["elements"][0]["content"] == "body"
 
     def test_error_code(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.json.return_value = {"code": 500, "msg": "error"}
-        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
+        mock_resp.json.return_value = {"code": 1, "msg": "error"}
+        with patch("notification.FEISHU_WEBHOOK_URL", "https://open.feishu.cn/hook/xxx"), \
              patch("requests.post", return_value=mock_resp):
-            from notification import _send_pushplus
-            assert _send_pushplus("t", "b") is False
+            from notification import _send_feishu
+            assert _send_feishu("t", "b") is False
 
     def test_http_error(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 500
-        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
+        with patch("notification.FEISHU_WEBHOOK_URL", "https://open.feishu.cn/hook/xxx"), \
              patch("requests.post", return_value=mock_resp):
-            from notification import _send_pushplus
-            assert _send_pushplus("t", "b") is False
+            from notification import _send_feishu
+            assert _send_feishu("t", "b") is False

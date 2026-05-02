@@ -202,15 +202,8 @@ NOTIFY_ENABLED = len(NOTIFY_CHANNELS) > 0
 # 企业微信
 WECHAT_WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK_URL", "")
 
-# Telegram
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
-# Bark（iOS 推送）
-BARK_URL = os.getenv("BARK_URL", "")
-
-# PushPlus（个人微信推送）
-PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
+# 飞书
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
 
 # ============================================================
 # 回测配置
