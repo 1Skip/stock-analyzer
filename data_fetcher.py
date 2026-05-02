@@ -760,7 +760,12 @@ class StockDataFetcher:
                     print(f"AKShare指数行情失败 {symbol}: {e}")
 
             # 新浪财经（使用全版格式，非简版 s_ 前缀）
-            sina_code = f"sh{symbol}" if symbol.startswith('000') else f"sz{symbol}"
+            if symbol.startswith('000') or symbol.startswith('600'):
+                sina_code = f"sh{symbol}"
+            elif symbol.startswith('899'):
+                sina_code = f"bj{symbol}"
+            else:
+                sina_code = f"sz{symbol}"
             url = f"https://hq.sinajs.cn/list={sina_code}"
             headers = {
                 'Referer': 'https://finance.sina.com.cn',

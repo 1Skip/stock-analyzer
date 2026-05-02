@@ -172,7 +172,8 @@ MARKET_INDEX_ENABLED = os.getenv("MARKET_INDEX_ENABLED", "true").lower() == "tru
 INDEX_WATCHLIST = [
     ("000001", "上证指数"),
     ("399001", "深证成指"),
-    ("399006", "创业板指"),
+    ("000300", "沪深300"),
+    ("899050", "北证50"),
 ]
 # 大盘行情缓存TTL（秒）
 INDEX_CACHE_TTL = int(os.getenv("INDEX_CACHE_TTL", "10"))
