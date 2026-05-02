@@ -1,0 +1,33 @@
+name: 每日股票分析
+
+on:
+  schedule:
+    # 工作日 15:30 CST = 07:30 UTC
+    - cron: "30 7 * * 1-5"
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 运行分析并推送通知
+        env:
+          NOTIFY_CHANNELS: ${{ secrets.NOTIFY_CHANNELS }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          BARK_URL: ${{ secrets.BARK_URL }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
+        run: python main.py --notify

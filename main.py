@@ -365,12 +365,20 @@ if __name__ == "__main__":
     parser.add_argument('--recommend', action='store_true', help='显示推荐股票')
     parser.add_argument('--demo', action='store_true', help='运行演示')
     parser.add_argument('--interactive', '-i', action='store_true', help='交互模式')
+    parser.add_argument('--schedule', action='store_true', help='启动定时调度（需先配置环境变量）')
+    parser.add_argument('--notify', action='store_true', help='运行一次分析并推送通知')
 
     args = parser.parse_args()
 
     analyzer = StockAnalyzer()
 
-    if args.demo:
+    if args.schedule:
+        from scheduler import start_scheduler
+        start_scheduler()
+    elif args.notify:
+        from scheduler import run_scheduled_analysis
+        run_scheduled_analysis()
+    elif args.demo:
         quick_demo()
     elif args.interactive:
         analyzer.interactive_menu()
