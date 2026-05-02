@@ -319,13 +319,13 @@ class TestIntegration:
 
 
 # ============================================================
-# TestAgentProtocols
+# TestAgentConfig
 # ============================================================
 
-class TestAgentProtocols:
+class TestAgentConfig:
 
     def test_agent_config_defaults(self):
-        from agent_protocols import AgentConfig
+        from ai_analysis import AgentConfig
         cfg = AgentConfig(name="测试")
         assert cfg.name == "测试"
         assert cfg.model == ""
@@ -333,35 +333,12 @@ class TestAgentProtocols:
         assert cfg.max_tokens == 512
         assert cfg.timeout == 30
 
-    def test_agent_config_clone(self):
-        from agent_protocols import AgentConfig
-        cfg = AgentConfig(name="原")
-        cloned = cfg.clone(name="新", temperature=0.5)
-        assert cloned.name == "新"
-        assert cloned.temperature == 0.5
-        assert cloned.model == ""
-        assert cfg.name == "原"
-
-    def test_agent_result_defaults(self):
-        from agent_protocols import AgentResult
-        r = AgentResult(agent="test", content="", success=True)
-        assert r.structured == {}
-        assert r.error == ""
-
-    def test_agent_result_with_structured(self):
-        from agent_protocols import AgentResult
-        r = AgentResult(agent="test", content="raw", success=True,
-                        structured={"key": "val"}, error="oops")
-        assert r.structured["key"] == "val"
-        assert r.error == "oops"
-
-    def test_agent_context_config_for(self):
-        from agent_protocols import AgentContext
-        ctx = AgentContext(snapshot={}, api_key="k", model="m")
-        cfg = ctx.config_for("技术分析", max_tokens=300)
-        assert cfg.name == "技术分析"
-        assert cfg.model == "m"
-        assert cfg.max_tokens == 300
+    def test_agent_config_custom(self):
+        from ai_analysis import AgentConfig
+        cfg = AgentConfig(name="风险评估", model="gpt-4", temperature=0.5, max_tokens=256)
+        assert cfg.model == "gpt-4"
+        assert cfg.temperature == 0.5
+        assert cfg.max_tokens == 256
 
 
 # ============================================================
@@ -372,7 +349,7 @@ class TestCallAgent:
 
     def test_successful_call(self, monkeypatch, sample_snapshot):
         from ai_analysis import _call_agent
-        from agent_protocols import AgentConfig
+        from ai_analysis import AgentConfig
 
         class MockResponse:
             choices = [type('Choice', (), {'message': type('Msg', (), {
@@ -390,7 +367,7 @@ class TestCallAgent:
 
     def test_exception_returns_error(self, monkeypatch, sample_snapshot):
         from ai_analysis import _call_agent
-        from agent_protocols import AgentConfig
+        from ai_analysis import AgentConfig
 
         import litellm
         monkeypatch.setattr(litellm, 'completion', lambda **kw: (_ for _ in ()).throw(Exception("网络超时")))
@@ -403,7 +380,7 @@ class TestCallAgent:
 
     def test_passes_agent_config_params(self, monkeypatch, sample_snapshot):
         from ai_analysis import _call_agent
-        from agent_protocols import AgentConfig
+        from ai_analysis import AgentConfig
 
         captured = {}
 

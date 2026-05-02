@@ -7,7 +7,6 @@ import requests
 import re
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 import akshare as ak
@@ -65,8 +64,7 @@ class StockRecommender:
     """股票推荐器"""
 
     def __init__(self):
-        self.hot_stocks_cache = None
-        self.hot_stocks_cache_time = None
+        pass
 
     def get_hot_stocks_cn(self, limit=20):
         """

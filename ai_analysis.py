@@ -5,6 +5,17 @@ AI 智能解读模块
 import json
 import os
 import re
+from dataclasses import dataclass
+
+
+@dataclass
+class AgentConfig:
+    """单个 Agent 的配置"""
+    name: str
+    model: str = ""
+    temperature: float = 0.2
+    max_tokens: int = 512
+    timeout: int = 30
 
 
 def build_indicator_snapshot(data, signals, symbol, stock_name):
@@ -225,7 +236,7 @@ _DECISION_PROMPT = """你是一个投资决策顾问。你将收到技术解读�
 
 
 def _call_agent(system_prompt, snapshot, config, api_key, base_url):
-    """调用单个 Agent 并返回 AgentResult"""
+    """调用单个 Agent，返回 dict 结果"""
     import litellm
     import os
 
@@ -276,13 +287,12 @@ def run_multi_agent_analysis(snapshot, model, api_key, base_url=""):
 
     Returns:
         {
-            "technical": AgentResult,
-            "risk": AgentResult,
-            "decision": AgentResult,
+            "technical": dict (agent/structured/success/error),
+            "risk": dict,
+            "decision": dict,
             "mode": "multi_agent",
         }
     """
-    from agent_protocols import AgentConfig
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     tech_config = AgentConfig(name="技术分析", model=model, max_tokens=512)

@@ -8,24 +8,21 @@ import pandas as pd
 import numpy as np
 import html
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 
 # 导入原有模块
-from data_fetcher import StockDataFetcher, CN_STOCK_NAMES_EXTENDED, POPULAR_CN_STOCKS
+from data_fetcher import StockDataFetcher
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
 from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
 from config import (
     CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO,
-    CACHE_TTL_HOT_STOCKS, CACHE_TTL_INDICATORS,
-    CACHE_TTL_RECOMMENDED, CACHE_TTL_SHORT_TERM, CACHE_TTL_SECTOR,
+    CACHE_TTL_HOT_STOCKS,
     RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD,
     DEFAULT_COLOR_SCHEME, COLOR_SCHEMES,
     AI_ENABLED, AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE,
-    AI_CACHE_TTL_SECONDS,
 )
 from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
-from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
+from chart_utils import resolve_color_scheme, MA_CONFIG
 from streamlit_lightweight_charts import renderLightweightCharts
 
 # 初始化缓存数据获取器
@@ -259,7 +256,6 @@ st.markdown("""
 
 def plot_candlestick_chart(data, title=""):
     """使用 TradingView lightweight-charts 绘制 K 线 + 成交量 + MACD"""
-    import pandas as pd
 
     scheme_name = st.session_state.get('color_scheme')
     market = st.session_state.get('analyze_market', 'CN')
@@ -1364,12 +1360,6 @@ def hot_stocks_page():
             else:
                 st.info("暂无跌幅榜数据")
 
-@st.cache_data(ttl=CACHE_TTL_RECOMMENDED, show_spinner=False)
-def get_cached_recommended_stocks(num_stocks):
-    """缓存推荐股票数据"""
-    recommender = StockRecommender()
-    return recommender.get_recommended_stocks_cn(num_stocks=num_stocks)
-
 def display_recommendation_list(recommended, strategy_name):
     """显示推荐列表"""
     if not recommended:
@@ -1409,18 +1399,6 @@ def display_recommendation_list(recommended, strategy_name):
                 st.caption(stock['signals']['boll'])
 
             st.divider()
-
-@st.cache_data(ttl=CACHE_TTL_SHORT_TERM, show_spinner=False)
-def get_cached_short_term_stocks(num_stocks):
-    """获取短线推荐股票（基于短期技术指标）"""
-    recommender = StockRecommender()
-    return recommender.get_short_term_recommendations(num_stocks=num_stocks)
-
-@st.cache_data(ttl=CACHE_TTL_SECTOR, show_spinner=False)
-def get_cached_sector_stocks(sector_name, num_stocks):
-    """获取板块短线推荐股票"""
-    recommender = StockRecommender()
-    return recommender.get_sector_short_term_recommendations(sector_name, num_stocks=num_stocks)
 
 def recommended_stocks_page():
     """推荐股票页面 - 短线龙头股推荐"""
@@ -1464,11 +1442,9 @@ def recommended_stocks_page():
 
     col1, col2 = st.columns([1, 4])
     with col1:
-        if st.button("清除缓存", type="secondary"):
-            get_cached_short_term_stocks.clear()
-            get_cached_sector_stocks.clear()
+        if st.button("刷新数据", type="secondary"):
             st.session_state.rec_data_loaded = False
-            st.success("缓存已清除，已重新加载")
+            st.success("数据已刷新")
 
     if st.button("生成推荐", type="primary") or not st.session_state.rec_data_loaded:
         with st.spinner(f"正在分析{sector}板块，请稍候..."):

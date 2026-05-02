@@ -3,7 +3,6 @@
 """
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 
 from config import (
     BACKTEST_EVAL_WINDOW, BACKTEST_STOP_LOSS, BACKTEST_TAKE_PROFIT,

@@ -3,7 +3,6 @@
 提供配色解析、成交量/MACD着色、MA配置等图表绘制通用逻辑
 供 chart_plotter.py (Matplotlib) 和 app.py (Plotly) 共用
 """
-import numpy as np
 from config import COLOR_SCHEMES, DEFAULT_COLOR_SCHEME
 
 # 移动平均线配置：周期 -> 颜色映射

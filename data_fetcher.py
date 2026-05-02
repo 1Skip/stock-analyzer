@@ -20,6 +20,7 @@ import random
 import io
 import json
 import os
+import re
 from threading import Lock
 
 # 尝试导入 AKShare，如果失败则使用备选方案
@@ -441,7 +442,6 @@ class StockDataFetcher:
             response = requests.get(url, headers=headers, timeout=10)
 
             if response.status_code == 200 and response.text.strip():
-                import json
                 data = json.loads(response.text)
                 if data and isinstance(data, list) and len(data) >= 10:
                     df = pd.DataFrame(data)
@@ -558,7 +558,6 @@ class StockDataFetcher:
                 }
                 response = requests.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
-                    import re
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
                         data = match.group(1).split(',')
@@ -568,7 +567,6 @@ class StockDataFetcher:
                 url = f"https://hq.sinajs.cn/list=sh{symbol}"
                 response = requests.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
-                    import re
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
                         data = match.group(1).split(',')
@@ -627,7 +625,6 @@ class StockDataFetcher:
                 response = requests.get(url, headers=headers, timeout=5)
 
                 if response.status_code == 200:
-                    import re
                     content = response.text
                     match = re.search(r'"([^"]*)"', content)
                     if match:
@@ -650,7 +647,6 @@ class StockDataFetcher:
                 response = requests.get(url, headers=headers, timeout=5)
 
                 if response.status_code == 200:
-                    import re
                     content = response.text
                     match = re.search(r'"([^"]*)"', content)
                     if match:
@@ -741,7 +737,6 @@ class StockDataFetcher:
 
     def _get_sina_realtime(self, symbol, market):
         """新浪财经实时行情 — 支持 us / hk"""
-        import re
         if market == "hk":
             sina_sym = f"hk{symbol}"
         elif market == "us":

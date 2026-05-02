@@ -4,7 +4,6 @@
 """
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -180,15 +179,3 @@ class BacktestAdapter:
 
         logger.info(f"回测结果已保存: {filepath}")
         return str(filepath)
-
-    def load_latest_result(self, symbol: str, market: str) -> Optional[dict[str, Any]]:
-        """加载最新的回测结果"""
-        out_dir = Path(BACKTEST_RESULTS_DIR)
-        if not out_dir.exists():
-            return None
-        pattern = f"{market}_{symbol}_*.json"
-        files = sorted(out_dir.glob(pattern), reverse=True)
-        if not files:
-            return None
-        with open(files[0], "r", encoding="utf-8") as f:
-            return json.load(f)
