@@ -208,3 +208,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Bark（iOS 推送）
 BARK_URL = os.getenv("BARK_URL", "")
+
+# ============================================================
+# 回测配置
+# ============================================================
+BACKTEST_EVAL_WINDOW = int(os.getenv("BACKTEST_EVAL_WINDOW", "20"))   # 评估窗口（交易日）
+BACKTEST_MIN_HISTORY = int(os.getenv("BACKTEST_MIN_HISTORY", "60"))   # 最小历史数据（交易日）
+BACKTEST_NEUTRAL_BAND = float(os.getenv("BACKTEST_NEUTRAL_BAND", "2.0"))  # 中性区间（%）
+BACKTEST_STOP_LOSS = float(os.getenv("BACKTEST_STOP_LOSS", "-5.0"))   # 止损线（%）
+BACKTEST_TAKE_PROFIT = float(os.getenv("BACKTEST_TAKE_PROFIT", "10.0"))  # 止盈线（%）
+BACKTEST_RESULTS_DIR = os.getenv("BACKTEST_RESULTS_DIR", "backtest_results")

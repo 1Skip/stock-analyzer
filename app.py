@@ -1584,10 +1584,10 @@ def main():
         st.title("股票分析系统")
         st.markdown("---")
 
-        _nav_emoji = {"个股分析": "📈", "热门板块": "🔥", "智能推荐": "💡", "股票对比": "📊"}
+        _nav_emoji = {"个股分析": "📈", "热门板块": "🔥", "智能推荐": "💡", "股票对比": "📊", "回测验证": "⏮"}
         page = st.radio(
             "功能菜单",
-            options=["个股分析", "热门板块", "智能推荐", "股票对比"],
+            options=["个股分析", "热门板块", "智能推荐", "股票对比", "回测验证"],
             format_func=lambda x: f"{_nav_emoji.get(x, '')} {x}"
         )
 
@@ -1608,6 +1608,9 @@ def main():
         recommended_stocks_page()
     elif page == "股票对比":
         compare_stocks_page()
+    elif page == "回测验证":
+        from backtest_ui import backtest_page
+        backtest_page()
 
 if __name__ == "__main__":
     main()

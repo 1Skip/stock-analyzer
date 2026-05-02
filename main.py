@@ -367,6 +367,7 @@ if __name__ == "__main__":
     parser.add_argument('--interactive', '-i', action='store_true', help='交互模式')
     parser.add_argument('--schedule', action='store_true', help='启动定时调度（需先配置环境变量）')
     parser.add_argument('--notify', action='store_true', help='运行一次分析并推送通知')
+    parser.add_argument('--backtest', '-b', action='store_true', help='对指定股票执行回测')
 
     args = parser.parse_args()
 
@@ -378,6 +379,41 @@ if __name__ == "__main__":
     elif args.notify:
         from scheduler import run_scheduled_analysis
         run_scheduled_analysis()
+    elif args.backtest:
+        from backtest_adapter import BacktestAdapter
+        adapter = BacktestAdapter()
+        symbol = args.symbol or input("请输入股票代码: ").strip()
+        output = adapter.run(symbol=symbol, market=args.market, period=args.period)
+        summary = output["summary"]
+        results = output["results"]
+        completed = [r for r in results if r.get("eval_status") == "completed"]
+
+        print(f"\n{'='*60}")
+        print(f"回测结果: {symbol} ({args.market})")
+        print(f"{'='*60}")
+        print(f"总信号数: {summary.get('total_evaluations', 0)}")
+        print(f"做多/做空: {summary.get('long_count', 0)}/{summary.get('cash_count', 0)}")
+        print(f"方向准确率: {summary.get('direction_accuracy_pct', 'N/A')}%")
+        print(f"胜率(不含平): {summary.get('win_rate_pct', 'N/A')}%")
+        print(f"赢/输/平: {summary.get('win_count', 0)}/{summary.get('loss_count', 0)}/{summary.get('neutral_count', 0)}")
+        print(f"平均持仓收益: {summary.get('avg_stock_return_pct', 'N/A')}%")
+        print(f"平均模拟收益: {summary.get('avg_simulated_return_pct', 'N/A')}%")
+        print(f"止损触发率: {summary.get('stop_loss_trigger_rate', 'N/A')}%")
+        print(f"止盈触发率: {summary.get('take_profit_trigger_rate', 'N/A')}%")
+
+        signal_bd = summary.get("signal_breakdown", {})
+        if signal_bd:
+            print(f"\n信号分类:")
+            for sig, stats in signal_bd.items():
+                print(f"  {sig}: 总数{stats['total']} 胜{stats['win']} 负{stats['loss']} 胜率{stats['win_rate_pct']}%")
+
+        if completed:
+            print(f"\n最近5条明细:")
+            for r in completed[-5:]:
+                print(f"  {r.get('analysis_date')} | {r.get('signal', ''):12s} | 入场{r.get('start_price'):.2f} | "
+                      f"收益{r.get('stock_return_pct', 0):+.2f}% | {r.get('outcome', '')}")
+
+        adapter.save_results(symbol, args.market, output)
     elif args.demo:
         quick_demo()
     elif args.interactive:
