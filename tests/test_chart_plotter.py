@@ -205,3 +205,36 @@ class TestPlotSingleIndicator:
         ChartPlotter.plot_single_indicator(sample_ohlcv_data, indicator='macd', save_path=str(path))
         assert path.exists()
         assert path.stat().st_size > 0
+
+
+# ============================================================
+# TestColorSchemes
+# ============================================================
+
+class TestColorSchemes:
+
+    def test_candlestick_green_up_scheme(self, sample_ohlcv_data, no_show):
+        from chart_plotter import ChartPlotter
+        ChartPlotter.plot_candlestick(sample_ohlcv_data, color_scheme='green_up')
+        # 不抛异常即通过
+
+    def test_candlestick_colorblind_scheme(self, sample_ohlcv_data, no_show):
+        from chart_plotter import ChartPlotter
+        ChartPlotter.plot_candlestick(sample_ohlcv_data, color_scheme='colorblind')
+        # 不抛异常即通过
+
+    def test_candlestick_default_red_up(self, sample_ohlcv_data, no_show):
+        from chart_plotter import ChartPlotter
+        ChartPlotter.plot_candlestick(sample_ohlcv_data)  # 默认 red_up
+        # 不抛异常即通过
+
+    def test_with_indicators_green_up_scheme(self, sample_ohlcv_data, no_show):
+        from chart_plotter import ChartPlotter
+        ChartPlotter.plot_with_indicators(sample_ohlcv_data, color_scheme='green_up')
+        # 不抛异常即通过
+
+    def test_single_indicator_colorblind(self, sample_ohlcv_data, no_show):
+        from chart_plotter import ChartPlotter
+        ChartPlotter.plot_single_indicator(sample_ohlcv_data, indicator='macd',
+                                           color_scheme='colorblind')
+        # 不抛异常即通过

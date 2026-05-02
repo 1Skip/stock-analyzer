@@ -589,7 +589,7 @@ def display_signals(signals):
 
     recommendation = signals.get('recommendation', '')
     if recommendation:
-        st.markdown(f'<p style="font-size:1.35rem;font-weight:700;margin-top:8px">综合: {recommendation}</p>', unsafe_allow_html=True)
+        st.markdown(f'<p style="font-size:1.35rem;font-weight:700;margin-top:8px">综合: {html.escape(recommendation)}</p>', unsafe_allow_html=True)
 
 AI_MODEL_OPTIONS = {
     # 国内模型

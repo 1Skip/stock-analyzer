@@ -270,3 +270,379 @@ class TestArgparse:
         assert args.period == '1y'
         assert args.hot is False
         assert args.interactive is False
+
+
+# ============================================================
+# TestRunAIAnalysis
+# ============================================================
+
+class TestRunAIAnalysis:
+
+    def test_no_api_key_returns_early(self, monkeypatch):
+        """未设置 AI_API_KEY 时直接返回"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", None)
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        # 不应抛异常
+        result = {"data": None, "signals": {}, "symbol": "000001", "info": {}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": False})())
+
+    def test_single_agent_success(self, monkeypatch, capsys):
+        """单Agent模式成功返回"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        mock_result_ai = {
+            "核心结论": "短期看涨",
+            "风险提示": ["成交量不足"],
+            "关键点位": {"支撑": "10.0", "压力": "12.0"},
+            "操作参考": "逢低吸纳",
+        }
+        monkeypatch.setattr("ai_analysis.call_ai_analysis",
+                           lambda snapshot, model, key, base_url: mock_result_ai)
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot",
+                           lambda data, signals, symbol, stock_name: "snapshot")
+
+        data = pd.DataFrame({"close": [10, 11, 12]})
+        signals = {"recommendation": "偏多信号"}
+        result = {"data": data, "signals": signals, "symbol": "000001",
+                  "info": {"股票简称": "测试股"}}
+
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": False})())
+        captured = capsys.readouterr().out
+        assert "短期看涨" in captured
+
+    def test_single_agent_exception(self, monkeypatch, capsys):
+        """单Agent模式异常处理"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        monkeypatch.setattr("ai_analysis.call_ai_analysis",
+                           lambda *a, **kw: (_ for _ in ()).throw(Exception("API error")))
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot",
+                           lambda data, signals, symbol, stock_name: "snapshot")
+
+        result = {"data": pd.DataFrame({"close": [10]}), "signals": {},
+                  "symbol": "000001", "info": {}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": False})())
+        captured = capsys.readouterr().out
+        assert "AI 分析失败" in captured
+
+    def test_multi_agent_success(self, monkeypatch, capsys):
+        """多Agent模式成功"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        mock_output = {
+            "technical": {
+                "structured": {
+                    "MACD解读": "金叉形成",
+                    "RSI解读": "中性偏强",
+                    "KDJ解读": "向上发散",
+                    "布林带解读": "上轨附近",
+                    "均线解读": "多头排列",
+                    "指标一致性": "一致偏多",
+                },
+                "error": None,
+            },
+            "risk": {
+                "structured": {
+                    "风险等级": "中等",
+                    "风险因素": ["估值偏高"],
+                    "矛盾信号": "无",
+                    "关注点位": {"支撑": "10.0"},
+                },
+                "error": None,
+            },
+            "decision": {
+                "structured": {
+                    "核心结论": "逢低布局",
+                    "技术面评分": "75",
+                    "信心度": "中高",
+                    "操作参考": "分批建仓",
+                    "关注要点": ["量能变化", "20日线支撑"],
+                },
+                "error": None,
+            },
+        }
+        monkeypatch.setattr("ai_analysis.run_multi_agent_analysis",
+                           lambda snapshot, model, key, base_url: mock_output)
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot",
+                           lambda data, signals, symbol, stock_name: "snapshot")
+
+        result = {"data": pd.DataFrame({"close": [10]}), "signals": {},
+                  "symbol": "000001", "info": {"股票简称": "测试"}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": True})())
+        captured = capsys.readouterr().out
+        assert "逢低布局" in captured
+
+    def test_multi_agent_exception(self, monkeypatch, capsys):
+        """多Agent模式异常"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        monkeypatch.setattr("ai_analysis.run_multi_agent_analysis",
+                           lambda *a, **kw: (_ for _ in ()).throw(Exception("multi-agent error")))
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot",
+                           lambda data, signals, symbol, stock_name: "snapshot")
+
+        result = {"data": pd.DataFrame({"close": [10]}), "signals": {},
+                  "symbol": "000001", "info": {}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": True})())
+        captured = capsys.readouterr().out
+        assert "AI 分析失败" in captured
+
+    def test_multi_agent_partial_errors(self, monkeypatch, capsys):
+        """多Agent中部分Agent报错"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        mock_output = {
+            "technical": {"structured": {}, "error": "技术分析超时"},
+            "risk": {"structured": {}, "error": "风险评估超时"},
+            "decision": {"structured": {"核心结论": "观望"}, "error": None},
+        }
+        monkeypatch.setattr("ai_analysis.run_multi_agent_analysis",
+                           lambda *a, **kw: mock_output)
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot",
+                           lambda data, signals, symbol, stock_name: "snapshot")
+        result = {"data": pd.DataFrame({"close": [10]}), "signals": {},
+                  "symbol": "000001", "info": {}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": True})())
+        captured = capsys.readouterr().out
+        assert "技术分析超时" in captured
+        assert "风险评估超时" in captured
+
+    def test_single_agent_from_stock_name_fallback(self, monkeypatch):
+        """info 无股票名称时用 symbol 兜底 (single agent)"""
+        from main import _run_ai_analysis
+        monkeypatch.setattr("config.AI_API_KEY", "test-key")
+        monkeypatch.setattr("config.AI_MODEL", "test-model")
+        monkeypatch.setattr("config.AI_BASE_URL", None)
+
+        called_snapshot = {}
+        monkeypatch.setattr("ai_analysis.call_ai_analysis",
+                           lambda snapshot, model, key, base_url: {"核心结论": "ok"})
+
+        def capture_snapshot(data, signals, symbol, stock_name):
+            called_snapshot["stock_name"] = stock_name
+            return "mock snapshot"
+
+        monkeypatch.setattr("ai_analysis.build_indicator_snapshot", capture_snapshot)
+
+        result = {"data": pd.DataFrame({"close": [10]}), "signals": {},
+                  "symbol": "000001", "info": {}}
+        _run_ai_analysis(result, type("Args", (), {"multi_agent": False})())
+        assert called_snapshot["stock_name"] == "000001"
+
+
+# ============================================================
+# TestShowHotStocks
+# ============================================================
+
+class TestShowHotStocks:
+
+    def _make_stock_cn(self):
+        return [
+            {"代码": "000001", "名称": "平安银行", "最新价": 12.5, "涨跌幅": 2.5, "换手率": 1.2},
+            {"代码": "000002", "名称": "万科A", "最新价": 15.0, "涨跌幅": -1.0, "换手率": 0.8},
+        ]
+
+    def _make_stock_us(self):
+        return [
+            {"symbol": "AAPL", "name": "Apple Inc.", "price": 180.0, "change": 1.5, "volume": 50000000},
+        ]
+
+    def test_cn_market(self, monkeypatch, capsys):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        monkeypatch.setattr(analyzer.recommender, "get_hot_stocks_cn",
+                           lambda limit: self._make_stock_cn())
+        monkeypatch.setattr(analyzer.recommender, "get_top_gainers_cn",
+                           lambda limit: [self._make_stock_cn()[0]])
+        monkeypatch.setattr(analyzer.recommender, "get_top_losers_cn",
+                           lambda limit: [self._make_stock_cn()[1]])
+
+        analyzer.show_hot_stocks(market="CN")
+        captured = capsys.readouterr().out
+        assert "热门股票" in captured
+        assert "平安银行" in captured
+        assert "涨幅榜" in captured
+        assert "跌幅榜" in captured
+
+    def test_hk_market(self, monkeypatch, capsys):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        hk_stocks = [
+            {"代码": "00700", "名称": "腾讯", "最新价": 380.0, "涨跌幅": 2.0, "换手率": 0.5},
+        ]
+        monkeypatch.setattr(analyzer.recommender, "get_hot_stocks_hk",
+                           lambda limit: hk_stocks)
+        monkeypatch.setattr(analyzer.recommender, "get_top_gainers_hk",
+                           lambda limit: hk_stocks)
+        monkeypatch.setattr(analyzer.recommender, "get_top_losers_hk",
+                           lambda limit: hk_stocks)
+
+        analyzer.show_hot_stocks(market="HK")
+        captured = capsys.readouterr().out
+        assert "腾讯" in captured
+
+    def test_hk_turnover_none_handled(self, monkeypatch, capsys):
+        """港股换手率为 None 时不崩溃"""
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        hk_stocks = [
+            {"代码": "00700", "名称": "腾讯", "最新价": 380.0, "涨跌幅": 2.0, "换手率": None},
+        ]
+        monkeypatch.setattr(analyzer.recommender, "get_hot_stocks_hk",
+                           lambda limit: hk_stocks)
+        monkeypatch.setattr(analyzer.recommender, "get_top_gainers_hk",
+                           lambda limit: [])
+        monkeypatch.setattr(analyzer.recommender, "get_top_losers_hk",
+                           lambda limit: [])
+
+        analyzer.show_hot_stocks(market="HK")
+        captured = capsys.readouterr().out
+        assert "腾讯" in captured
+
+    def test_us_market(self, monkeypatch, capsys):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        us_stocks = self._make_stock_us()
+        monkeypatch.setattr(analyzer.recommender, "get_hot_stocks_us",
+                           lambda limit: us_stocks)
+        monkeypatch.setattr(analyzer.recommender, "get_top_gainers_us",
+                           lambda limit: us_stocks)
+        monkeypatch.setattr(analyzer.recommender, "get_top_losers_us",
+                           lambda limit: [])
+
+        analyzer.show_hot_stocks(market="US")
+        captured = capsys.readouterr().out
+        assert "Apple" in captured
+        assert "50.00M" in captured  # volume formatted
+
+    def test_unknown_market_falls_to_us(self, monkeypatch, capsys):
+        """未知市场代码走 US 分支"""
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        monkeypatch.setattr(analyzer.recommender, "get_hot_stocks_us",
+                           lambda limit: self._make_stock_us())
+        monkeypatch.setattr(analyzer.recommender, "get_top_gainers_us",
+                           lambda limit: [])
+        monkeypatch.setattr(analyzer.recommender, "get_top_losers_us",
+                           lambda limit: [])
+
+        analyzer.show_hot_stocks(market="XXX")
+        captured = capsys.readouterr().out
+        assert "Apple" in captured
+
+
+# ============================================================
+# TestInteractiveMenu
+# ============================================================
+
+class TestInteractiveMenu:
+
+    def test_choice_0_exits(self, monkeypatch, capsys):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        monkeypatch.setattr("builtins.input", lambda _="": "0")
+        analyzer.interactive_menu()
+        captured = capsys.readouterr().out
+        assert "再见" in captured
+
+    def test_choice_1_analyze_stock(self, monkeypatch):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["1", "000001", "", "", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+
+        called = {}
+        def capture(self, symbol, market="CN", period="1y", show_chart=True):
+            called["symbol"] = symbol
+            called["market"] = market
+        monkeypatch.setattr(StockAnalyzer, "analyze_stock", capture)
+
+        analyzer.interactive_menu()
+        assert called["symbol"] == "000001"
+        assert called["market"] == "CN"  # default when empty
+
+    def test_choice_2_hot_stocks(self, monkeypatch):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["2", "", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+
+        called = {}
+        monkeypatch.setattr(analyzer, "show_hot_stocks", lambda market: called.update({"market": market}))
+        analyzer.interactive_menu()
+        assert called["market"] == "CN"
+
+    def test_choice_3_recommended(self, monkeypatch):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["3", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+
+        called = {}
+        monkeypatch.setattr(analyzer, "show_recommended_stocks", lambda num_stocks: called.update({"called": True}))
+        analyzer.interactive_menu()
+        assert called.get("called") is True
+
+    def test_choice_4_compare(self, monkeypatch):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["4", "000001,000002", "", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+
+        symbols_called = []
+        monkeypatch.setattr(analyzer, "analyze_stock",
+                           lambda symbol, market="CN", period="1y", show_chart=True: symbols_called.append(symbol))
+        analyzer.interactive_menu()
+        assert symbols_called == ["000001", "000002"]
+
+    def test_invalid_choice_then_exit(self, monkeypatch, capsys):
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["9", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+        analyzer.interactive_menu()
+        captured = capsys.readouterr().out
+        assert "无效选择" in captured
+
+
+# ============================================================
+# TestQuickDemo
+# ============================================================
+
+class TestQuickDemo:
+
+    def test_demo_calls_analyze_stock(self, monkeypatch):
+        from main import quick_demo, StockAnalyzer
+
+        called = {}
+        monkeypatch.setattr(StockAnalyzer, "analyze_stock",
+                           lambda self, symbol, market="CN", period="1y", show_chart=True: called.update({
+                               "symbol": symbol, "market": market, "period": period,
+                           }))
+        quick_demo()
+        assert called["symbol"] == "000001"
+        assert called["market"] == "CN"
+        assert called["period"] == "6mo"

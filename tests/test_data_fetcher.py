@@ -962,3 +962,116 @@ class TestIndexRealtime:
         fetcher = StockDataFetcher()
         result = fetcher.get_index_realtime('999999')  # 不存在
         assert result is None
+
+    def test_beijing_exchange_prefix_uses_bj(self, monkeypatch):
+        """北交所 899 前缀走 bj 子域名"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+
+        actual_url = {}
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            actual_url["url"] = url
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = '"北证50,1300.0,1300.0,1330.09,1340.0,1290.0"'
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('899050')
+        assert result is not None
+        assert result['symbol'] == '899050'
+        assert result['name'] == '北证50'
+        # URL 应包含 bj 而不是 sz
+        assert 'bj899050' in actual_url["url"]
+        assert 'sz899050' not in actual_url["url"]
+
+    def test_shanghai_600_prefix_uses_sh(self, monkeypatch):
+        """上证 600 前缀走 sh 子域名"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+
+        actual_url = {}
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            actual_url["url"] = url
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = '"上证F300,4400.0,4400.0,4500.0,4550.0,4380.0"'
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('600519')  # 贵州茅台作为上证成分
+        # 即使数据可能解析不完整，URL 格式应正确
+        assert 'sh600519' in actual_url["url"]
+
+    def test_sina_fewer_than_4_fields_returns_none(self, monkeypatch):
+        """新浪返回 < 4 个字段时返回 None"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = '"上证指数,3300"'  # 只有 2 个字段
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('000001')
+        assert result is None
+
+    def test_yfinance_fallback_used_after_sina_fails(self, monkeypatch):
+        """AKShare失败+新浪失败 → yfinance兜底"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
+
+        import yfinance as yf
+        mock_ticker = MagicMock()
+        mock_hist = pd.DataFrame({
+            'Open': [3300, 3305], 'High': [3310, 3315],
+            'Low': [3290, 3295], 'Close': [3305, 3310],
+            'Volume': [1000000, 1000000],
+        }, index=pd.to_datetime(['2025-06-01', '2025-06-02']))
+        mock_ticker.history.return_value = mock_hist
+        monkeypatch.setattr(yf, 'Ticker', lambda symbol: mock_ticker)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('000001')
+        assert result is not None
+        assert result['price'] == 3310.0
+
+    def test_memory_cache_hit_on_second_call(self, monkeypatch):
+        """第二次调用在 2 分钟内返回缓存（通过数据源被调用次数验证）"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+
+        # 记录 _get_cn_stock_data_akshare 被调用的次数
+        call_count = [0]
+
+        def counted_akshare(fetcher_self, symbol, period):
+            call_count[0] += 1
+            dates = pd.date_range('2025-06-01', periods=30, freq='B')
+            n = len(dates)
+            return pd.DataFrame({
+                'open': [10]*n, 'high': [10.5]*n,
+                'low': [9.5]*n, 'close': [10.5]*n,
+                'volume': [1000000]*n,
+            }, index=dates)
+
+        monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_akshare', counted_akshare)
+        monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_sina_fallback',
+                           lambda self, symbol, period: None)
+        monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_yfinance',
+                           lambda self, symbol, period: None)
+
+        fetcher = StockDataFetcher()
+        _ = fetcher.get_stock_data("000001", period="1y", market="CN")
+        _ = fetcher.get_stock_data("000001", period="1y", market="CN")
+        _ = fetcher.get_stock_data("000001", period="1y", market="CN")
+        # 缓存命中：第一次获取后缓存，后续命中缓存，不再调用源方法
+        assert call_count[0] == 1

@@ -190,3 +190,132 @@ class TestDetectProvider:
     def test_unknown_key_returns_none(self):
         from app import _detect_provider
         assert _detect_provider('unknown-key-format') is None
+
+
+# ============================================================
+# TestIndicatorLayout
+# ============================================================
+
+class TestIndicatorLayout:
+
+    def test_returns_dict(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试标题")
+        assert isinstance(result, dict)
+
+    def test_default_height_is_280(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试")
+        assert result["height"] == 280
+
+    def test_contains_expected_keys(self):
+        from app import _indicator_layout
+        result = _indicator_layout("标题")
+        for key in ("title", "height", "hovermode", "showlegend", "paper_bgcolor",
+                    "plot_bgcolor", "font_family", "margin"):
+            assert key in result
+
+    def test_title_is_set(self):
+        from app import _indicator_layout
+        result = _indicator_layout("RSI 指标")
+        assert result["title"] == "RSI 指标"
+
+    def test_custom_height(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试", height=350)
+        assert result["height"] == 350
+
+    def test_extra_kwargs_override(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试", yaxis_range=[0, 100])
+        assert "yaxis_range" in result
+
+    def test_hoverlabel_configured(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试")
+        assert result["hoverlabel"]["bgcolor"] == "rgba(0,0,0,0.7)"
+        assert result["hoverlabel"]["font"]["size"] == 11
+
+    def test_paper_bg_transparent(self):
+        from app import _indicator_layout
+        result = _indicator_layout("测试")
+        assert result["paper_bgcolor"] == "rgba(0,0,0,0)"
+        assert result["plot_bgcolor"] == "rgba(0,0,0,0)"
+
+
+# ============================================================
+# TestDisplaySignals
+# ============================================================
+
+class TestDisplaySignals:
+
+    def test_error_key_triggers_warning(self, monkeypatch):
+        """error 键触发 st.warning"""
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_warning = MagicMock()
+        monkeypatch.setattr(st, "warning", mock_warning)
+        from app import display_signals
+        display_signals({"error": "计算失败"})
+        mock_warning.assert_called_once()
+        assert "计算失败" in mock_warning.call_args[0][0]
+
+    def test_buy_signal_classification(self, monkeypatch):
+        """金叉/超卖/反弹/偏多 → buy class"""
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_markdown = MagicMock()
+        monkeypatch.setattr(st, "markdown", mock_markdown)
+        from app import display_signals
+        signals = {"macd": "MACD金叉，偏多", "rsi": "RSI超卖(28)，偏多",
+                   "kdj": "KDJ反弹，偏多", "boll": "--", "recommendation": "偏多信号"}
+        display_signals(signals)
+        assert mock_markdown.call_count >= 1
+
+    def test_sell_signal_classification(self, monkeypatch):
+        """死叉/超买/回调/偏空 → sell class"""
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_markdown = MagicMock()
+        monkeypatch.setattr(st, "markdown", mock_markdown)
+        from app import display_signals
+        signals = {"macd": "MACD死叉，偏空", "rsi": "RSI超买(78)，偏空",
+                   "kdj": "KDJ回调，偏空", "boll": "--", "recommendation": "偏空信号"}
+        display_signals(signals)
+        assert mock_markdown.call_count >= 1
+
+    def test_neutral_signal_classification(self, monkeypatch):
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_markdown = MagicMock()
+        monkeypatch.setattr(st, "markdown", mock_markdown)
+        from app import display_signals
+        signals = {"macd": "MACD中性", "rsi": "RSI 50，中性",
+                   "kdj": "KDJ中性", "boll": "中轨附近", "recommendation": "观望"}
+        display_signals(signals)
+        assert mock_markdown.call_count >= 1
+
+    def test_missing_recommendation(self, monkeypatch):
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_markdown = MagicMock()
+        monkeypatch.setattr(st, "markdown", mock_markdown)
+        from app import display_signals
+        signals = {"macd": "--", "rsi": "--", "kdj": "--", "boll": "--"}
+        display_signals(signals)
+        assert mock_markdown.call_count >= 1
+
+    def test_html_escaping(self, monkeypatch):
+        """信号文本中的 HTML 特殊字符应被转义"""
+        from unittest.mock import MagicMock
+        import streamlit as st
+        mock_markdown = MagicMock()
+        monkeypatch.setattr(st, "markdown", mock_markdown)
+        from app import display_signals
+        signals = {"macd": "测试<script>alert('xss')</script>",
+                   "rsi": "--", "kdj": "--", "boll": "--",
+                   "recommendation": "偏多<script>alert('xss')</script>"}
+        display_signals(signals)
+        html_output = mock_markdown.call_args[0][0]
+        assert "<script>" not in html_output
+        assert "&lt;script&gt;" in html_output

@@ -795,3 +795,60 @@ def _mock_short_analysis(code):
         'strategy': '短线',
         'indicators': {},
     }
+
+
+# ============================================================
+# TestGetTopGainersLosersHK
+# ============================================================
+
+class TestGetTopGainersLosersHK:
+
+    def test_gainers_returns_positive_only(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_hk_ticker)
+        result = recommender.get_top_gainers_hk(limit=5)
+        assert isinstance(result, list)
+        for s in result:
+            assert s['涨跌幅'] > 0
+
+    def test_losers_returns_negative_only(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_hk_ticker)
+        result = recommender.get_top_losers_hk(limit=5)
+        assert isinstance(result, list)
+        for s in result:
+            assert s['涨跌幅'] < 0
+
+    def test_gainers_obey_limit(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_hk_ticker)
+        result = recommender.get_top_gainers_hk(limit=3)
+        assert len(result) <= 3
+
+    def test_losers_obey_limit(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_hk_ticker)
+        result = recommender.get_top_losers_hk(limit=3)
+        assert len(result) <= 3
+
+
+# ============================================================
+# TestGetTopGainersLosersUS
+# ============================================================
+
+class TestGetTopGainersLosersUS:
+
+    def test_gainers_returns_positive_only(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_us_ticker)
+        result = recommender.get_top_gainers_us(limit=5)
+        assert isinstance(result, list)
+        for s in result:
+            assert s['change'] > 0
+
+    def test_losers_returns_negative_only(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_us_ticker)
+        result = recommender.get_top_losers_us(limit=5)
+        assert isinstance(result, list)
+        for s in result:
+            assert s['change'] < 0
+
+    def test_gainers_obey_limit(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_us_ticker)
+        result = recommender.get_top_gainers_us(limit=3)
+        assert len(result) <= 3
