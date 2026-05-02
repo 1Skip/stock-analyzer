@@ -1,6 +1,6 @@
 """
 通知推送模块
-支持企业微信 / Telegram / Bark 三个渠道
+支持企业微信 / Telegram / Bark / PushPlus（个人微信） 四个渠道
 """
 import logging
 import requests
@@ -9,7 +9,7 @@ from typing import Optional
 
 from config import (
     WECHAT_WEBHOOK_URL, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
-    BARK_URL, NOTIFY_CHANNELS,
+    BARK_URL, PUSHPLUS_TOKEN, NOTIFY_CHANNELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,8 @@ def send_push(title: str, body: str, channels: Optional[list[str]] = None) -> di
                 results[ch] = _send_telegram(title, body)
             elif ch == "bark":
                 results[ch] = _send_bark(title, body)
+            elif ch == "pushplus":
+                results[ch] = _send_pushplus(title, body)
             else:
                 logger.warning(f"未知通知渠道: {ch}")
                 results[ch] = False
@@ -98,6 +100,23 @@ def _send_bark(title: str, body: str) -> bool:
     ok = resp.status_code == 200
     if not ok:
         logger.warning(f"Bark 推送失败: {resp.status_code}")
+    return ok
+
+
+def _send_pushplus(title: str, body: str) -> bool:
+    """PushPlus — 个人微信推送"""
+    if not PUSHPLUS_TOKEN:
+        logger.warning("PushPlus token 未配置")
+        return False
+
+    resp = requests.post(
+        "https://www.pushplus.plus/send",
+        json={"token": PUSHPLUS_TOKEN, "title": title, "content": body, "template": "markdown"},
+        timeout=10,
+    )
+    ok = resp.status_code == 200 and resp.json().get("code") == 200
+    if not ok:
+        logger.warning(f"PushPlus 推送失败: {resp.text}")
     return ok
 
 

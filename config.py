@@ -209,6 +209,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # Bark（iOS 推送）
 BARK_URL = os.getenv("BARK_URL", "")
 
+# PushPlus（个人微信推送）
+PUSHPLUS_TOKEN = os.getenv("PUSHPLUS_TOKEN", "")
+
 # ============================================================
 # 回测配置
 # ============================================================

@@ -231,3 +231,45 @@ class TestBarkSender:
              patch("requests.post", return_value=mock_resp):
             from notification import _send_bark
             assert _send_bark("t", "b") is False
+
+
+# ============================================================
+# TestPushPlusSender
+# ============================================================
+
+class TestPushPlusSender:
+
+    def test_missing_token_returns_false(self):
+        with patch("notification.PUSHPLUS_TOKEN", ""):
+            from notification import _send_pushplus
+            assert _send_pushplus("t", "b") is False
+
+    def test_success_response(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": 200}
+        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
+             patch("requests.post", return_value=mock_resp) as mock_post:
+            from notification import _send_pushplus
+            result = _send_pushplus("title", "body")
+            assert result is True
+            payload = mock_post.call_args[1]["json"]
+            assert payload["token"] == "test_token"
+            assert payload["template"] == "markdown"
+
+    def test_error_code(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"code": 500, "msg": "error"}
+        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
+             patch("requests.post", return_value=mock_resp):
+            from notification import _send_pushplus
+            assert _send_pushplus("t", "b") is False
+
+    def test_http_error(self):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        with patch("notification.PUSHPLUS_TOKEN", "test_token"), \
+             patch("requests.post", return_value=mock_resp):
+            from notification import _send_pushplus
+            assert _send_pushplus("t", "b") is False

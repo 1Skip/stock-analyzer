@@ -28,5 +28,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           BARK_URL: ${{ secrets.BARK_URL }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
         run: python main.py --notify
