@@ -833,6 +833,7 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
 
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
+    st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
 
     # ① 标题行
@@ -1019,7 +1020,7 @@ def analyze_stock_page():
             get_cached_stock_info.clear()
             st.success("已清除缓存，请重新分析")
     with col_analyze:
-        analyze_clicked = st.button("开始分析", type="primary", use_container_width=True)
+        analyze_clicked = st.button("开始分析", type="primary", use_container_width=True) or st.session_state.pop('trigger_analysis', False)
 
     # 股票代码格式校验
     def validate_symbol(sym, mkt):
@@ -1159,6 +1160,16 @@ def analyze_stock_page():
                 market,
                 period
             )
+
+    # 锚点滚动：分析完成后滚动到结果区
+    if st.session_state.pop('scroll_to_results', False):
+        st.components.v1.html("""
+        <script>
+            var el = parent.document.getElementById('analysis-results');
+            if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+        </script>
+        """, height=0)
+
 
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
 def get_cached_hot_stocks(market):
@@ -1504,7 +1515,7 @@ def display_watchlist_sidebar():
     with st.expander("自选股"):
         if not watchlist:
             st.caption("暂无自选股")
-            return
+            return None
 
         # 生成缓存键（自选股变动时自动失效）
         watchlist_hash = _json_for_hash.dumps(
@@ -1524,14 +1535,13 @@ def display_watchlist_sidebar():
                     if item['name'] and item['name'] != item['symbol']:
                         display_text += f" · {item['name'][:4]}"
                     if st.button(display_text, key=f"wl_{item['symbol']}_{item['market']}", use_container_width=True):
-                        st.session_state.analyze_symbol = item['symbol']
-                        st.session_state.analyze_market = item['market']
-                        st.rerun()
+                        st.session_state.wl_view_symbol = item['symbol']
+                        st.session_state.wl_view_market = item['market']
                 with col2:
                     if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
                         remove_from_watchlist(item['symbol'], item['market'])
                         st.rerun()
-            return
+            return None
 
         # 增强模式：显示信号 + 入场提示
         for i, item in enumerate(summaries):
@@ -1584,9 +1594,139 @@ def display_watchlist_sidebar():
 
                 # 点击跳转到个股分析
                 if st.button("查看分析", key=f"wlview_{symbol}_{market}_{i}", use_container_width=True):
-                    st.session_state.analyze_symbol = symbol
-                    st.session_state.analyze_market = market
-                    st.rerun()
+                    st.session_state.wl_view_symbol = symbol
+                    st.session_state.wl_view_market = market
+
+    return summaries
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_mini_analysis(symbol, market):
+    """获取单只股票简要分析数据（侧边栏 mini 面板用，5分钟缓存）"""
+    from watchlist import get_watchlist_summary
+    results = get_watchlist_summary([{'symbol': symbol, 'name': symbol, 'market': market}])
+    return results[0] if results else None
+
+
+def display_watchlist_mini_panel(summaries):
+    """在侧边栏显示选中自选股的 mini 分析面板"""
+    symbol = st.session_state.get('wl_view_symbol')
+    market = st.session_state.get('wl_view_market')
+
+    if not symbol:
+        return
+
+    # 优先从已有 summaries 中查找（免费），否则走缓存
+    result = None
+    if summaries:
+        for s in summaries:
+            if s['symbol'] == symbol and s['market'] == market:
+                result = s
+                break
+
+    if result is None:
+        result = _cached_mini_analysis(symbol, market)
+
+    if result is None:
+        return
+
+    error = result.get('error')
+    price = result.get('price')
+    change_pct = result.get('change_pct', 0) or 0
+    signal_text = result.get('signal_summary', '--')
+    hint_text = result.get('entry_hint', '--')
+    indicators = result.get('indicators', {})
+    name = result.get('name', symbol)
+
+    # 关闭按钮
+    col_close = st.columns([6, 1])
+    with col_close[1]:
+        if st.button("✕", key="wl_mini_close", help="关闭"):
+            st.session_state.wl_view_symbol = None
+            st.session_state.wl_view_market = None
+            st.rerun()
+
+    # 卡片容器
+    with st.container(border=True):
+        # 标题行：代码 + 名称 + 价格 + 涨跌
+        if error:
+            st.caption(f"⚠ {error}")
+            return
+
+        change_color = "#e53935" if change_pct >= 0 else "#2e7d32"
+        arrow_sign = "+" if change_pct >= 0 else ""
+        st.markdown(
+            f'<span style="font-weight:600">{symbol}</span> · {name[:6]}'
+            f'&nbsp;&nbsp;<span style="color:{change_color};font-weight:600">¥{price:.2f} {arrow_sign}{change_pct:.2f}%</span>',
+            unsafe_allow_html=True
+        )
+
+        st.divider()
+
+        # 信号徽章
+        if "金叉" in str(signal_text) or "超卖" in str(signal_text) or "反弹" in str(signal_text) or "偏多" in str(signal_text):
+            cls = "buy"
+        elif "死叉" in str(signal_text) or "超买" in str(signal_text) or "回调" in str(signal_text) or "偏空" in str(signal_text):
+            cls = "sell"
+        else:
+            cls = "neutral"
+
+        st.markdown(
+            f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span>',
+            unsafe_allow_html=True
+        )
+
+        # 关键指标
+        ind_lines = []
+        rsi = indicators.get('rsi')
+        if rsi is not None:
+            ind_lines.append(f"RSI: {rsi:.1f}")
+
+        macd = indicators.get('macd')
+        macd_signal = indicators.get('macd_signal')
+        if macd is not None and macd_signal is not None:
+            macd_status = "金叉" if macd > macd_signal else "死叉"
+            ind_lines.append(f"MACD: {macd_status}")
+
+        k, d, j = indicators.get('kdj_k'), indicators.get('kdj_d'), indicators.get('kdj_j')
+        if k is not None and d is not None and j is not None:
+            ind_lines.append(f"KDJ: K{k:.1f} D{d:.1f} J{j:.1f}")
+
+        boll_upper = indicators.get('boll_upper')
+        boll_lower = indicators.get('boll_lower')
+        boll_mid = indicators.get('boll_mid')
+        if boll_upper is not None and boll_lower is not None and price is not None:
+            band_range = boll_upper - boll_lower
+            if band_range > 0:
+                pos = (price - boll_lower) / band_range
+                if pos <= 0.05:
+                    boll_pos = "下轨附近"
+                elif pos <= 0.35:
+                    boll_pos = "偏下区间"
+                elif pos <= 0.65:
+                    boll_pos = "中轨附近"
+                elif pos <= 0.95:
+                    boll_pos = "偏上区间"
+                else:
+                    boll_pos = "上轨附近"
+                ind_lines.append(f"布林: {boll_pos}")
+
+        if ind_lines:
+            st.caption("  |  ".join(ind_lines))
+
+        # 入场提示
+        if hint_text and hint_text != '--':
+            st.caption(f"入场: {hint_text}")
+
+        # 在主页查看完整分析
+        if st.button("在主页查看完整分析 →", key="wl_mini_full", use_container_width=True):
+            st.session_state.analyze_symbol = symbol
+            st.session_state.analyze_market = market
+            st.session_state.trigger_analysis = True
+            st.session_state.scroll_to_results = True
+            st.session_state.wl_view_symbol = None
+            st.session_state.wl_view_market = None
+            st.rerun()
 
 
 def display_data_source_selector():
@@ -1764,7 +1904,10 @@ def main():
             display_market_temperature()
 
         # 自选股（折叠）
-        display_watchlist_sidebar()
+        summaries = display_watchlist_sidebar()
+
+        # 侧边栏 mini 分析面板（查看自选股时显示）
+        display_watchlist_mini_panel(summaries)
 
         # 数据源
         display_data_source_selector()
