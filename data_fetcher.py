@@ -10,12 +10,9 @@ from datetime import datetime, timedelta
 import time
 
 # 绕过Windows系统代理（系统代理127.0.0.1:7897不可用时会导致所有数据源失败）
-# requests 默认从 Windows 注册表读取代理配置，通过 monkey-patch 关闭
-_original_session_init = requests.Session.__init__
-def _patched_session_init(self):
-    _original_session_init(self)
-    self.trust_env = False
-requests.Session.__init__ = _patched_session_init
+# 创建专用 session，trust_env=False 避免读取 Windows 注册表中的代理配置
+_session = requests.Session()
+_session.trust_env = False
 import random
 import io
 import json
@@ -50,6 +47,9 @@ class StockDataFetcher:
     _spot_cache = None
     _spot_cache_time = None
     _spot_cache_ttl = timedelta(seconds=60)  # 60秒内复用
+
+    _index_spot_cache = None
+    _index_spot_cache_time = None
 
     # 离线数据缓存文件路径
     _offline_cache_file = os.path.join(os.path.dirname(__file__), '.stock_cache.json')
@@ -353,7 +353,7 @@ class StockDataFetcher:
                 'Referer': 'https://finance.sina.com.cn',
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
-            resp = requests.get(url, params=params, headers=headers, timeout=15)
+            resp = _session.get(url, params=params, headers=headers, timeout=15)
             if resp.status_code != 200:
                 return None
 
@@ -439,7 +439,7 @@ class StockDataFetcher:
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://finance.sina.com.cn/'
             }
-            response = requests.get(url, headers=headers, timeout=10)
+            response = _session.get(url, headers=headers, timeout=10)
 
             if response.status_code == 200 and response.text.strip():
                 data = json.loads(response.text)
@@ -556,7 +556,7 @@ class StockDataFetcher:
                     'Referer': 'https://finance.sina.com.cn',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
-                response = requests.get(url, headers=headers, timeout=5)
+                response = _session.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
@@ -565,15 +565,15 @@ class StockDataFetcher:
                             return data[0]
 
                 url = f"https://hq.sinajs.cn/list=sh{symbol}"
-                response = requests.get(url, headers=headers, timeout=5)
+                response = _session.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
                         data = match.group(1).split(',')
                         if len(data) >= 1 and data[0]:
                             return data[0]
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"获取股票名称失败 {symbol}: {e}")
 
             # 备选：查映射表
             name = CN_STOCK_NAMES_EXTENDED.get(symbol)
@@ -622,7 +622,7 @@ class StockDataFetcher:
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
 
-                response = requests.get(url, headers=headers, timeout=5)
+                response = _session.get(url, headers=headers, timeout=5)
 
                 if response.status_code == 200:
                     content = response.text
@@ -644,7 +644,7 @@ class StockDataFetcher:
 
                 # 如果深圳失败，尝试上海
                 url = f"https://hq.sinajs.cn/list=sh{symbol}"
-                response = requests.get(url, headers=headers, timeout=5)
+                response = _session.get(url, headers=headers, timeout=5)
 
                 if response.status_code == 200:
                     content = response.text
@@ -735,6 +735,95 @@ class StockDataFetcher:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
         return None
 
+    def get_index_realtime(self, symbol):
+        """获取A股指数实时行情
+
+        Returns:
+            dict: {symbol, name, price, change_pct, prev_close} 或 None
+        """
+        try:
+            if AKSHARE_AVAILABLE:
+                try:
+                    spot_df = self._get_index_spot()
+                    if spot_df is not None:
+                        row_match = spot_df[spot_df['代码'] == symbol]
+                        if not row_match.empty:
+                            row = row_match.iloc[0]
+                            return {
+                                'symbol': symbol,
+                                'name': row['名称'],
+                                'price': float(row['最新价']),
+                                'change_pct': float(row['涨跌幅']),
+                                'prev_close': float(row['昨收']),
+                            }
+                except Exception as e:
+                    print(f"AKShare指数行情失败 {symbol}: {e}")
+
+            # 新浪财经（使用全版格式，非简版 s_ 前缀）
+            sina_code = f"sh{symbol}" if symbol.startswith('000') else f"sz{symbol}"
+            url = f"https://hq.sinajs.cn/list={sina_code}"
+            headers = {
+                'Referer': 'https://finance.sina.com.cn',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            resp = _session.get(url, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                content = resp.text
+                match = re.search(r'"([^"]*)"', content)
+                if match:
+                    data = match.group(1).split(',')
+                    if len(data) >= 4:
+                        price = float(data[3]) if data[3] else 0
+                        prev_close = float(data[2]) if data[2] else 1
+                        return {
+                            'symbol': symbol,
+                            'name': data[0],
+                            'price': price,
+                            'change_pct': (price / prev_close - 1) * 100 if prev_close else 0,
+                            'prev_close': prev_close,
+                        }
+
+            # yfinance
+            yf_map = {'000001': '^SSEC', '399001': '399001.SZ', '399006': '399006.SZ'}
+            yf_symbol = yf_map.get(symbol, f"{symbol}.SS")
+            try:
+                ticker = yf.Ticker(yf_symbol)
+                info = ticker.info or {}
+                hist = ticker.history(period='5d')
+                if hist is not None and len(hist) >= 2:
+                    latest = hist.iloc[-1]
+                    prev = hist.iloc[-2]
+                    return {
+                        'symbol': symbol,
+                        'name': info.get('shortName', symbol),
+                        'price': float(latest['Close']),
+                        'change_pct': float((latest['Close'] / prev['Close'] - 1) * 100),
+                        'prev_close': float(prev['Close']),
+                    }
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"获取指数行情失败 {symbol}: {e}")
+        return None
+
+    @classmethod
+    def _get_index_spot(cls):
+        """获取A股指数快照（类级别缓存60秒）"""
+        now = datetime.now()
+        if (cls._index_spot_cache is not None and cls._index_spot_cache_time is not None
+                and (now - cls._index_spot_cache_time).seconds < 60):
+            return cls._index_spot_cache
+        if not AKSHARE_AVAILABLE:
+            return None
+        try:
+            cls._index_spot_cache = ak.stock_zh_index_spot_em()
+            cls._index_spot_cache_time = now
+            return cls._index_spot_cache
+        except Exception as e:
+            print(f"AKShare指数快照失败: {e}")
+            return None
+
     def _get_sina_realtime(self, symbol, market):
         """新浪财经实时行情 — 支持 us / hk"""
         if market == "hk":
@@ -750,7 +839,7 @@ class StockDataFetcher:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         }
         try:
-            resp = requests.get(url, headers=headers, timeout=5)
+            resp = _session.get(url, headers=headers, timeout=5)
             if resp.status_code != 200:
                 return None
             match = re.search(r'"([^"]*)"', resp.text)
@@ -811,7 +900,7 @@ class StockDataFetcher:
             url = ('https://quotes.sina.cn/cn/api/json_v2.php/'
                    f'CN_MarketDataService.getKLineData?symbol={sina_symbol}'
                    '&scale=5&ma=no&datalen=240')
-            r = requests.get(url, timeout=10)
+            r = _session.get(url, timeout=10)
             if r.status_code != 200:
                 return None
             data = r.json()
@@ -932,22 +1021,7 @@ CN_STOCK_NAMES_EXTENDED = {
 POPULAR_US_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'AMD', 'INTC',
                    'JPM', 'V', 'WMT', 'JNJ', 'MA', 'PG', 'UNH', 'HD', 'BAC', 'DIS']
 
-POPULAR_CN_STOCKS = [
-    {'code': '000001', 'name': '平安银行'}, {'code': '000002', 'name': '万科A'},
-    {'code': '000858', 'name': '五粮液'}, {'code': '002594', 'name': '比亚迪'},
-    {'code': '300750', 'name': '宁德时代'}, {'code': '600519', 'name': '贵州茅台'},
-    {'code': '601398', 'name': '工商银行'}, {'code': '601857', 'name': '中国石油'},
-    {'code': '601318', 'name': '中国平安'}, {'code': '601012', 'name': '隆基绿能'},
-    {'code': '600036', 'name': '招商银行'}, {'code': '000333', 'name': '美的集团'},
-    {'code': '002415', 'name': '海康威视'}, {'code': '600276', 'name': '恒瑞医药'},
-    {'code': '600887', 'name': '伊利股份'}, {'code': '601888', 'name': '中国中免'},
-    {'code': '002714', 'name': '牧原股份'}, {'code': '300059', 'name': '东方财富'},
-    {'code': '000725', 'name': '京东方A'}, {'code': '601288', 'name': '农业银行'},
-    {'code': '601939', 'name': '建设银行'}, {'code': '601988', 'name': '中国银行'},
-    {'code': '601628', 'name': '中国人寿'}, {'code': '000568', 'name': '泸州老窖'},
-    {'code': '000651', 'name': '格力电器'}, {'code': '002475', 'name': '立讯精密'},
-    {'code': '603501', 'name': '韦尔股份'}, {'code': '603019', 'name': '中科曙光'}
-]
+POPULAR_CN_STOCKS = [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
 
 POPULAR_HK_STOCKS = [
     {'code': '00700', 'name': '腾讯控股'},

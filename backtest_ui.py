@@ -16,14 +16,22 @@ def backtest_page():
     st.caption("验证历史信号在后续窗口中的实际表现，评估交易信号的准确性")
 
     # ---- 控制区 ----
+    MARKET_MAP = {"A股": "CN", "港股": "HK", "美股": "US"}
+    PERIOD_OPTIONS = {"6个月 · 快速验证": "6mo", "1年 · 标准回测": "1y",
+                      "2年 · 深度验证": "2y", "5年 · 长期验证": "5y"}
+
     col1, col2, col3 = st.columns(3)
     with col1:
         symbol = st.text_input("股票代码", value="000001", help="A股输入6位数字")
     with col2:
-        market = st.selectbox("市场", options=["CN", "HK", "US"], key="bt_market")
+        market_label = st.selectbox("市场", options=list(MARKET_MAP.keys()),
+                                    index=0, key="bt_market_label")
+        market = MARKET_MAP[market_label]
     with col3:
-        period = st.selectbox("数据周期", options=["1y", "2y", "5y"],
-                               index=1, help="建议2年以上以保证样本量")
+        period_label = st.selectbox("数据周期", options=list(PERIOD_OPTIONS.keys()),
+                                    index=1, help="6个月起可用，建议1年以上",
+                                    key="bt_period_label")
+        period = PERIOD_OPTIONS[period_label]
 
     # ---- 参数 ----
     with st.expander("回测参数", expanded=False):
@@ -89,6 +97,22 @@ def backtest_page():
                   if summary['stop_loss_trigger_rate'] else "N/A")
         m10.metric(f"止盈触发率", f"{summary['take_profit_trigger_rate']}%"
                    if summary['take_profit_trigger_rate'] else "N/A")
+
+        # 基准对比行
+        bench_ret = summary.get("benchmark_return_pct")
+        excess_ret = summary.get("excess_return_pct")
+        m11, m12, _, _, _ = st.columns(5)
+        m11.metric(
+            "同期大盘",
+            f"{bench_ret:+.2f}%" if bench_ret is not None else "N/A",
+            delta=None
+        )
+        m12.metric(
+            "超额收益",
+            f"{excess_ret:+.2f}%" if excess_ret is not None else "N/A",
+            delta=f"{excess_ret:+.2f}%" if excess_ret is not None else None,
+            delta_color="normal"
+        )
 
         # ---- 信号分类 ----
         st.subheader("信号分类统计")

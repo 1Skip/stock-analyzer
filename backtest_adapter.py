@@ -30,7 +30,7 @@ class BacktestAdapter:
         self,
         symbol: str,
         market: str = "CN",
-        period: str = "2y",
+        period: str = "1y",
         eval_window_days: int = BACKTEST_EVAL_WINDOW,
         min_history: int = BACKTEST_MIN_HISTORY,
         neutral_band_pct: float = BACKTEST_NEUTRAL_BAND,
@@ -145,11 +145,27 @@ class BacktestAdapter:
             )
             results.append(result)
 
-        # 3. 汇总
+        # 3. 基准收益（同期大盘涨跌幅）
+        benchmark_return = None
+        if market == "CN":
+            index_code = "000001" if symbol.startswith(("600", "601", "603", "605", "688")) else "399001"
+            try:
+                index_df = self.fetcher.get_stock_data(
+                    index_code, period=period, market=market
+                ) if hasattr(self.fetcher, 'get_stock_data') else None
+                if index_df is not None and not index_df.empty and len(index_df) >= 2:
+                    benchmark_return = round(
+                        (float(index_df["close"].iloc[-1]) / float(index_df["close"].iloc[0]) - 1) * 100, 2
+                    )
+            except Exception:
+                benchmark_return = None
+
+        # 4. 汇总
         summary = BacktestEngine.compute_summary(
             results=results,
             symbol=symbol,
             eval_window_days=eval_window_days,
+            benchmark_return_pct=benchmark_return,
         )
         summary["market"] = market
         summary["period"] = period

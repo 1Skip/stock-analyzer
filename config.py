@@ -102,59 +102,6 @@ DEFAULT_COLOR_SCHEME = {
     "US": "green_up",
 }
 
-# ============================================================
-# 评分权重
-# ============================================================
-SCORING_WEIGHTS_MID_LONG = {
-    "macd_golden_cross": 15,
-    "macd_bullish": 5,
-    "macd_death_cross": -15,
-    "macd_bearish": -5,
-    "rsi_oversold": 15,
-    "rsi_low": 10,
-    "rsi_overbought": -15,
-    "rsi_high": -5,
-    "kdj_strong_golden": 20,
-    "kdj_golden": 15,
-    "kdj_oversold": 10,
-    "kdj_strong_death": -20,
-    "kdj_death": -15,
-    "kdj_overbought": -10,
-    "boll_rebound": 15,
-    "boll_bullish": 10,
-    "boll_pullback": -10,
-    "boll_bearish": -5,
-    "ma_golden": 20,
-    "ma_bullish": 10,
-    "ma_bearish": -10,
-}
-
-SCORING_WEIGHTS_SHORT_TERM = {
-    "macd_golden_cross": 25,
-    "macd_bullish": 10,
-    "macd_death_cross": -25,
-    "macd_bearish": -10,
-    "rsi_strong_oversold": 25,
-    "rsi_oversold": 20,
-    "rsi_low": 10,
-    "rsi_overbought": -15,
-    "rsi_high": -10,
-    "kdj_strong_golden": 30,
-    "kdj_golden": 25,
-    "kdj_oversold": 20,
-    "kdj_strong_death": -30,
-    "kdj_death": -25,
-    "kdj_overbought": -20,
-    "boll_rebound": 20,
-    "boll_bullish": 10,
-    "boll_pullback": -15,
-    "boll_bearish": -10,
-    "ma_golden": 30,
-    "ma_bullish": 15,
-    "ma_bearish": -15,
-    "volatility_bonus": 5,
-}
-
 # 综合建议信号阈值
 SIGNAL_BUY_THRESHOLD = 3    # 偏多信号计数 ≥ N → 偏多信号（强）
 SIGNAL_SELL_THRESHOLD = 3   # 偏空信号计数 ≥ N → 偏空信号（强）
@@ -215,3 +162,17 @@ BACKTEST_NEUTRAL_BAND = float(os.getenv("BACKTEST_NEUTRAL_BAND", "2.0"))  # 中�
 BACKTEST_STOP_LOSS = float(os.getenv("BACKTEST_STOP_LOSS", "-5.0"))   # 止损线（%）
 BACKTEST_TAKE_PROFIT = float(os.getenv("BACKTEST_TAKE_PROFIT", "10.0"))  # 止盈线（%）
 BACKTEST_RESULTS_DIR = os.getenv("BACKTEST_RESULTS_DIR", "backtest_results")
+
+# ============================================================
+# 大盘指数配置
+# ============================================================
+# 大盘温度功能开关（默认关闭）
+MARKET_INDEX_ENABLED = os.getenv("MARKET_INDEX_ENABLED", "true").lower() == "true"
+# 监控的A股指数列表（代码: 名称）
+INDEX_WATCHLIST = [
+    ("000001", "上证指数"),
+    ("399001", "深证成指"),
+    ("399006", "创业板指"),
+]
+# 大盘行情缓存TTL（秒）
+INDEX_CACHE_TTL = int(os.getenv("INDEX_CACHE_TTL", "10"))

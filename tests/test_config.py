@@ -166,22 +166,6 @@ class TestColorSchemes:
         assert config.DEFAULT_COLOR_SCHEME["US"] == "green_up"
 
 
-class TestScoringWeights:
-    """验证评分权重"""
-
-    def test_mid_long_weights_not_empty(self):
-        import config
-        assert len(config.SCORING_WEIGHTS_MID_LONG) > 0
-        for k, v in config.SCORING_WEIGHTS_MID_LONG.items():
-            assert isinstance(v, int), f"Weight '{k}' should be int"
-
-    def test_short_term_weights_not_empty(self):
-        import config
-        assert len(config.SCORING_WEIGHTS_SHORT_TERM) > 0
-        for k, v in config.SCORING_WEIGHTS_SHORT_TERM.items():
-            assert isinstance(v, int), f"Weight '{k}' should be int"
-
-
 class TestSignalThresholds:
     """验证信号阈值"""
 

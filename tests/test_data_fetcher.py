@@ -324,7 +324,7 @@ class TestGetStockDataCN:
             resp.text = json.dumps(sina_json)
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
                             lambda self, s, d: None)
 
@@ -337,7 +337,7 @@ class TestGetStockDataCN:
     def test_all_online_sources_fail_returns_none(self, monkeypatch):
         from data_fetcher import StockDataFetcher
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
-        monkeypatch.setattr('data_fetcher.requests.get',
+        monkeypatch.setattr('data_fetcher._session.get',
                             lambda url, **kw: exec('raise Exception("network error")'))
 
         fetcher = StockDataFetcher()
@@ -357,7 +357,7 @@ class TestGetStockDataCN:
 
         # 禁用所有在线源
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
-        monkeypatch.setattr('data_fetcher.requests.get',
+        monkeypatch.setattr('data_fetcher._session.get',
                             lambda url, **kw: exec('raise Exception("no network")'))
 
         class MockTicker:
@@ -495,6 +495,7 @@ class TestGetStockDataUS:
 
     def test_us_yfinance_success(self, monkeypatch):
         from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
         df = _make_ohlcv_df(days=60, base_price=150.0)
 
         class MockTicker:
@@ -503,6 +504,8 @@ class TestGetStockDataUS:
             def history(self, period='1y', interval='1d'):
                 return df.copy()
 
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
 
         fetcher = StockDataFetcher()
@@ -512,6 +515,7 @@ class TestGetStockDataUS:
 
     def test_us_data_source_label(self, monkeypatch):
         from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
         df = _make_ohlcv_df(days=60, base_price=150.0)
 
         class MockTicker:
@@ -520,6 +524,8 @@ class TestGetStockDataUS:
             def history(self, period='1y', interval='1d'):
                 return df.copy()
 
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
 
         fetcher = StockDataFetcher()
@@ -569,7 +575,7 @@ class TestGetStockName:
             resp.status_code = 404
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
 
         fetcher = StockDataFetcher()
         name = fetcher.get_stock_name('000001', market='CN')
@@ -586,7 +592,7 @@ class TestGetStockName:
             resp.status_code = 404
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
 
         fetcher = StockDataFetcher()
         name = fetcher.get_stock_name('XYZ999', market='CN')
@@ -629,7 +635,7 @@ class TestGetRealtimeQuote:
             resp.text = '"{}"'.format(','.join(fields))
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
         # Mock yfinance 以备回退
         monkeypatch.setattr('data_fetcher.yf.Ticker', lambda s: exec('raise Exception("no")'))
 
@@ -663,7 +669,7 @@ class TestGetRealtimeQuote:
                 resp.text = '"{}"'.format(','.join(fields))
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.yf.Ticker', lambda s: exec('raise Exception("no")'))
 
         fetcher = StockDataFetcher()
@@ -675,7 +681,7 @@ class TestGetRealtimeQuote:
         from data_fetcher import StockDataFetcher
         monkeypatch.setattr(StockDataFetcher, '_get_spot_snapshot',
                             classmethod(lambda cls: None))
-        monkeypatch.setattr('data_fetcher.requests.get',
+        monkeypatch.setattr('data_fetcher._session.get',
                             lambda url, **kw: exec('raise Exception("network error")'))
         monkeypatch.setattr('data_fetcher.yf.Ticker', lambda s: exec('raise Exception("no")'))
 
@@ -684,6 +690,7 @@ class TestGetRealtimeQuote:
 
     def test_hk_realtime_uses_ticker_info(self, monkeypatch):
         from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
         # yfinance 返回大写列名
         df = _make_ohlcv_df(days=5, base_price=50.0)
         df.columns = [c.capitalize() for c in df.columns]
@@ -694,6 +701,8 @@ class TestGetRealtimeQuote:
             def history(self, period='5d'):
                 return df.copy()
 
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
 
         fetcher = StockDataFetcher()
@@ -732,6 +741,7 @@ class TestFetchMultipleStocks:
 
     def test_fetch_mixed(self, monkeypatch):
         from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
 
         class MockTicker:
             def __init__(self, symbol):
@@ -741,6 +751,8 @@ class TestFetchMultipleStocks:
                     return pd.DataFrame()
                 return _make_ohlcv_df(days=60, base_price=150.0).copy()
 
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
 
         symbols = [{'code': 'AAPL', 'name': 'Apple'}, {'code': 'FAIL', 'name': 'Bad'}]
@@ -823,7 +835,7 @@ class TestSourcePriority:
             resp.text = json.dumps(sina_json)
             return resp
 
-        monkeypatch.setattr('data_fetcher.requests.get', mock_get)
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
                             lambda self, s, d: None)
 
@@ -871,3 +883,82 @@ class TestConcurrencySafety:
         l1 = fetcher._get_request_lock('k1')
         l2 = fetcher._get_request_lock('k2')
         assert l1 is not l2
+
+
+# ============================================================
+# TestIndexRealtime
+# ============================================================
+
+class TestIndexRealtime:
+
+    def test_akshare_index_spot(self, monkeypatch):
+        """AKShare 指数快照返回正确结构"""
+        import pandas as pd
+        from data_fetcher import StockDataFetcher
+
+        mock_df = pd.DataFrame([{
+            '代码': '000001', '名称': '上证指数',
+            '最新价': 3365.82, '涨跌幅': 0.73,
+            '涨跌额': 24.38, '成交量': 123456789,
+            '成交额': 1234567890, '今开': 3341.44,
+            '昨收': 3341.44, '最高': 3370.00, '最低': 3335.00,
+        }])
+        monkeypatch.setattr('data_fetcher.ak.stock_zh_index_spot_em',
+                            lambda: mock_df)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('000001')
+        assert result is not None
+        assert result['symbol'] == '000001'
+        assert result['name'] == '上证指数'
+        assert result['price'] == 3365.82
+        assert result['change_pct'] == 0.73
+        assert result['prev_close'] == 3341.44
+
+    def test_akshare_not_available(self, monkeypatch):
+        """AKShare 不可用时不崩溃"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+        monkeypatch.setattr('data_fetcher._session.get',
+                            lambda url, **kw: MagicMock(status_code=500, text=''))
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('000001')
+        assert result is None
+
+    def test_sina_fallback(self, monkeypatch):
+        """新浪财经指数行情回退"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            # 新浪格式: name,open,prev_close,price,high,low,...
+            resp.text = '"上证指数,3341.44,3341.44,3365.82,3370.00,3335.00"'
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('000001')
+        assert result is not None
+        assert result['name'] == '上证指数'
+        assert result['price'] == 3365.82
+        assert abs(result['change_pct'] - 0.73) < 0.01
+
+    def test_index_not_found(self, monkeypatch):
+        """指数代码不存在时返回 None"""
+        from data_fetcher import StockDataFetcher
+        import pandas as pd
+
+        mock_df = pd.DataFrame([{
+            '代码': '000001', '名称': '上证指数',
+            '最新价': 3365.82, '涨跌幅': 0.73, '昨收': 3341.44,
+        }])
+        monkeypatch.setattr('data_fetcher.ak.stock_zh_index_spot_em',
+                            lambda: mock_df)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_index_realtime('999999')  # 不存在
+        assert result is None

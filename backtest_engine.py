@@ -173,6 +173,7 @@ class BacktestEngine:
         results: Sequence[dict[str, Any]],
         symbol: str = "",
         eval_window_days: int = 20,
+        benchmark_return_pct: Optional[float] = None,
     ) -> dict[str, Any]:
         """聚合多条回测结果为汇总指标"""
         completed = [r for r in results if r.get("eval_status") == "completed"]
@@ -215,6 +216,13 @@ class BacktestEngine:
         # 按信号分类
         signal_breakdown = cls._signal_breakdown(completed)
 
+        # 超额收益（vs 同期大盘基准）
+        excess_return = (
+            round(avg_stock - benchmark_return_pct, 2)
+            if avg_stock is not None and benchmark_return_pct is not None
+            else None
+        )
+
         return {
             "symbol": symbol,
             "eval_window_days": eval_window_days,
@@ -235,6 +243,8 @@ class BacktestEngine:
             "stop_loss_trigger_rate": sl_rate,
             "take_profit_trigger_rate": tp_rate,
             "signal_breakdown": signal_breakdown,
+            "benchmark_return_pct": benchmark_return_pct,
+            "excess_return_pct": excess_return,
         }
 
     # ============================================================

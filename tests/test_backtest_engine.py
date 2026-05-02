@@ -317,3 +317,33 @@ class TestComputeSummary:
         assert summary["total_evaluations"] == 2
         assert summary["completed_count"] == 1
         assert summary["insufficient_count"] == 1
+
+    def test_benchmark_return(self):
+        """带基准收益的汇总计算"""
+        highs, lows, closes, dates = _make_forward(days=20, step=0.5)
+        r1 = BacktestEngine.evaluate_single(
+            signal="偏多信号", analysis_date=date(2025, 6, 1), start_price=10.0,
+            forward_highs=highs, forward_lows=lows,
+            forward_closes=closes, forward_dates=dates,
+        )
+        summary = BacktestEngine.compute_summary(
+            results=[r1], symbol="TEST", benchmark_return_pct=5.0,
+        )
+        assert summary["benchmark_return_pct"] == 5.0
+        # 股票涨了 ~10% (20天 × 0.5步长), 大盘涨了 5%, 超额 ~5%
+        assert summary["excess_return_pct"] is not None
+        assert summary["excess_return_pct"] > 0
+
+    def test_benchmark_none(self):
+        """不传基准时不崩溃"""
+        highs, lows, closes, dates = _make_forward(days=20, step=0.3)
+        r1 = BacktestEngine.evaluate_single(
+            signal="偏多信号", analysis_date=date(2025, 6, 1), start_price=10.0,
+            forward_highs=highs, forward_lows=lows,
+            forward_closes=closes, forward_dates=dates,
+        )
+        summary = BacktestEngine.compute_summary(
+            results=[r1], symbol="TEST",
+        )
+        assert summary["benchmark_return_pct"] is None
+        assert summary["excess_return_pct"] is None

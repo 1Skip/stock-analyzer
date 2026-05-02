@@ -43,6 +43,7 @@ if 'streamlit' not in sys.modules:
     _mock_st.form = lambda key: type(sys)('form')
     _mock_st.form_submit_button = lambda label, **kw: False
     _mock_st.tabs = lambda labels: [type(sys)('tab') for _ in labels]
+    _mock_st.get_option = lambda key: "light"  # 默认亮色主题
 
     # streamlit.components 子模块
     _mock_components = type(sys)('streamlit.components')

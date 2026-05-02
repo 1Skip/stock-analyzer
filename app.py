@@ -20,6 +20,7 @@ from config import (
     RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD,
     DEFAULT_COLOR_SCHEME, COLOR_SCHEMES,
     AI_ENABLED, AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE,
+    MARKET_INDEX_ENABLED, INDEX_WATCHLIST,
 )
 from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
 from chart_utils import resolve_color_scheme, MA_CONFIG
@@ -53,6 +54,7 @@ def get_cached_realtime_quote(symbol, market):
         return None
 
 
+@st.cache_data(ttl=60, show_spinner=False)
 def get_cached_intraday_data(symbol, market):
     """缓存分时数据 - 60秒缓存，仅A股"""
     try:
@@ -161,11 +163,11 @@ st.markdown("""
     .stButton button:active {
         transform: scale(0.97);
     }
-    .stButton button[kind="primary"] {
+    .stButton button[data-kind="primary"] {
         background-color: #333;
         color: #fff;
     }
-    .stButton button[kind="secondary"] {
+    .stButton button[data-kind="secondary"] {
         background-color: rgba(128, 128, 128, 0.1);
         color: inherit;
     }
@@ -269,9 +271,10 @@ def plot_candlestick_chart(data, title=""):
         return str(idx)[:10]
 
     chart_bg = "rgba(0,0,0,0)"
-    text_color = "#d1d4dc"
-    grid_color = "rgba(66, 66, 66, 0.3)"
-    border_color = "rgba(66, 66, 66, 0.4)"
+    is_light = st.get_option("theme.base") == "light"
+    text_color = "#131722" if is_light else "#d1d4dc"
+    grid_color = "rgba(0, 0, 0, 0.1)" if is_light else "rgba(66, 66, 66, 0.3)"
+    border_color = "rgba(0, 0, 0, 0.15)" if is_light else "rgba(66, 66, 66, 0.4)"
     uid = hash(tuple(data.index)) & 0x7fffffff
 
     # --- 图1: K线 + 均线 ---
@@ -380,6 +383,24 @@ def plot_candlestick_chart(data, title=""):
         ],
     }], f"lwc3_{uid}")
 
+def _indicator_layout(title, height=280, **extra):
+    """共享指标图 layout 配置，避免 RSI/KDJ/BOLL 三处重复"""
+    layout = dict(
+        title=title,
+        height=height,
+        hovermode='x unified',
+        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
+        showlegend=True,
+        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20),
+    )
+    layout.update(extra)
+    return layout
+
+
 def plot_rsi_chart(data):
     """绘制RSI图表"""
     scheme_name = st.session_state.get('color_scheme')
@@ -401,19 +422,7 @@ def plot_rsi_chart(data):
     fig.add_hrect(y0=0, y1=RSI_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
     fig.add_hrect(y0=RSI_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
-    fig.update_layout(
-        title="RSI",
-        height=280,
-        yaxis_range=[0, 100],
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
-        showlegend=True,
-        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
+    fig.update_layout(**_indicator_layout("RSI", height=280, yaxis_range=[0, 100]))
 
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
@@ -458,19 +467,7 @@ def plot_kdj_chart(data):
     fig.add_hrect(y0=0, y1=KDJ_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
     fig.add_hrect(y0=KDJ_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
-    fig.update_layout(
-        title="KDJ",
-        height=280,
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
-        showlegend=True,
-        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
+    fig.update_layout(**_indicator_layout("KDJ"))
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
@@ -495,19 +492,7 @@ def plot_boll_chart(data):
         name='布林带区间'
     ))
 
-    fig.update_layout(
-        title="BOLL",
-        height=300,
-        hovermode='x unified',
-        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
-        showlegend=True,
-        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-        margin=dict(l=20, r=20, t=40, b=20)
-    )
-
+    fig.update_layout(**_indicator_layout("BOLL", height=300))
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
@@ -598,13 +583,13 @@ def display_signals(signals):
     for key, label in [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]:
         text = signals.get(label, '--')
         cls = _signal_class(text)
-        badges_html += f'<span class="signal-badge {cls}">{key} · {text}</span>'
+        badges_html += f'<span class="signal-badge {cls}" style="font-size:1rem">{key} · {html.escape(text)}</span>'
 
-    st.markdown(f'<div style="margin:12px 0">{badges_html}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div style="margin:12px 0;font-size:1.05rem">{badges_html}</div>', unsafe_allow_html=True)
 
     recommendation = signals.get('recommendation', '')
     if recommendation:
-        st.caption(f"综合: {recommendation}")
+        st.markdown(f'<p style="font-size:1.35rem;font-weight:700;margin-top:8px">综合: {recommendation}</p>', unsafe_allow_html=True)
 
 AI_MODEL_OPTIONS = {
     # 国内模型
@@ -926,21 +911,22 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     st.divider()
     plot_candlestick_chart(data)
 
-    # ⑦ RSI + KDJ 并排
-    col_rsi, col_kdj = st.columns(2)
-    with col_rsi:
-        st.markdown('<p class="chart-section-title">RSI</p>', unsafe_allow_html=True)
-        fig = plot_rsi_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    with col_kdj:
-        st.markdown('<p class="chart-section-title">KDJ</p>', unsafe_allow_html=True)
-        fig = plot_kdj_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    # ⑦ RSI + KDJ 并排（默认折叠）
+    with st.expander("RSI & KDJ 指标", expanded=False):
+        col_rsi, col_kdj = st.columns(2)
+        with col_rsi:
+            st.markdown('<p class="chart-section-title">RSI</p>', unsafe_allow_html=True)
+            fig = plot_rsi_chart(data)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        with col_kdj:
+            st.markdown('<p class="chart-section-title">KDJ</p>', unsafe_allow_html=True)
+            fig = plot_kdj_chart(data)
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑧ 布林带
-    st.markdown('<p class="chart-section-title">布林带</p>', unsafe_allow_html=True)
-    fig = plot_boll_chart(data)
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+    # ⑧ 布林带（默认折叠）
+    with st.expander("布林带", expanded=False):
+        fig = plot_boll_chart(data)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
     # ⑨ 原始数据（折叠）
     with st.expander("查看原始数据"):
@@ -1384,19 +1370,19 @@ def display_recommendation_list(recommended, strategy_name):
             # 显示详细指标
             cols = st.columns(4)
             with cols[0]:
-                st.write("**MACD:**", f"{stock['indicators']['macd']:.2f}")
-                st.caption(stock['signals']['macd'])
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> {stock["indicators"]["macd"]:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["macd"])}</p>', unsafe_allow_html=True)
             with cols[1]:
-                st.write("**RSI:**", f"{stock['indicators']['rsi']:.2f}")
-                st.caption(stock['signals']['rsi'])
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> {stock["indicators"]["rsi"]:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["rsi"])}</p>', unsafe_allow_html=True)
             with cols[2]:
-                st.write("**KDJ:**", f"K:{stock['indicators']['kdj_k']:.2f} D:{stock['indicators']['kdj_d']:.2f}")
-                st.caption(stock['signals']['kdj'])
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>KDJ:</b> K:{stock["indicators"]["kdj_k"]:.2f} D:{stock["indicators"]["kdj_d"]:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["kdj"])}</p>', unsafe_allow_html=True)
             with cols[3]:
                 boll_lower = stock['indicators'].get('boll_lower', 0)
                 boll_upper = stock['indicators'].get('boll_upper', 0)
-                st.write("**布林带:**", f"{boll_lower:.2f}-{boll_upper:.2f}")
-                st.caption(stock['signals']['boll'])
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>布林带:</b> {boll_lower:.2f}-{boll_upper:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["boll"])}</p>', unsafe_allow_html=True)
 
             st.divider()
 
@@ -1458,6 +1444,47 @@ def recommended_stocks_page():
                 st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
                 display_recommendation_list(recommended, f"{sector} 短线龙头股")
             st.session_state.rec_data_loaded = True
+
+def display_market_temperature():
+    """侧边栏大盘温度卡片 — 上证/深证/创业板实时涨跌"""
+    from config import INDEX_CACHE_TTL
+
+    @st.cache_data(ttl=INDEX_CACHE_TTL, show_spinner=False)
+    def _fetch_indices():
+        results = []
+        for code, name in INDEX_WATCHLIST:
+            quote = fetcher.get_index_realtime(code)
+            if quote:
+                results.append(quote)
+        return results
+
+    indices = _fetch_indices()
+    if not indices:
+        return
+
+    rows = []
+    for idx in indices:
+        pct = idx['change_pct']
+        direction = "🟢" if pct > 0 else ("🔴" if pct < 0 else "⚪")
+        color = "var(--color-rise)" if pct >= 0 else "var(--color-fall)"
+        rows.append(
+            f'<div style="display:flex;justify-content:space-between;align-items:center;'
+            f'padding:3px 0;font-size:0.92rem">'
+            f'<span style="opacity:0.85">{idx["name"]}</span>'
+            f'<span><b>{idx["price"]:.2f}</b> '
+            f'<span style="color:{color}">{direction} {pct:+.2f}%</span></span>'
+            f'</div>'
+        )
+
+    st.markdown(
+        f'<div style="margin:12px 0;padding:10px 12px;border-radius:10px;'
+        f'background:rgba(128,128,128,0.06)">'
+        f'<div style="font-size:0.8rem;opacity:0.6;margin-bottom:6px">大盘温度</div>'
+        f'{"".join(rows)}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
 
 def display_watchlist_sidebar():
     """在侧边栏显示自选股列表"""
@@ -1652,6 +1679,10 @@ def main():
             options=["个股分析", "热门板块", "智能推荐", "股票对比", "回测验证"],
             format_func=lambda x: f"{_nav_emoji.get(x, '')} {x}"
         )
+
+        # 大盘温度（默认关闭，环境变量 MARKET_INDEX_ENABLED=true 开启）
+        if MARKET_INDEX_ENABLED:
+            display_market_temperature()
 
         # 自选股（折叠）
         display_watchlist_sidebar()
