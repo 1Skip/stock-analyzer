@@ -155,3 +155,169 @@ def _parse_response(raw):
             result[key] = "" if key == "核心结论" or key == "操作参考" else ([] if key == "风险提示" else {})
 
     return result
+
+
+# ============================================================
+# 多Agent协作分析
+# ============================================================
+
+_TECHNICAL_PROMPT = """你是一个技术指标分析专家。你只负责解读技术指标的数值含义，不做任何买卖建议。
+
+规则：
+1. 只能引用提供给你的指标数值，绝对禁止编造
+2. 对于每个指标，简要说明当前数值的含义
+3. 如果多个指标指向同一方向，指出这种一致性
+4. 不要提"综合建议"或任何买卖结论
+5. 始终用中文回复
+
+回复格式（严格 JSON）：
+```json
+{
+  "MACD解读": "基于DIF/DEA/柱状图的简要分析，不超过40字",
+  "RSI解读": "基于三周期RSI的简要分析，不超过40字",
+  "KDJ解读": "基于K/D/J值的简要分析，不超过40字",
+  "布林带解读": "基于价格在布林带中位置的简要分析，不超过40字",
+  "均线解读": "基于价格与均线关系的简要分析，不超过40字",
+  "指标一致性": "指标指向是否一致的分析，不超过40字"
+}
+```"""
+
+_RISK_PROMPT = """你是一个风险评估专家。你只负责识别风险因素，不做任何买卖建议。
+
+规则：
+1. 只能基于提供给你的指标数值识别风险
+2. 关注：超买超卖、背离、波动率、多空矛盾信号
+3. 每条风险描述不超过 30 字，最多 4 条
+4. 如果没有明显风险，写"无明显风险信号"
+5. 始终用中文回复
+
+回复格式（严格 JSON）：
+```json
+{
+  "风险等级": "低/中/高",
+  "风险因素": ["风险1", "风险2"],
+  "矛盾信号": "如MACD多头但RSI超买等矛盾，不超过50字",
+  "关注点位": {
+    "下方": "关键支撑位描述",
+    "上方": "关键压力位描述"
+  }
+}
+```"""
+
+_DECISION_PROMPT = """你是一个投资决策顾问。你将收到技术解读和风险评估两份报告，综合给出最终判断。
+
+规则：
+1. 必须同时引用技术解读和风险评估的内容
+2. 如果技术和风险矛盾，必须在结论中体现
+3. 操作参考只能是区间描述，不能给具体买卖价格
+4. 始终用中文回复
+
+回复格式（严格 JSON）：
+```json
+{
+  "核心结论": "综合技术和风险后的一句话结论，不超过50字",
+  "技术面评分": "偏多/偏空/中性",
+  "信心度": "高/中/低",
+  "操作参考": "不超过50字",
+  "关注要点": ["要点1", "要点2", "要点3"]
+}
+```"""
+
+
+def _call_agent(system_prompt, snapshot, config, api_key, base_url):
+    """调用单个 Agent 并返回 AgentResult"""
+    import litellm
+    import os
+
+    if base_url:
+        os.environ["OPENAI_API_BASE"] = base_url
+
+    snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+    try:
+        response = litellm.completion(
+            model=config.model,
+            api_key=api_key,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"请分析以下数据：\n\n```json\n{snapshot_json}\n```"},
+            ],
+            temperature=config.temperature,
+            max_tokens=config.max_tokens,
+            timeout=config.timeout,
+        )
+        raw = response.choices[0].message.content
+        structured = _parse_response(raw)
+        return {
+            "agent": config.name,
+            "content": raw,
+            "success": True,
+            "structured": structured,
+            "error": "",
+        }
+    except Exception as e:
+        return {
+            "agent": config.name,
+            "content": "",
+            "success": False,
+            "structured": {},
+            "error": str(e),
+        }
+
+
+def run_multi_agent_analysis(snapshot, model, api_key, base_url=""):
+    """多Agent协作分析：技术Agent + 风险Agent → 决策Agent
+
+    Args:
+        snapshot: build_indicator_snapshot() 的输出
+        model: LLM 模型标识
+        api_key: API key
+        base_url: 自定义 API 地址
+
+    Returns:
+        {
+            "technical": AgentResult,
+            "risk": AgentResult,
+            "decision": AgentResult,
+            "mode": "multi_agent",
+        }
+    """
+    from agent_protocols import AgentConfig
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    tech_config = AgentConfig(name="技术分析", model=model, max_tokens=512)
+    risk_config = AgentConfig(name="风险评估", model=model, max_tokens=512)
+    decision_config = AgentConfig(name="决策综合", model=model, max_tokens=512)
+
+    # Phase 1: 并行执行技术分析和风险评估
+    tech_result = None
+    risk_result = None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {
+            executor.submit(_call_agent, _TECHNICAL_PROMPT, snapshot, tech_config, api_key, base_url): "technical",
+            executor.submit(_call_agent, _RISK_PROMPT, snapshot, risk_config, api_key, base_url): "risk",
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            if name == "technical":
+                tech_result = future.result()
+            else:
+                risk_result = future.result()
+
+    # Phase 2: 综合决策
+    context = {
+        "原始数据": snapshot,
+        "技术分析结果": tech_result.get("structured", {}) if tech_result else {},
+        "风险分析结果": risk_result.get("structured", {}) if risk_result else {},
+    }
+    decision_result = _call_agent(
+        _DECISION_PROMPT, context, decision_config, api_key, base_url,
+    )
+
+    return {
+        "technical": tech_result or {"agent": "技术分析", "success": False, "error": "未执行"},
+        "risk": risk_result or {"agent": "风险评估", "success": False, "error": "未执行"},
+        "decision": decision_result,
+        "mode": "multi_agent",
+    }

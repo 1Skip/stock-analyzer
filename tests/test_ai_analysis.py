@@ -316,3 +316,283 @@ class TestIntegration:
         result = call_ai_analysis(snap, 'model', 'key', None)
         assert result['核心结论'] == '整体偏多'
         assert len(result['风险提示']) == 1
+
+
+# ============================================================
+# TestAgentProtocols
+# ============================================================
+
+class TestAgentProtocols:
+
+    def test_agent_config_defaults(self):
+        from agent_protocols import AgentConfig
+        cfg = AgentConfig(name="测试")
+        assert cfg.name == "测试"
+        assert cfg.model == ""
+        assert cfg.temperature == 0.2
+        assert cfg.max_tokens == 512
+        assert cfg.timeout == 30
+
+    def test_agent_config_clone(self):
+        from agent_protocols import AgentConfig
+        cfg = AgentConfig(name="原")
+        cloned = cfg.clone(name="新", temperature=0.5)
+        assert cloned.name == "新"
+        assert cloned.temperature == 0.5
+        assert cloned.model == ""
+        assert cfg.name == "原"
+
+    def test_agent_result_defaults(self):
+        from agent_protocols import AgentResult
+        r = AgentResult(agent="test", content="", success=True)
+        assert r.structured == {}
+        assert r.error == ""
+
+    def test_agent_result_with_structured(self):
+        from agent_protocols import AgentResult
+        r = AgentResult(agent="test", content="raw", success=True,
+                        structured={"key": "val"}, error="oops")
+        assert r.structured["key"] == "val"
+        assert r.error == "oops"
+
+    def test_agent_context_config_for(self):
+        from agent_protocols import AgentContext
+        ctx = AgentContext(snapshot={}, api_key="k", model="m")
+        cfg = ctx.config_for("技术分析", max_tokens=300)
+        assert cfg.name == "技术分析"
+        assert cfg.model == "m"
+        assert cfg.max_tokens == 300
+
+
+# ============================================================
+# TestCallAgent
+# ============================================================
+
+class TestCallAgent:
+
+    def test_successful_call(self, monkeypatch, sample_snapshot):
+        from ai_analysis import _call_agent
+        from agent_protocols import AgentConfig
+
+        class MockResponse:
+            choices = [type('Choice', (), {'message': type('Msg', (), {
+                'content': '{"MACD解读": "金叉形成", "RSI解读": "中性", "KDJ解读": "向上", "布林带解读": "中轨附近", "均线解读": "多头排列", "指标一致性": "一致偏多"}'
+            })()})()]
+
+        import litellm
+        monkeypatch.setattr(litellm, 'completion', lambda **kw: MockResponse())
+        cfg = AgentConfig(name="技术分析", model="test-model")
+        result = _call_agent("系统提示词", sample_snapshot, cfg, "key", None)
+        assert result["agent"] == "技术分析"
+        assert result["success"] is True
+        assert result["structured"]["MACD解读"] == "金叉形成"
+        assert result["error"] == ""
+
+    def test_exception_returns_error(self, monkeypatch, sample_snapshot):
+        from ai_analysis import _call_agent
+        from agent_protocols import AgentConfig
+
+        import litellm
+        monkeypatch.setattr(litellm, 'completion', lambda **kw: (_ for _ in ()).throw(Exception("网络超时")))
+        cfg = AgentConfig(name="风险评估", model="test-model")
+        result = _call_agent("系统提示词", sample_snapshot, cfg, "key", None)
+        assert result["agent"] == "风险评估"
+        assert result["success"] is False
+        assert "网络超时" in result["error"]
+        assert result["content"] == ""
+
+    def test_passes_agent_config_params(self, monkeypatch, sample_snapshot):
+        from ai_analysis import _call_agent
+        from agent_protocols import AgentConfig
+
+        captured = {}
+
+        class MockResponse:
+            choices = [type('Choice', (), {'message': type('Msg', (), {
+                'content': '{"风险等级": "中", "风险因素": [], "矛盾信号": "", "关注点位": {}}'
+            })()})()]
+
+        import litellm
+        monkeypatch.setattr(litellm, 'completion', lambda **kw: (captured.update(kw), MockResponse())[1])
+        cfg = AgentConfig(name="风险评估", model="custom/model", temperature=0.3, max_tokens=256, timeout=15)
+        _call_agent("提示词", sample_snapshot, cfg, "api-key-123", "https://proxy.example.com")
+        assert captured["model"] == "custom/model"
+        assert captured["api_key"] == "api-key-123"
+        assert captured["temperature"] == 0.3
+        assert captured["max_tokens"] == 256
+        assert captured["timeout"] == 15
+
+
+# ============================================================
+# TestMultiAgentPrompts
+# ============================================================
+
+class TestMultiAgentPrompts:
+
+    def test_technical_prompt_exists(self):
+        from ai_analysis import _TECHNICAL_PROMPT
+        assert isinstance(_TECHNICAL_PROMPT, str)
+        assert len(_TECHNICAL_PROMPT) > 50
+        assert "技术指标" in _TECHNICAL_PROMPT
+
+    def test_risk_prompt_exists(self):
+        from ai_analysis import _RISK_PROMPT
+        assert isinstance(_RISK_PROMPT, str)
+        assert len(_RISK_PROMPT) > 50
+        assert "风险" in _RISK_PROMPT
+
+    def test_decision_prompt_exists(self):
+        from ai_analysis import _DECISION_PROMPT
+        assert isinstance(_DECISION_PROMPT, str)
+        assert len(_DECISION_PROMPT) > 50
+        assert "决策" in _DECISION_PROMPT
+
+    def test_technical_prompt_requires_json(self):
+        from ai_analysis import _TECHNICAL_PROMPT
+        assert "json" in _TECHNICAL_PROMPT.lower()
+
+    def test_risk_prompt_requires_json(self):
+        from ai_analysis import _RISK_PROMPT
+        assert "json" in _RISK_PROMPT.lower()
+
+    def test_decision_prompt_requires_json(self):
+        from ai_analysis import _DECISION_PROMPT
+        assert "json" in _DECISION_PROMPT.lower()
+
+
+# ============================================================
+# TestRunMultiAgentAnalysis
+# ============================================================
+
+class TestRunMultiAgentAnalysis:
+
+    @pytest.fixture
+    def mock_agents(self, monkeypatch):
+        """Mock _call_agent 返回预设结果"""
+
+        def _mock(agents_results):
+            def mock_call(system_prompt, snapshot, config, api_key, base_url):
+                name = config.name
+                if name in agents_results:
+                    return agents_results[name]
+                return {"agent": name, "content": "", "success": False, "structured": {}, "error": "未预设"}
+            monkeypatch.setattr("ai_analysis._call_agent", mock_call)
+        return _mock
+
+    def test_full_pipeline(self, sample_snapshot, mock_agents):
+        from ai_analysis import run_multi_agent_analysis
+
+        mock_agents({
+            "技术分析": {
+                "agent": "技术分析", "content": "t", "success": True,
+                "structured": {"MACD解读": "多头", "RSI解读": "中性", "KDJ解读": "向上",
+                               "布林带解读": "中轨", "均线解读": "多头排列", "指标一致性": "一致偏多"},
+                "error": "",
+            },
+            "风险评估": {
+                "agent": "风险评估", "content": "r", "success": True,
+                "structured": {"风险等级": "中", "风险因素": ["超买"], "矛盾信号": "MACD多但RSI高",
+                               "关注点位": {"下方": "10.0", "上方": "12.0"}},
+                "error": "",
+            },
+            "决策综合": {
+                "agent": "决策综合", "content": "d", "success": True,
+                "structured": {"核心结论": "偏多但需谨慎", "技术面评分": "偏多", "信心度": "中",
+                               "操作参考": "支撑位附近可关注", "关注要点": ["量能", "RSI"]},
+                "error": "",
+            },
+        })
+
+        output = run_multi_agent_analysis(sample_snapshot, "model", "key", "")
+        assert output["mode"] == "multi_agent"
+
+        tech = output["technical"]
+        assert tech["success"] is True
+        assert tech["structured"]["MACD解读"] == "多头"
+
+        risk = output["risk"]
+        assert risk["success"] is True
+        assert risk["structured"]["风险等级"] == "中"
+
+        decision = output["decision"]
+        assert decision["success"] is True
+        assert decision["structured"]["核心结论"] == "偏多但需谨慎"
+
+    def test_technical_failure_propagates(self, sample_snapshot, mock_agents):
+        from ai_analysis import run_multi_agent_analysis
+
+        mock_agents({
+            "技术分析": {
+                "agent": "技术分析", "content": "", "success": False,
+                "structured": {}, "error": "API 超时",
+            },
+            "风险评估": {
+                "agent": "风险评估", "content": "r", "success": True,
+                "structured": {"风险等级": "低", "风险因素": [], "矛盾信号": "", "关注点位": {}},
+                "error": "",
+            },
+            "决策综合": {
+                "agent": "决策综合", "content": "d", "success": True,
+                "structured": {"核心结论": "观望", "技术面评分": "中性", "信心度": "低",
+                               "操作参考": "", "关注要点": []},
+                "error": "",
+            },
+        })
+
+        output = run_multi_agent_analysis(sample_snapshot, "model", "key", "")
+        assert output["technical"]["success"] is False
+        assert output["technical"]["error"] == "API 超时"
+        assert output["risk"]["success"] is True
+        # 决策应该仍然完成（使用部分数据）
+        assert output["decision"]["success"] is True
+
+    def test_decision_still_runs_when_risk_fails(self, sample_snapshot, mock_agents):
+        from ai_analysis import run_multi_agent_analysis
+
+        mock_agents({
+            "技术分析": {
+                "agent": "技术分析", "content": "t", "success": True,
+                "structured": {"MACD解读": "多头", "RSI解读": "中性", "KDJ解读": "向上",
+                               "布林带解读": "中轨", "均线解读": "多头", "指标一致性": "一致"},
+                "error": "",
+            },
+            "风险评估": {
+                "agent": "风险评估", "content": "", "success": False,
+                "structured": {}, "error": "服务不可用",
+            },
+            "决策综合": {
+                "agent": "决策综合", "content": "", "success": False,
+                "structured": {}, "error": "数据不足",
+            },
+        })
+
+        output = run_multi_agent_analysis(sample_snapshot, "model", "key", "")
+        assert output["risk"]["success"] is False
+        assert output["risk"]["error"] == "服务不可用"
+
+    def test_output_structure_keys(self, sample_snapshot, mock_agents):
+        from ai_analysis import run_multi_agent_analysis
+
+        mock_agents({
+            "技术分析": {
+                "agent": "技术分析", "content": "", "success": True,
+                "structured": {"MACD解读": "", "RSI解读": "", "KDJ解读": "",
+                               "布林带解读": "", "均线解读": "", "指标一致性": ""},
+                "error": "",
+            },
+            "风险评估": {
+                "agent": "风险评估", "content": "", "success": True,
+                "structured": {"风险等级": "", "风险因素": [], "矛盾信号": "", "关注点位": {}},
+                "error": "",
+            },
+            "决策综合": {
+                "agent": "决策综合", "content": "", "success": True,
+                "structured": {"核心结论": "", "技术面评分": "", "信心度": "", "操作参考": "", "关注要点": []},
+                "error": "",
+            },
+        })
+
+        output = run_multi_agent_analysis(sample_snapshot, "model", "key", "")
+        for key in ["technical", "risk", "decision", "mode"]:
+            assert key in output, f"缺少 key: {key}"
+        assert output["mode"] == "multi_agent"

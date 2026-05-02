@@ -354,6 +354,106 @@ def quick_demo():
     # analyzer.show_recommended_stocks(num_stocks=5)
 
 
+def _run_ai_analysis(result, args):
+    """CLI AI 分析入口"""
+    from config import AI_API_KEY, AI_MODEL, AI_BASE_URL
+    from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
+
+    if not AI_API_KEY:
+        print("错误：未设置 AI_API_KEY 环境变量")
+        return
+
+    data = result["data"]
+    signals = result["signals"]
+    symbol = result["symbol"]
+    info = result.get("info", {})
+    stock_name = info.get("股票简称", info.get("shortName", symbol))
+
+    snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
+
+    if args.multi_agent:
+        print("\n【多Agent协作AI分析】")
+        print("启动 技术分析Agent + 风险评估Agent → 决策综合Agent")
+        try:
+            output = run_multi_agent_analysis(snapshot, AI_MODEL, AI_API_KEY, AI_BASE_URL)
+        except Exception as e:
+            print(f"AI 分析失败：{e}")
+            return
+
+        tech = output.get("technical", {})
+        risk = output.get("risk", {})
+        decision = output.get("decision", {})
+
+        # 技术分析结果
+        tech_struct = tech.get("structured", {})
+        if tech_struct:
+            print("\n── 技术指标解读 ──")
+            for key in ["MACD解读", "RSI解读", "KDJ解读", "布林带解读", "均线解读", "指标一致性"]:
+                val = tech_struct.get(key, "")
+                if val:
+                    print(f"  {key}: {val}")
+
+        # 风险评估结果
+        risk_struct = risk.get("structured", {})
+        if risk_struct:
+            print("\n── 风险评估 ──")
+            print(f"  风险等级: {risk_struct.get('风险等级', 'N/A')}")
+            for f in risk_struct.get("风险因素", []):
+                print(f"  - {f}")
+            conflict = risk_struct.get("矛盾信号", "")
+            if conflict:
+                print(f"  矛盾信号: {conflict}")
+            levels = risk_struct.get("关注点位", {})
+            if levels:
+                for name, val in levels.items():
+                    print(f"  {name}: {val}")
+
+        # 决策
+        dec_struct = decision.get("structured", {})
+        if dec_struct:
+            print("\n── 综合决策 ──")
+            print(f"  结论: {dec_struct.get('核心结论', 'N/A')}")
+            print(f"  评分: {dec_struct.get('技术面评分', 'N/A')}")
+            print(f"  信心度: {dec_struct.get('信心度', 'N/A')}")
+            ref = dec_struct.get("操作参考", "")
+            if ref:
+                print(f"  操作参考: {ref}")
+            points = dec_struct.get("关注要点", [])
+            if points:
+                print("  关注要点:")
+                for p in points:
+                    print(f"    - {p}")
+
+        if tech.get("error"):
+            print(f"  技术Agent错误: {tech['error']}")
+        if risk.get("error"):
+            print(f"  风险Agent错误: {risk['error']}")
+        if decision.get("error"):
+            print(f"  决策Agent错误: {decision['error']}")
+    else:
+        print("\n【AI 智能解读】")
+        try:
+            result_ai = call_ai_analysis(snapshot, AI_MODEL, AI_API_KEY, AI_BASE_URL)
+        except Exception as e:
+            print(f"AI 分析失败：{e}")
+            return
+
+        print(f"\n  核心结论: {result_ai.get('核心结论', 'N/A')}")
+        risks = result_ai.get("风险提示", [])
+        if risks:
+            print("  风险提示:")
+            for r in risks:
+                print(f"    - {r}")
+        levels = result_ai.get("关键点位", {})
+        if levels:
+            print("  关键点位:")
+            for name, val in levels.items():
+                print(f"    {name}: {val}")
+        ref = result_ai.get("操作参考", "")
+        if ref:
+            print(f"  操作参考: {ref}")
+
+
 if __name__ == "__main__":
     import argparse
 
@@ -368,6 +468,8 @@ if __name__ == "__main__":
     parser.add_argument('--schedule', action='store_true', help='启动定时调度（需先配置环境变量）')
     parser.add_argument('--notify', action='store_true', help='运行一次分析并推送通知')
     parser.add_argument('--backtest', '-b', action='store_true', help='对指定股票执行回测')
+    parser.add_argument('--ai', action='store_true', help='使用AI分析（单Agent模式）')
+    parser.add_argument('--multi-agent', action='store_true', help='使用多Agent协作AI分析')
 
     args = parser.parse_args()
 
@@ -423,7 +525,12 @@ if __name__ == "__main__":
     elif args.recommend:
         analyzer.show_recommended_stocks()
     elif args.symbol:
-        analyzer.analyze_stock(args.symbol, market=args.market, period=args.period, show_chart=True)
+        result = analyzer.analyze_stock(args.symbol, market=args.market, period=args.period, show_chart=True)
+
+        # AI 分析
+        if args.ai or args.multi_agent:
+            _run_ai_analysis(result, args)
+
     else:
         # 默认进入交互模式
         analyzer.interactive_menu()

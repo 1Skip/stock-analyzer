@@ -24,7 +24,7 @@ from config import (
     AI_ENABLED, AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE,
     AI_CACHE_TTL_SECONDS,
 )
-from ai_analysis import build_indicator_snapshot, call_ai_analysis
+from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
 from chart_utils import resolve_color_scheme, get_volume_colors, get_macd_hist_colors, MA_CONFIG
 from streamlit_lightweight_charts import renderLightweightCharts
 
@@ -687,23 +687,39 @@ def _show_setup_form(symbol="", period=""):
 def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model):
     """显示 AI 分析按钮和结果"""
     cache_key = f"ai_result_{symbol}_{period}"
+    multi_cache_key = f"ai_multi_result_{symbol}_{period}"
 
     if cache_key not in st.session_state:
         st.session_state[cache_key] = None
+    if multi_cache_key not in st.session_state:
+        st.session_state[multi_cache_key] = None
+
+    use_multi = st.checkbox("多Agent协作模式（技术+风险+决策三Agent协作）",
+                            key=f"ai_multi_{symbol}_{period}")
 
     col_btn, col_info = st.columns([1, 3])
     with col_btn:
         if st.button("AI 分析", type="primary", key=f"ai_btn_{symbol}_{period}"):
             error_msg = None
             try:
-                with st.spinner("AI 正在分析技术指标..."):
-                    snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
-                    result = call_ai_analysis(
-                        snapshot, model, api_key, AI_BASE_URL, AI_TEMPERATURE
-                    )
+                snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
+                if use_multi:
+                    with st.spinner("多Agent协作分析中（技术分析+风险评估+综合决策）..."):
+                        result = run_multi_agent_analysis(
+                            snapshot, model, api_key, AI_BASE_URL
+                        )
+                    st.session_state[multi_cache_key] = result
+                    st.session_state[cache_key] = None
+                else:
+                    with st.spinner("AI 正在分析技术指标..."):
+                        result = call_ai_analysis(
+                            snapshot, model, api_key, AI_BASE_URL, AI_TEMPERATURE
+                        )
                     st.session_state[cache_key] = result
+                    st.session_state[multi_cache_key] = None
             except Exception as e:
                 st.session_state[cache_key] = None
+                st.session_state[multi_cache_key] = None
                 error_msg = str(e)
             if error_msg:
                 st.error(f"分析失败：{error_msg}")
@@ -711,10 +727,10 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
         model_label = AI_MODEL_OPTIONS.get(model, model)
         st.caption(f"当前模型: {model_label}")
 
+    # 单Agent 结果渲染
     result = st.session_state[cache_key]
     if result:
         def _clean(text):
-            """去除 LLM 回复中可能的 markdown 标题，防止出现视觉重复"""
             if not isinstance(text, str):
                 return text
             return re.sub(r'^#{1,3}\s*', '', text, flags=re.MULTILINE)
@@ -742,6 +758,76 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
             st.markdown(_clean(suggestion))
 
         st.caption(f"模型: {model_label} | 以上为 AI 自动分析，不构成投资建议")
+
+    # 多Agent 结果渲染
+    multi_result = st.session_state[multi_cache_key]
+    if multi_result:
+        tech = multi_result.get("technical", {})
+        risk = multi_result.get("risk", {})
+        decision = multi_result.get("decision", {})
+
+        # 决策综合 — 核心结论
+        dec_struct = decision.get("structured", {})
+        if dec_struct:
+            conclusion = dec_struct.get("核心结论", "")
+            score = dec_struct.get("技术面评分", "")
+            confidence = dec_struct.get("信心度", "")
+            if conclusion:
+                st.markdown("#### 核心结论")
+                score_badge = {"偏多": "🟢", "偏空": "🔴", "中性": "🟡"}.get(score, "")
+                conf_badge = {"高": "高", "中": "中", "低": "低"}.get(confidence, confidence)
+                st.markdown(f"{score_badge} {conclusion}（信心度: {conf_badge}）")
+
+        # 技术分析
+        tech_struct = tech.get("structured", {})
+        if tech_struct:
+            with st.expander("技术指标解读", expanded=False):
+                for key, label in [("MACD解读", "MACD"), ("RSI解读", "RSI"),
+                                   ("KDJ解读", "KDJ"), ("布林带解读", "布林带"),
+                                   ("均线解读", "均线"), ("指标一致性", "一致性")]:
+                    val = tech_struct.get(key, "")
+                    if val:
+                        st.markdown(f"- **{label}**: {val}")
+
+        # 风险评估
+        risk_struct = risk.get("structured", {})
+        if risk_struct:
+            with st.expander("风险评估", expanded=False):
+                risk_level = risk_struct.get("风险等级", "")
+                if risk_level:
+                    level_emoji = {"低": "🟢", "中": "🟡", "高": "🔴"}.get(risk_level, "")
+                    st.markdown(f"**风险等级**: {level_emoji} {risk_level}")
+
+                factors = risk_struct.get("风险因素", [])
+                if factors:
+                    for f in factors:
+                        st.markdown(f"- {f}")
+
+                conflict = risk_struct.get("矛盾信号", "")
+                if conflict:
+                    st.markdown(f"**矛盾信号**: {conflict}")
+
+                levels = risk_struct.get("关注点位", {})
+                if levels:
+                    cols = st.columns(len(levels))
+                    for i, (name, value) in enumerate(levels.items()):
+                        with cols[i]:
+                            st.metric(name, value)
+
+        # 操作参考 + 关注要点
+        if dec_struct:
+            suggestion = dec_struct.get("操作参考", "")
+            if suggestion:
+                st.markdown("#### 操作参考")
+                st.markdown(suggestion)
+
+            points = dec_struct.get("关注要点", [])
+            if points:
+                with st.expander("关注要点", expanded=False):
+                    for p in points:
+                        st.markdown(f"- {p}")
+
+        st.caption(f"模型: {model_label} | 多Agent协作分析 | 不构成投资建议")
 
 
 def display_ai_analysis_card(data, signals, symbol, stock_name, period):
