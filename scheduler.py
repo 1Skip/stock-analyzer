@@ -18,8 +18,22 @@ from notification import send_push, build_analysis_report
 logger = logging.getLogger(__name__)
 
 
+def _load_watchlist_from_file():
+    """从 watchlist.json 读取自选股（不依赖 Streamlit session_state）"""
+    import json
+    import os
+    watchlist_file = os.path.join(os.path.dirname(__file__), 'watchlist.json')
+    if os.path.exists(watchlist_file):
+        try:
+            with open(watchlist_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return []
+
+
 def run_scheduled_analysis():
-    """执行一次定时分析：获取推荐股票 → 分析 → 推送通知"""
+    """执行一次定时分析：自选股优先 → 推荐股补充 → 推送通知"""
     logger.info(f"定时分析开始 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
@@ -29,8 +43,34 @@ def run_scheduled_analysis():
 
         fetcher = StockDataFetcher()
         recommender = StockRecommender()
-
         reports = []
+
+        # 优先分析自选股
+        watchlist = _load_watchlist_from_file()
+        analyzed_symbols = set()
+
+        if watchlist:
+            logger.info(f"自选股模式：{len(watchlist)} 只")
+            from watchlist import get_watchlist_summary
+            summaries = get_watchlist_summary(watchlist)
+            for item in summaries:
+                if item.get('error'):
+                    logger.warning(f"自选股 {item['symbol']} 分析失败: {item['error']}")
+                    continue
+                symbol = item['symbol']
+                name = item['name']
+                price = item['price'] or 0
+                change_pct = item.get('change_pct', 0) or 0
+                analyzed_symbols.add((symbol, item['market']))
+
+                title, body = build_analysis_report(
+                    symbol, name, price, change_pct,
+                    {'recommendation': item['signal_summary'],
+                     'entry_hint': item.get('entry_hint', '')}
+                )
+                reports.append((title, body))
+
+        # 推荐股补充（跳过已在自选股中的）
         for market, market_name in [("CN", "A股"), ("HK", "港股"), ("US", "美股")]:
             try:
                 if market == "CN":
@@ -43,7 +83,10 @@ def run_scheduled_analysis():
                 logger.warning(f"{market_name} 推荐列表获取失败，跳过")
                 continue
 
-            for s in stocks[:5]:
+            added = 0
+            for s in stocks:
+                if (s["symbol"], market) in analyzed_symbols:
+                    continue
                 try:
                     symbol = s["symbol"]
                     name = s["name"]
@@ -61,6 +104,9 @@ def run_scheduled_analysis():
                         symbol, name, price, change_pct, signals
                     )
                     reports.append((title, body))
+                    added += 1
+                    if added >= 3:
+                        break
                 except Exception as e:
                     logger.warning(f"{s.get('symbol', '?')} 分析失败: {e}")
 
@@ -83,7 +129,7 @@ def run_scheduled_analysis():
         else:
             logger.info("通知未开启，分析结果仅记录日志")
 
-        logger.info(f"定时分析完成 — {len(reports)} 条")
+        logger.info(f"定时分析完成 — {len(reports)} 条（含{len(watchlist)}只自选股）")
 
     except Exception as e:
         logger.error(f"定时分析失败: {e}", exc_info=True)

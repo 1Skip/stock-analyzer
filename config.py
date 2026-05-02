@@ -153,6 +153,15 @@ WECHAT_WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK_URL", "")
 # 飞书
 FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
 
+# 飞书机器人（对话式，控制命令）
+FEISHU_BOT_ENABLED = os.getenv("FEISHU_BOT_ENABLED", "false").lower() == "true"
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
+FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "")  # 事件订阅验证 Token
+
+# API 服务
+API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8900"))
+
 # ============================================================
 # 回测配置
 # ============================================================

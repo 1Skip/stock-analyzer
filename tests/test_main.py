@@ -646,3 +646,56 @@ class TestQuickDemo:
         assert called["symbol"] == "000001"
         assert called["market"] == "CN"
         assert called["period"] == "6mo"
+
+
+# ============================================================
+# TestShowWatchlistSignals
+# ============================================================
+
+class TestShowWatchlistSignals:
+
+    def test_empty_watchlist(self, monkeypatch, capsys):
+        """空自选股 → 提示信息"""
+        monkeypatch.setattr("watchlist.get_watchlist", lambda: [])
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        analyzer.show_watchlist_signals()
+        captured = capsys.readouterr().out
+        assert "为空" in captured
+
+    def test_with_watchlist(self, monkeypatch, capsys):
+        """有自选股 → 打印信号和入场提示"""
+        import pandas as pd
+        from data_fetcher import StockDataFetcher
+
+        monkeypatch.setattr("watchlist.get_watchlist", lambda: [
+            {'symbol': '000001', 'name': '平安银行', 'market': 'CN'}
+        ])
+
+        dates = pd.date_range('2025-06-01', periods=30, freq='B')
+        n = 30
+        mock_df = pd.DataFrame({
+            'open': [10]*n, 'high': [10.5]*n, 'low': [9.5]*n, 'close': [10]*n,
+            'volume': [1000000]*n,
+        }, index=dates)
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                           lambda self, symbol, period, market: mock_df)
+
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        analyzer.show_watchlist_signals()
+        captured = capsys.readouterr().out
+        assert '000001' in captured
+        assert '平安银行' in captured
+
+    def test_interactive_choice_5(self, monkeypatch, capsys):
+        """交互菜单中选择5 → 自选股信号"""
+        monkeypatch.setattr("watchlist.get_watchlist", lambda: [])
+        from main import StockAnalyzer
+        analyzer = StockAnalyzer()
+        inputs = ["5", "0"]
+        input_iter = iter(inputs)
+        monkeypatch.setattr("builtins.input", lambda _="": next(input_iter))
+        analyzer.interactive_menu()
+        captured = capsys.readouterr().out
+        assert "为空" in captured

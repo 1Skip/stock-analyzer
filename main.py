@@ -292,6 +292,55 @@ class StockAnalyzer:
             print(f"     - KDJ: {stock['signals']['kdj']}")
             print(f"     - BOLL: {stock['signals']['boll']}")
 
+    def show_watchlist_signals(self):
+        """显示自选股信号和入场提示（CLI 模式）"""
+        from watchlist import get_watchlist, get_watchlist_summary
+
+        watchlist = get_watchlist()
+        if not watchlist:
+            print("自选股为空。请先在 Web 界面添加自选股。")
+            return
+
+        print(f"\n{'='*60}")
+        print(f"{'自选股信号':^60}")
+        print(f"{'='*60}\n")
+        print(f"正在获取 {len(watchlist)} 只自选股数据...\n")
+
+        summaries = get_watchlist_summary(watchlist)
+        for item in summaries:
+            symbol = item['symbol']
+            name = item.get('name', symbol)
+            print(f"  {symbol} · {name}")
+
+            if item.get('error'):
+                print(f"    ⚠ {item['error']}")
+                print()
+                continue
+
+            price = item.get('price')
+            change = item.get('change_pct')
+            change_str = f"{change:+.2f}%" if change is not None else "--"
+            price_str = f"¥{price:.2f}" if price is not None else "--"
+
+            print(f"    价格: {price_str} | 涨跌: {change_str}")
+            print(f"    信号: {item.get('signal_summary', '--')}")
+            print(f"    入场: {item.get('entry_hint', '--')}")
+
+            # 显示关键指标
+            ind = item.get('indicators', {})
+            if ind:
+                parts = []
+                if ind.get('rsi') is not None:
+                    parts.append(f"RSI {ind['rsi']:.0f}")
+                if ind.get('macd') is not None:
+                    parts.append(f"MACD {ind['macd']:.3f}")
+                if ind.get('kdj_k') is not None:
+                    parts.append(f"KDJ(K={ind['kdj_k']:.0f})")
+                if parts:
+                    print(f"    指标: {' | '.join(parts)}")
+
+            print()
+
     def interactive_menu(self):
         """交互式菜单"""
         while True:
@@ -302,10 +351,11 @@ class StockAnalyzer:
             print("2. 查看热门股票")
             print("3. 查看推荐股票")
             print("4. 对比多只股票")
+            print("5. 自选股信号")
             print("0. 退出")
             print(f"{'='*60}")
 
-            choice = input("\n请选择功能 (0-4): ").strip()
+            choice = input("\n请选择功能 (0-5): ").strip()
 
             if choice == '1':
                 symbol = input("请输入股票代码 (如: 000001 或 AAPL): ").strip()
@@ -328,6 +378,9 @@ class StockAnalyzer:
 
                 for symbol in symbol_list:
                     self.analyze_stock(symbol, market=market, period='3mo', show_chart=False)
+
+            elif choice == '5':
+                self.show_watchlist_signals()
 
             elif choice == '0':
                 print("感谢使用，再见！")
@@ -470,6 +523,8 @@ if __name__ == "__main__":
     parser.add_argument('--backtest', '-b', action='store_true', help='对指定股票执行回测')
     parser.add_argument('--ai', action='store_true', help='使用AI分析（单Agent模式）')
     parser.add_argument('--multi-agent', action='store_true', help='使用多Agent协作AI分析')
+    parser.add_argument('--watchlist', '-w', action='store_true', help='查看自选股信号和入场提示')
+    parser.add_argument('--api', action='store_true', help='启动飞书机器人 API 服务')
 
     args = parser.parse_args()
 
@@ -524,6 +579,11 @@ if __name__ == "__main__":
         analyzer.show_hot_stocks(market=args.market)
     elif args.recommend:
         analyzer.show_recommended_stocks()
+    elif args.watchlist:
+        analyzer.show_watchlist_signals()
+    elif args.api:
+        from api_server import start
+        start()
     elif args.symbol:
         result = analyzer.analyze_stock(args.symbol, market=args.market, period=args.period, show_chart=True)
 

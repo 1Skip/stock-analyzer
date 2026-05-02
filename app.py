@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 from data_fetcher import StockDataFetcher
 from technical_indicators import TechnicalIndicators
 from stock_recommendation import StockRecommender
-from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist
+from watchlist import add_to_watchlist, remove_from_watchlist, get_watchlist, is_in_watchlist, get_watchlist_summary
 from config import (
     CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO,
     CACHE_TTL_HOT_STOCKS,
@@ -1486,12 +1486,37 @@ def display_market_temperature():
     )
 
 
+@st.cache_data(ttl=300, show_spinner="加载自选股信号...")
+def _cached_watchlist_summary(_watchlist_hash):
+    """获取自选股技术摘要（带缓存，5分钟有效）"""
+    watchlist = get_watchlist()
+    if not watchlist:
+        return []
+    return get_watchlist_summary(watchlist)
+
+
 def display_watchlist_sidebar():
-    """在侧边栏显示自选股列表"""
+    """在侧边栏显示自选股列表 — 含实时信号和入场提示"""
+    import json as _json_for_hash
+
     watchlist = get_watchlist()
 
     with st.expander("自选股"):
-        if watchlist:
+        if not watchlist:
+            st.caption("暂无自选股")
+            return
+
+        # 生成缓存键（自选股变动时自动失效）
+        watchlist_hash = _json_for_hash.dumps(
+            [(item['symbol'], item['market']) for item in watchlist],
+            sort_keys=True
+        )
+
+        with st.spinner(""):
+            summaries = _cached_watchlist_summary(watchlist_hash)
+
+        if not summaries:
+            # 缓存未命中或加载中，回退到基本按钮模式
             for item in watchlist:
                 col1, col2 = st.columns([4, 1])
                 with col1:
@@ -1506,8 +1531,62 @@ def display_watchlist_sidebar():
                     if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
                         remove_from_watchlist(item['symbol'], item['market'])
                         st.rerun()
-        else:
-            st.caption("暂无自选股")
+            return
+
+        # 增强模式：显示信号 + 入场提示
+        for i, item in enumerate(summaries):
+            symbol = item['symbol']
+            name = item.get('name', symbol)
+            market = item.get('market', 'CN')
+            error = item.get('error')
+
+            # 卡片容器
+            with st.container(border=True):
+                # 第一行：名称 + 价格 + 删除按钮
+                col_title, col_price, col_del = st.columns([2.5, 2, 0.8])
+                with col_title:
+                    st.markdown(f'<span style="font-weight:600">{symbol}</span> · {name[:6]}',
+                               unsafe_allow_html=True)
+                with col_price:
+                    if item['price'] is not None:
+                        change = item.get('change_pct', 0) or 0
+                        color = "#e53935" if change >= 0 else "#2e7d32"
+                        arrow = "+" if change >= 0 else ""
+                        st.markdown(f'<span style="color:{color};font-weight:600">{arrow}{change:.2f}%</span> '
+                                   f'<span style="font-size:0.85rem">¥{item["price"]:.2f}</span>',
+                                   unsafe_allow_html=True)
+
+                with col_del:
+                    if st.button("✕", key=f"wldel_{symbol}_{market}_{i}", help="移除"):
+                        remove_from_watchlist(symbol, market)
+                        st.rerun()
+
+                # 第二行：信号徽章 + 入场提示
+                if error:
+                    st.caption(f"⚠ {error}")
+                else:
+                    signal_text = item.get('signal_summary', '--')
+                    hint_text = item.get('entry_hint', '--')
+
+                    # 信号分类
+                    if "金叉" in str(signal_text) or "超卖" in str(signal_text) or "反弹" in str(signal_text) or "偏多" in str(signal_text):
+                        cls = "buy"
+                    elif "死叉" in str(signal_text) or "超买" in str(signal_text) or "回调" in str(signal_text) or "偏空" in str(signal_text):
+                        cls = "sell"
+                    else:
+                        cls = "neutral"
+
+                    st.markdown(
+                        f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span> '
+                        f'<span style="font-size:0.75rem;color:var(--text-color-secondary)">{html.escape(str(hint_text))}</span>',
+                        unsafe_allow_html=True
+                    )
+
+                # 点击跳转到个股分析
+                if st.button("查看分析", key=f"wlview_{symbol}_{market}_{i}", use_container_width=True):
+                    st.session_state.analyze_symbol = symbol
+                    st.session_state.analyze_market = market
+                    st.rerun()
 
 
 def display_data_source_selector():

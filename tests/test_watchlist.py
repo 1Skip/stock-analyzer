@@ -217,3 +217,157 @@ class TestEdgeCases:
         add_to_watchlist('000001', '测试股★☆', 'CN')
         items = get_watchlist()
         assert items[0]['name'] == '测试股★☆'
+
+
+# ============================================================
+# TestGetEntryHint
+# ============================================================
+
+class TestGetEntryHint:
+
+    def test_near_support_lower_band(self):
+        """价格在下轨附近 → 支撑位提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(10.4, ind, '观望')
+        assert '支撑位' in hint
+
+    def test_near_resistance_upper_band(self):
+        """价格在上轨附近 → 压力位提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(14.6, ind, '观望')
+        assert '压力位' in hint
+
+    def test_mid_band_bullish(self):
+        """中轨+偏多 → 建仓提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(12.5, ind, '偏多信号')
+        assert '建仓' in hint or '偏多' in hint
+
+    def test_mid_band_bearish(self):
+        """中轨+偏空 → 等待提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(12.5, ind, '偏空信号')
+        assert '偏空' in hint or '企稳' in hint
+
+    def test_weak_zone(self):
+        """价格偏弱区间 → 金叉提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(11.5, ind, '观望')  # position=0.3, 0.20~0.35
+        assert '弱' in hint or '金叉' in hint
+
+    def test_strong_zone(self):
+        """价格偏强区间 → 风险提示"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 15.0, 'boll_mid': 12.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(13.5, ind, '观望')  # position=0.7, 0.65~0.80
+        assert '强' in hint or '高位' in hint
+
+    def test_missing_indicators(self):
+        """缺失指标 → 数据不足"""
+        from watchlist import get_entry_hint
+        hint = get_entry_hint(12.0, {}, '观望')
+        assert '数据不足' in hint
+
+    def test_zero_band_range(self):
+        """布林带宽度为零 → 波动极小"""
+        from watchlist import get_entry_hint
+        ind = {'boll_upper': 10.0, 'boll_mid': 10.0, 'boll_lower': 10.0}
+        hint = get_entry_hint(10.0, ind, '观望')
+        assert '波动极小' in hint
+
+
+# ============================================================
+# TestGetWatchlistSummary
+# ============================================================
+
+class TestGetWatchlistSummary:
+
+    def test_returns_list(self, monkeypatch):
+        """正常返回列表"""
+        import pandas as pd
+        from data_fetcher import StockDataFetcher
+
+        dates = pd.date_range('2025-06-01', periods=30, freq='B')
+        n = 30
+        mock_df = pd.DataFrame({
+            'open': [10]*n, 'high': [10.5]*n, 'low': [9.5]*n, 'close': [10]*n,
+            'volume': [1000000]*n,
+        }, index=dates)
+
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                           lambda self, symbol, period, market: mock_df)
+
+        from watchlist import get_watchlist_summary
+        items = [{'symbol': '000001', 'name': '平安银行', 'market': 'CN'}]
+        results = get_watchlist_summary(items)
+        assert len(results) == 1
+        assert results[0]['symbol'] == '000001'
+        assert results[0]['price'] is not None
+
+    def test_multiple_stocks(self, monkeypatch):
+        """多只股票各自返回独立条目"""
+        import pandas as pd
+        from data_fetcher import StockDataFetcher
+
+        dates = pd.date_range('2025-06-01', periods=30, freq='B')
+        n = 30
+        mock_df = pd.DataFrame({
+            'open': [10]*n, 'high': [10.5]*n, 'low': [9.5]*n, 'close': [10]*n,
+            'volume': [1000000]*n,
+        }, index=dates)
+
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                           lambda self, symbol, period, market: mock_df)
+
+        from watchlist import get_watchlist_summary
+        items = [
+            {'symbol': '000001', 'name': '平安银行', 'market': 'CN'},
+            {'symbol': '600519', 'name': '贵州茅台', 'market': 'CN'},
+        ]
+        results = get_watchlist_summary(items)
+        assert len(results) == 2
+        assert results[0]['symbol'] == '000001'
+        assert results[1]['symbol'] == '600519'
+
+    def test_data_insufficient(self, monkeypatch):
+        """数据不足 → 设置 error 字段"""
+        import pandas as pd
+        from data_fetcher import StockDataFetcher
+
+        # 只有5行数据，不足 get_signals 最低要求
+        dates = pd.date_range('2025-06-01', periods=5, freq='B')
+        n = 5
+        mock_df = pd.DataFrame({
+            'open': [10]*n, 'high': [10.5]*n, 'low': [9.5]*n, 'close': [10]*n,
+            'volume': [1000000]*n,
+        }, index=dates)
+
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                           lambda self, symbol, period, market: mock_df)
+
+        from watchlist import get_watchlist_summary
+        items = [{'symbol': '000001', 'name': '平安银行', 'market': 'CN'}]
+        results = get_watchlist_summary(items)
+        assert results[0]['error'] is not None
+
+    def test_exception_is_caught(self, monkeypatch):
+        """数据获取异常 → 设置 error 字段"""
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                           lambda self, symbol, period, market: (_ for _ in ()).throw(Exception("网络错误")))
+
+        from watchlist import get_watchlist_summary
+        items = [{'symbol': '000001', 'name': '平安银行', 'market': 'CN'}]
+        results = get_watchlist_summary(items)
+        assert results[0]['error'] is not None
+
+    def test_empty_watchlist(self):
+        """空列表返回空列表"""
+        from watchlist import get_watchlist_summary
+        results = get_watchlist_summary([])
+        assert results == []
