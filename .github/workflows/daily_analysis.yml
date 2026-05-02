@@ -1,10 +1,9 @@
 name: 每日股票分析
 
 on:
-  schedule:
-    # 工作日 15:30 CST = 07:30 UTC
-    - cron: "30 7 * * 1-5"
-  workflow_dispatch:  # 允许手动触发
+  # schedule:  # 已关闭定时触发
+  #   - cron: "30 7 * * 1-5"
+  workflow_dispatch:  # 仅手动触发
 
 jobs:
   analyze:
