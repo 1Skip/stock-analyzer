@@ -1045,34 +1045,17 @@ def analyze_stock_page():
             st.error(f"输入的股票代码格式有误，{err_msg}")
             st.stop()
 
-        # 使用进度条显示加载状态
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        status_text.text("正在获取股票信息...")
+        status_text.text("正在加载数据...")
         progress_bar.progress(5)
         info = get_cached_stock_info(symbol, market)
-        progress_bar.progress(20)
+        progress_bar.progress(15)
 
-        status_text.text("正在获取实时行情...")
-        quote = get_cached_realtime_quote(symbol, market)
-        progress_bar.progress(40)
-
-        status_text.text("正在获取历史K线数据...")
+        # 先拿 K 线数据（核心数据），实时行情后补（可选增强）
         data = get_cached_stock_data(symbol, period, market)
-        progress_bar.progress(60)
-
-        # 调试信息
-        if data is None:
-            st.error(f"数据获取失败: {symbol}")
-            st.error("**可能原因：**\n1. 股票代码不存在或已退市\n2. 所有数据源暂时不可用\n3. 网络连接问题")
-            with st.expander("查看调试信息"):
-                st.info("已尝试以下数据源：\n1. AKShare（腾讯财经）\n2. 新浪财经\n3. Yahoo Finance（仅美股/港股）")
-            progress_bar.empty()
-            status_text.empty()
-            return
-        else:
-            st.write(f"获取到 {len(data)} 天数据")
+        progress_bar.progress(50)
 
         if data is None or data.empty:
             st.error(f"未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
@@ -1080,12 +1063,11 @@ def analyze_stock_page():
             status_text.empty()
             return
 
-        # 获取数据源信息
+        # 数据源信息
         data_source = data.attrs.get('data_source', '未知')
         offline_mode = data.attrs.get('offline_mode', False)
         is_fallback = "AKShare" not in data_source and not offline_mode
 
-        # 数据源标注 — 常态透明不打扰，异常温和提示
         if offline_mode:
             st.caption(f"🔴 离线缓存 · {data_source}")
         elif is_fallback:
@@ -1093,23 +1075,30 @@ def analyze_stock_page():
         else:
             st.caption(f"数据源 · {data_source}")
 
-        # 检查数据是否足够（至少需要30天数据）
         if len(data) < 30:
             st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
-        status_text.text("正在合并实时行情...")
-        # 如果有实时行情，更新历史数据最后一行（避免同一天重复行）
+        # 实时行情 — 3 秒超时，拿不到就用 K 线数据
+        progress_bar.progress(55)
+        quote = None
+        try:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(get_cached_realtime_quote, symbol, market)
+                quote = future.result(timeout=3)
+        except Exception:
+            quote = None
+
+        # 合并实时行情
         if quote and data is not None and not data.empty:
             today = pd.Timestamp.now().normalize()
             if data.index[-1].normalize() == today:
-                # 更新已存在的今日行
                 idx = data.index[-1]
                 data.loc[idx, 'close'] = quote['price']
                 data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
                 data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
                 data.loc[idx, 'volume'] = quote.get('volume', data.loc[idx, 'volume'])
             else:
-                # 新交易日，追加实时行情行
                 realtime_row = pd.DataFrame({
                     'open': [quote['open']],
                     'high': [quote['high']],
