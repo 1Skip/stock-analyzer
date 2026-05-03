@@ -45,7 +45,7 @@ SPOT_CACHE_TTL_SECONDS = 60  # 全市场快照缓存时间
 # Streamlit 缓存 TTL（秒）
 # ============================================================
 CACHE_TTL_REALTIME = 10       # 实时行情
-CACHE_TTL_STOCK_DATA = 120    # 历史K线数据（2分钟，减少重复请求）
+CACHE_TTL_STOCK_DATA = 600   # 历史K线数据（10分钟，减少重复请求）
 CACHE_TTL_STOCK_INFO = 300    # 股票基本信息
 CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算
