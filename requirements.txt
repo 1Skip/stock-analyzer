@@ -12,6 +12,6 @@ pytest-cov>=7.0
 pytest-mock>=3.12
 matplotlib>=3.8
 schedule>=1.2
-streamlit-lightweight-charts==0.7.18
+
 fastapi>=0.115     # 飞书机器人 API 服务（可选）
 uvicorn[standard]>=0.34  # 飞书机器人 API 服务（可选）

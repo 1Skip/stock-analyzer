@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import html
+import concurrent.futures
 import plotly.graph_objects as go
 
 # 导入原有模块
@@ -24,7 +25,7 @@ from config import (
 )
 from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
 from chart_utils import resolve_color_scheme, MA_CONFIG
-from streamlit_lightweight_charts import renderLightweightCharts
+
 
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
@@ -257,7 +258,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def plot_candlestick_chart(data, title=""):
-    """使用 TradingView lightweight-charts 绘制 K 线 + 成交量 + MACD"""
+    """使用 Plotly 绘制 K 线 + 成交量 + MACD 三合一图"""
 
     scheme_name = st.session_state.get('color_scheme')
     market = st.session_state.get('analyze_market', 'CN')
@@ -265,123 +266,83 @@ def plot_candlestick_chart(data, title=""):
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
-    def to_time(idx):
-        if hasattr(idx, 'strftime'):
-            return idx.strftime('%Y-%m-%d')
-        return str(idx)[:10]
+    from plotly.subplots import make_subplots
 
-    chart_bg = "rgba(0,0,0,0)"
-    is_light = st.get_option("theme.base") == "light"
-    text_color = "#131722" if is_light else "#d1d4dc"
-    grid_color = "rgba(0, 0, 0, 0.1)" if is_light else "rgba(66, 66, 66, 0.3)"
-    border_color = "rgba(0, 0, 0, 0.15)" if is_light else "rgba(66, 66, 66, 0.4)"
-    uid = hash(tuple(data.index)) & 0x7fffffff
+    fig = make_subplots(
+        rows=3, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.55, 0.15, 0.30],
+        subplot_titles=("K线 + 均线", "成交量", "MACD"),
+    )
 
-    # --- 图1: K线 + 均线 ---
-    candles = []
-    for idx, row in data.iterrows():
-        candles.append({
-            "time": to_time(idx),
-            "open": float(row['open']),
-            "high": float(row['high']),
-            "low": float(row['low']),
-            "close": float(row['close']),
-        })
-
-    series1 = [{
-        "type": "Candlestick",
-        "data": candles,
-        "options": {
-            "upColor": inc_color,
-            "downColor": dec_color,
-            "borderVisible": False,
-            "wickUpColor": inc_color,
-            "wickDownColor": dec_color
-        }
-    }]
+    # --- Row 1: K线 + 均线 ---
+    fig.add_trace(go.Candlestick(
+        x=data.index,
+        open=data['open'], high=data['high'], low=data['low'], close=data['close'],
+        name="K线",
+        increasing_line_color=inc_color,
+        decreasing_line_color=dec_color,
+        showlegend=False,
+    ), row=1, col=1)
 
     for ma_conf in MA_CONFIG.values():
         col = f'ma{ma_conf["period"]}'
         if col in data.columns:
-            ma_data = []
-            for idx, row in data.iterrows():
-                if pd.notna(row[col]):
-                    ma_data.append({"time": to_time(idx), "value": float(row[col])})
-            series1.append({
-                "type": "Line",
-                "data": ma_data,
-                "options": {"color": ma_conf['color'], "lineWidth": 1}
-            })
+            fig.add_trace(go.Scatter(
+                x=data.index, y=data[col],
+                mode='lines',
+                name=f'MA{ma_conf["period"]}',
+                line=dict(color=ma_conf['color'], width=1),
+            ), row=1, col=1)
 
-    st.markdown("<b>K线 + 均线</b>", unsafe_allow_html=True)
-    renderLightweightCharts([{
-        "chart": {
-            "height": 400,
-            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
-            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
-            "crosshair": {"mode": 0},
-            "rightPriceScale": {"scaleMargins": {"top": 0.05, "bottom": 0.05}, "borderColor": border_color},
-            "timeScale": {"borderColor": border_color},
-        },
-        "series": series1,
-    }], f"lwc1_{uid}")
-
-    # --- 图2: 成交量 ---
-    vol_data = []
+    # --- Row 2: 成交量 ---
     if 'volume' in data.columns:
-        for idx, row in data.iterrows():
-            if pd.notna(row['volume']):
-                vol_data.append({
-                    "time": to_time(idx),
-                    "value": float(row['volume']),
-                    "color": inc_color if row['close'] >= row['open'] else dec_color
-                })
+        vol_colors = [inc_color if data['close'].iloc[i] >= data['open'].iloc[i] else dec_color
+                      for i in range(len(data))]
+        fig.add_trace(go.Bar(
+            x=data.index, y=data['volume'],
+            name="成交量",
+            marker_color=vol_colors,
+            showlegend=False,
+        ), row=2, col=1)
 
-    st.markdown("<b>成交量</b>", unsafe_allow_html=True)
-    renderLightweightCharts([{
-        "chart": {
-            "height": 100,
-            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
-            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
-            "timeScale": {"visible": False},
-            "rightPriceScale": {"borderColor": border_color},
-        },
-        "series": [{
-            "type": "Histogram",
-            "data": vol_data,
-            "options": {"priceFormat": {"type": "volume"}},
-            "priceScale": {"scaleMargins": {"top": 0, "bottom": 0}},
-        }],
-    }], f"lwc2_{uid}")
+    # --- Row 3: MACD ---
+    if 'macd' in data.columns and 'macd_signal' in data.columns and 'macd_hist' in data.columns:
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['macd'],
+            mode='lines', name='DIF',
+            line=dict(color='#42a5f5', width=1),
+        ), row=3, col=1)
+        fig.add_trace(go.Scatter(
+            x=data.index, y=data['macd_signal'],
+            mode='lines', name='DEA',
+            line=dict(color='#ff7043', width=1),
+        ), row=3, col=1)
+        macd_hist_colors = [inc_color if v >= 0 else dec_color
+                           for v in data['macd_hist'].fillna(0)]
+        fig.add_trace(go.Bar(
+            x=data.index, y=data['macd_hist'],
+            name='MACD',
+            marker_color=macd_hist_colors,
+            showlegend=False,
+        ), row=3, col=1)
 
-    # --- 图3: MACD ---
-    macd_line, macd_signal, macd_hist = [], [], []
-    if 'macd' in data.columns:
-        for idx, row in data.iterrows():
-            t = to_time(idx)
-            if pd.notna(row.get('macd')):
-                macd_line.append({"time": t, "value": float(row['macd'])})
-            if pd.notna(row.get('macd_signal')):
-                macd_signal.append({"time": t, "value": float(row['macd_signal'])})
-            if pd.notna(row.get('macd_hist')):
-                h = float(row['macd_hist'])
-                macd_hist.append({"time": t, "value": h, "color": inc_color if h >= 0 else dec_color})
+    # 布局
+    fig.update_layout(
+        height=650,
+        hovermode='x unified',
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+        margin=dict(l=20, r=20, t=40, b=20),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
 
-    st.markdown("<b>MACD</b>", unsafe_allow_html=True)
-    renderLightweightCharts([{
-        "chart": {
-            "height": 150,
-            "layout": {"background": {"type": "solid", "color": chart_bg}, "textColor": text_color},
-            "grid": {"vertLines": {"color": grid_color}, "horzLines": {"color": grid_color}},
-            "timeScale": {"borderColor": border_color},
-            "rightPriceScale": {"borderColor": border_color},
-        },
-        "series": [
-            {"type": "Line", "data": macd_line, "options": {"color": "#42a5f5", "lineWidth": 1}},
-            {"type": "Line", "data": macd_signal, "options": {"color": "#ff7043", "lineWidth": 1}},
-            {"type": "Histogram", "data": macd_hist, "options": {}},
-        ],
-    }], f"lwc3_{uid}")
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
 
 def _indicator_layout(title, height=280, **extra):
     """共享指标图 layout 配置，避免 RSI/KDJ/BOLL 三处重复"""
@@ -541,16 +502,15 @@ def plot_intraday_chart(df, quote):
     change_pct = quote.get('change', 0) if quote else 0
     title_color = '#e53935' if change_pct > 0 else '#2e7d32' if change_pct < 0 else '#808080'
 
-    # 30分钟间隔刻度（A股交易时段）
-    today = pd.Timestamp.now().date()
+    # 30分钟间隔刻度（基于数据实际日期）
+    data_date = df['time'].iloc[0].date()
     tick_times = ['09:30','10:00','10:30','11:00','11:30',
                   '13:00','13:30','14:00','14:30','15:00']
-    tickvals = [pd.Timestamp.combine(today, pd.Timestamp(t).time()) for t in tick_times]
-    x_range = [tickvals[0], tickvals[-1]]  # 固定X轴范围覆盖完整交易时段
+    tickvals = [pd.Timestamp.combine(data_date, pd.Timestamp(t).time()) for t in tick_times]
 
     fig.update_layout(
         title=dict(text=f"分时走势", font=dict(size=14, color=title_color)),
-        xaxis=dict(title='', tickvals=tickvals, range=x_range, tickformat='%H:%M',
+        xaxis=dict(title='', tickvals=tickvals, tickformat='%H:%M',
                     showgrid=False, zeroline=False),
         yaxis=dict(title='价格', side='left', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
         yaxis2=dict(title='', overlaying='y', side='right', showticklabels=False,
@@ -856,7 +816,21 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
                 else:
                     st.warning(msg)
 
-    # ② 核心指标 — 最新价 2x + 其余 1x
+    # ② 核心指标 — 最新价（优先实时行情，fallback 到 K 线最后一日）
+    last_row = data.iloc[-1] if data is not None and not data.empty else None
+    if quote is None and last_row is not None:
+        # 无实时行情时从 K 线数据构建 fallback quote
+        prev_row = data.iloc[-2] if len(data) > 1 else last_row
+        change = (last_row['close'] - prev_row['close']) / prev_row['close'] * 100 if prev_row['close'] != 0 else 0
+        quote = {
+            'price': last_row['close'],
+            'high': last_row['high'],
+            'low': last_row['low'],
+            'open': last_row['open'],
+            'volume': int(last_row['volume']),
+            'change': change,
+        }
+
     if quote:
         col_price, col_h, col_l, col_v, col_o = st.columns([2, 1, 1, 1, 1])
         with col_price:
@@ -890,6 +864,8 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         with col_o:
             st.metric("今开", f"{quote['open']:.2f}")
 
+    st.write("")
+
     # ③ 分时图（仅A股）
     if market == "CN":
         intraday = get_cached_intraday_data(symbol, market)
@@ -898,6 +874,14 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
             if intraday_fig:
                 st.plotly_chart(intraday_fig, use_container_width=True,
                                 config={'displayModeBar': False})
+        else:
+            # 非交易日或无分时数据时，显示提示而非空白
+            now = pd.Timestamp.now()
+            weekday = now.dayofweek
+            if weekday >= 5:
+                st.info("📌 今日非交易日，暂无分时数据")
+            else:
+                st.info("📌 分时数据暂不可用，请稍后刷新")
 
     st.divider()
 
@@ -1048,13 +1032,28 @@ def analyze_stock_page():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        status_text.text("正在加载数据...")
+        status_text.text("正在获取股票信息...")
         progress_bar.progress(5)
-        info = get_cached_stock_info(symbol, market)
+        # 非A股 stock_info 调 yfinance.info，可能很慢，加超时
+        info = None
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(get_cached_stock_info, symbol, market)
+                info = future.result(timeout=5)
+        except Exception:
+            info = {'shortName': symbol, 'symbol': symbol}
+        if info is None or not info:
+            info = {'shortName': symbol, 'symbol': symbol}
         progress_bar.progress(15)
 
-        # 先拿 K 线数据（核心数据），实时行情后补（可选增强）
-        data = get_cached_stock_data(symbol, period, market)
+        status_text.text("正在获取K线数据...")
+        data = None
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(get_cached_stock_data, symbol, period, market)
+                data = future.result(timeout=20)
+        except Exception:
+            data = None
         progress_bar.progress(50)
 
         if data is None or data.empty:
@@ -1078,11 +1077,11 @@ def analyze_stock_page():
         if len(data) < 30:
             st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
+        status_text.text("正在获取实时行情...")
         # 实时行情 — 3 秒超时，拿不到就用 K 线数据
         progress_bar.progress(55)
         quote = None
         try:
-            import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(get_cached_realtime_quote, symbol, market)
                 quote = future.result(timeout=3)
@@ -1125,8 +1124,18 @@ def analyze_stock_page():
         progress_bar.empty()
         status_text.empty()
 
-        # 获取股票名称并保存分析结果到 session_state
-        stock_name = fetcher.get_stock_name(symbol, market)
+        # 获取股票名称 — 优先用已缓存的 info，避免重复调 yfinance
+        stock_name = symbol
+        if isinstance(info, dict):
+            stock_name = info.get('shortName') or info.get('longName') or symbol
+        # 只在 info 没给出有效名称时才回退到 get_stock_name（但A股映射表很快）
+        if stock_name == symbol and market == "CN":
+            try:
+                stock_name = fetcher.get_stock_name(symbol, market)
+            except Exception:
+                stock_name = symbol
+        elif stock_name == symbol:
+            stock_name = symbol  # 非A股就不调了，避免 yfinance 二次卡顿
 
         st.session_state.analyzed_data = data
         st.session_state.analyzed_signals = signals

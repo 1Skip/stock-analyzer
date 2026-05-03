@@ -95,7 +95,10 @@ class StockDataFetcher:
                 return cls._spot_cache
         if AKSHARE_AVAILABLE:
             try:
-                cls._spot_cache = ak.stock_zh_a_spot_em()
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(ak.stock_zh_a_spot_em)
+                    cls._spot_cache = future.result(timeout=8)
                 cls._spot_cache_time = now
                 return cls._spot_cache
             except Exception:
@@ -822,7 +825,10 @@ class StockDataFetcher:
         if not AKSHARE_AVAILABLE:
             return None
         try:
-            cls._index_spot_cache = ak.stock_zh_index_spot_em()
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(ak.stock_zh_index_spot_em)
+                cls._index_spot_cache = future.result(timeout=8)
             cls._index_spot_cache_time = now
             return cls._index_spot_cache
         except Exception as e:
@@ -946,6 +952,11 @@ class StockDataFetcher:
                     '成交额': 'amount', '均价': 'avg_price'
                 }, inplace=True)
                 df['time'] = pd.to_datetime(df['time'])
+                # 仅保留当日数据
+                today = pd.Timestamp.now().date()
+                df = df[df['time'].dt.date == today].copy()
+                if df.empty:
+                    return None
                 self.cache[cache_key] = (datetime.now(), df, "AKShare(东方财富)")
                 return df
         except Exception:
