@@ -1506,19 +1506,6 @@ def _cached_watchlist_summary(_watchlist_hash):
     return get_watchlist_summary(watchlist)
 
 
-def _preload_watchlist_cache():
-    """后台预热自选股缓存 — 有则复用，空则静默跳过"""
-    import json as _json_for_hash
-    watchlist = get_watchlist()
-    if not watchlist:
-        return
-    watchlist_hash = _json_for_hash.dumps(
-        [(item['symbol'], item['market']) for item in watchlist],
-        sort_keys=True
-    )
-    _cached_watchlist_summary(watchlist_hash)  # 触发生成/复用缓存，忽略返回值
-
-
 def display_watchlist_sidebar():
     """在侧边栏显示自选股列表 — 含实时信号和入场提示"""
     import json as _json_for_hash
@@ -1915,9 +1902,6 @@ def main():
         # 大盘温度（默认关闭，环境变量 MARKET_INDEX_ENABLED=true 开启）
         if MARKET_INDEX_ENABLED:
             display_market_temperature()
-
-        # 后台预热自选股缓存（有则复用，无则静默填充）
-        _preload_watchlist_cache()
 
         # 自选股（折叠）
         summaries = display_watchlist_sidebar()
