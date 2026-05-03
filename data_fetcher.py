@@ -592,7 +592,7 @@ class StockDataFetcher:
                 name = info.get('shortName') or info.get('longName')
                 if name:
                     return name
-        except:
+        except Exception:
             pass
         return symbol
 

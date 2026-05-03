@@ -14,34 +14,42 @@
 
 | 文件 | 职责 | 备注 |
 |------|------|------|
-| `app.py` | Streamlit Web UI | ~1600行，K线图用 TradingView lightweight-charts，指标图用 Plotly |
-| `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行（`--schedule` / `--notify` 待 P1 实现） |
-| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance 三级回退，美股/港股: 新浪 → yfinance，带健康检查和离线缓存 |
+| `app.py` | Streamlit Web UI | ~1929行，K线图用 Plotly（go.Candlestick 三合图），指标图用 Plotly，分时图用 Plotly |
+| `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
+| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护 |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
-| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多模型自动检测 |
+| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多Agent协作（技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义，多因子评分(0-100)，支持 CN/US/HK |
-| `notification.py` | 通知推送 | 企业微信 / Telegram / Bark 三渠道，`build_analysis_report()` 格式化报告 |
+| `notification.py` | 通知推送 | 企业微信 webhook，`build_analysis_report()` 格式化报告 |
 | `config.py` | 集中配置 | 所有参数 + 三种配色 + 评分权重 + 信号阈值 + 调度/通知，环境变量覆盖 |
-| `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存 |
-| `tests/` | 测试（12文件，307测试） | conftest.py 含完整 Streamlit mock（含 components.v1），pytest.ini 含 slow/network 标记 |
+| `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存，含侧边栏 mini 分析面板 |
+| `scheduler.py` | 定时调度 | 收盘后自动分析+通知，通过 `SCHEDULE_ENABLED` 开启 |
+| `backtest_engine.py` | 回测引擎 | 信号→交易模拟，含止损/止盈/中性区间 |
+| `backtest_adapter.py` | 回测适配 | 连接信号体系与回测引擎 |
+| `backtest_ui.py` | 回测 UI | Streamlit 回测页面 |
+| `api_server.py` | FastAPI 服务 | 飞书机器人回调 + 股票查询 API（可选，`FEISHU_BOT_ENABLED` 控制） |
+| `tests/` | 测试（18文件，478测试） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
 | `pytest.ini` | pytest 配置 | testpaths=tests, 注册 slow/network 标记, --tb=short |
-| `requirements.txt` | 依赖 | streamlit / plotly / streamlit-lightweight-charts / yfinance / pandas / numpy / requests / akshare |
+| `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare / fastapi / uvicorn（飞书机器人可选） |
 | `.devcontainer/devcontainer.json` | Dev Container | Python 3.11，自动安装依赖并启动 Streamlit |
 | `.gitignore` | Git 忽略规则 | 缓存、虚拟环境、.env、token 文件、base64 文件 |
 
 ## 3. 架构约定
 
-- **Web K线图** → TradingView lightweight-charts（HTML 渲染，无 Figure 返回值）
-- **Web 指标图** → Plotly（RSI/KDJ/BOLL/MACD 子图），交互式可缩放
+- **Web K线图** → Plotly `go.Candlestick` + `go.Bar` + `go.Scatter`，三合图（价格+成交量+MACD），通过 `st.plotly_chart` 渲染
+- **Web 分时图** → Plotly（仅A股），价格折线+均价线+昨收线+成交量柱
+- **Web 指标图** → Plotly（RSI/KDJ/BOLL 子图），交互式可缩放
 - **CLI 图表** → Matplotlib（在 `chart_plotter.py` 中），静态图片
+- **超时保护**：所有数据获取调用通过 `concurrent.futures.ThreadPoolExecutor` 包装超时（stock_info 5s / K线数据 20s / 实时行情 3s / 全市场快照 8s），超时后降级到已获取数据继续渲染
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
-- **数据源优先级**：A股 AKShare > 新浪 > yfinance；美股/港股 新浪 > yfinance
+- **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.stock_cache.json` 24 小时内缓存
-- **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启，支持企业微信/Telegram/Bark
+- **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
 - **定时调度**：默认关闭，通过 `SCHEDULE_ENABLED=true` 开启，`SCHEDULE_TIME` 设定执行时间
+- **飞书机器人**：默认关闭，通过 `FEISHU_BOT_ENABLED=true` 开启 FastAPI 回调服务
 
 ## 4. 技术指标细节
 
@@ -65,9 +73,8 @@
 
 ## 6. 已知问题（修改时注意）
 
-- `app.py` 较长（~1600行），后续可拆分为 `app_ui.py` + `app_charts.py`，但当前优先级低
-- `main.py` 尚未集成 `--schedule` / `--notify` 参数（P1 待完成）
-- `scheduler.py` 尚未创建（P1-S3 待实施）
+- `app.py` 较长（~1929行），可拆分为 `app_ui.py` + `app_charts.py`，但当前优先级低
+- `main.py` 尚未集成 `--schedule` / `--notify` 参数
 
 ## 7. 常见错误与解决方案
 
@@ -140,12 +147,14 @@
 | A股数据获取全部失败 | AKShare 网络超时或其他数据源不可用 | 检查三级回退链：AKShare → 新浪 → yfinance。全部失败则启用 `.stock_cache.json` 离线缓存（24h 有效） |
 | 换手率显示 None | AKShare 全市场接口返回空或字段缺失 | 在 `stock_recommendation.py` 中从 `StockDataFetcher._get_spot_snapshot()` 获取，失败则返回 None（绝不使用随机模拟数据） |
 | 全市场快照每次查询都下载 5000+ 行 | 未缓存快照结果 | 使用类级别 `_spot_cache` + 60 秒 TTL 缓存 |
+| 实时行情调用阻塞页面加载 | `ak.stock_zh_a_spot_em()` 无超时参数，下载全市场数据可能耗时 5-15 秒 | 用 `ThreadPoolExecutor` 包装，`future.result(timeout=N)` 限制等待时间，超时降级到 K 线 fallback |
+| 分时图在非交易日显示空白 | `_fetch_intraday_akshare` 未做当日过滤，返回上周数据；`plot_intraday_chart` 的 X 轴硬编码 `pd.Timestamp.now().date()` 导致数据点落在不可见区间 | 1) AKShare 源也加 `df['time'].dt.date == today` 过滤；2) X 轴刻度用数据实际日期而非当天日期；3) 数据为空时显示提示 |
 
 ### 7.10 测试 Mock 与依赖
 
 | 错误现象 | 原因 | 解决方法 |
 |---------|------|---------|
-| `ModuleNotFoundError: No module named 'streamlit.components'; 'streamlit' is not a package` | 新增依赖（如 `streamlit-lightweight-charts`）导入了 `streamlit.components.v1`，但 conftest.py mock 缺少子模块层级 | conftest.py 需构造完整模块树：`streamlit` (package) → `streamlit.components` (package) → `streamlit.components.v1` (含 `html`, `iframe`, `declare_component`)，每层设 `__path__ = []` 并注册到 `sys.modules` |
+| `AttributeError: module 'streamlit' has no attribute 'plotly_chart'` | conftest.py 的 Streamlit mock 缺少 `plotly_chart` 属性 | 在 `_mock_st` 上添加 `_mock_st.plotly_chart = lambda fig, **kw: None` |
 | `pd.date_range(end=dt.now(), periods=N, freq='B')` 生成 N-1 个日期 | `end` 落在周末时，pandas `freq='B'` 的 `periods` 参数会少生成 | 检查 `end_date.weekday() >= 5`，将 end_date 前移到周五 |
 | 测试读到了项目的真实 `.stock_cache.json` | `StockDataFetcher` 类级别 `_offline_cache_file` 指向项目根目录 | 测试中使用 `tmp_path` fixture，将 `_offline_cache_file` 设为临时路径 |
 
@@ -194,19 +203,26 @@ pip-audit
 - 新增 Streamlit 页面时，在侧边栏导航中注册
 - 图表修改：Plotly 和 Matplotlib 版本行为不同，建议改完后在 Web 和 CLI 都验证
 - 修改技术指标计算逻辑后，必须用真实数据验证输出值范围（如 RSI 0-100、BOLL 上轨≥中轨≥下轨）
+- **所有网络调用必须加超时保护**：调用 AKShare / yfinance / 新浪等外部数据源时，用 `concurrent.futures.ThreadPoolExecutor` + `future.result(timeout=N)` 包装，超时后降级而非卡死。已在 `get_cached_stock_info`(5s) / `get_cached_stock_data`(20s) / `get_cached_realtime_quote`(3s) / `_get_spot_snapshot`(8s) 统一实现
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
 - **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#12-安全注意事项)）
 
 ## 10. 项目路线图
 
-当前实施路线图维护在 `C:\Users\skip8\.claude\plans\merry-napping-wolf.md`。要点：
-- **P0**（测试补齐）：✅ 完成，307 tests pass
-- **P1**（调度+通知）：🔄 部分完成 — S1 config.py ✅、S2 notification.py ✅、S3 scheduler.py ⬜、S4 GitHub Actions ⬜、S5 main.py 集成 ⬜
-- **P2**（回测引擎）：⬜ 待实施
-- **P3**（多Agent AI）：⬜ 待实施
+- **P0**（测试补齐）：✅ 完成，478 tests pass
+- **P1**（调度+通知）：✅ 完成 — scheduler.py + notification.py 已实现
+- **P2**（回测引擎）：✅ 完成 — backtest_engine.py + backtest_adapter.py + backtest_ui.py
+- **P3**（多Agent AI）：✅ 完成 — 技术+风险+决策三Agent协作
+- **P4**（质量优化）：✅ 完成 — 代码瘦身、死代码清理
+- **P5**（大盘温度）：✅ 完成 — 沪深300+北证50+上证+深证
+- **P6**（回测中文国际化）：✅ 完成
+- **P7**（测试补齐第二轮）：✅ 完成 — 445→478 tests
+- **P8**（自选股增强+飞书机器人）：✅ 完成 — watchlist mini面板 + api_server.py
+- **P9**（自选股状态分离+mini面板+锚点滚动）：✅ 完成
+- **P11**（K线图迁移Plotly）：✅ 完成 — lightweight-charts → Plotly
 
-原则：保持 <8000 行，零数据库依赖，先 CLI 后 Web，新功能默认关闭。
+原则：保持 <8000 行（当前 ~6848 行业务代码 + ~6234 行测试），零数据库依赖，先 CLI 后 Web，新功能默认关闭。
 
 ## 11. Agent Skills 使用指南
 
