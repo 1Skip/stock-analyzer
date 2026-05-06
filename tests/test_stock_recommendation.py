@@ -519,6 +519,29 @@ class TestGetShortTermRecommendations:
 # TestGetSectorShortTerm
 # ============================================================
 
+class TestGetLongTermRecommendations:
+
+    def test_returns_list(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_long_term_recommendations(num_stocks=5)
+        assert isinstance(result, list)
+
+    def test_sorted_descending(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_long_term_recommendations(num_stocks=5)
+        if len(result) >= 2:
+            assert result[0]['score'] >= result[-1]['score']
+
+    def test_includes_name_field(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_long_term_recommendations(num_stocks=5)
+        if result:
+            assert 'name' in result[0]
+
+
 class TestGetSectorShortTerm:
 
     def test_invalid_sector_returns_empty(self, recommender):

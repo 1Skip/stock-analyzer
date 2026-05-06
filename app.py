@@ -791,7 +791,7 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
         _show_setup_form(symbol, period)
 
 
-def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period):
+def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
@@ -868,9 +868,10 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     # ③ 分时图（仅A股）
     if market == "CN":
-        intraday = get_cached_intraday_data(symbol, market)
-        if intraday is not None and not intraday.empty:
-            intraday_fig = plot_intraday_chart(intraday, quote)
+        if intraday_data is None:
+            intraday_data = get_cached_intraday_data(symbol, market)
+        if intraday_data is not None and not intraday_data.empty:
+            intraday_fig = plot_intraday_chart(intraday_data, quote)
             if intraday_fig:
                 st.plotly_chart(intraday_fig, use_container_width=True,
                                 config={'displayModeBar': False})
@@ -1108,34 +1109,48 @@ def analyze_stock_page():
                 data = pd.concat([data, realtime_row])
         progress_bar.progress(75)
 
+        # 获取股票名称 — 优先用已缓存的 info，加超时保护
+        stock_name = symbol
+        if isinstance(info, dict):
+            stock_name = info.get('shortName') or info.get('longName') or symbol
+        if stock_name == symbol and market == "CN":
+            status_text.text("正在获取股票名称...")
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(fetcher.get_stock_name, symbol, market)
+                    stock_name = future.result(timeout=3)
+            except Exception:
+                stock_name = symbol
+        elif stock_name == symbol:
+            stock_name = symbol  # 非A股就不调了，避免 yfinance 二次卡顿
+        progress_bar.progress(78)
+
+        # 分时数据提前获取（加超时，避免阻塞渲染）
+        intraday_data = None
+        if market == "CN":
+            status_text.text("正在获取分时数据...")
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(get_cached_intraday_data, symbol, market)
+                    intraday_data = future.result(timeout=5)
+            except Exception:
+                intraday_data = None
+        progress_bar.progress(82)
+
         status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
         data = TechnicalIndicators.calculate_all(data)
-        progress_bar.progress(90)
+        progress_bar.progress(92)
 
         status_text.text("正在生成交易信号...")
         signals = TechnicalIndicators.get_signals(data)
-        progress_bar.progress(100)
+        progress_bar.progress(97)
 
         # 检查是否有错误
         if 'error' in signals:
             st.warning(f"指标计算问题：{signals['error']}")
 
-        # 清除进度条
-        progress_bar.empty()
-        status_text.empty()
-
-        # 获取股票名称 — 优先用已缓存的 info，避免重复调 yfinance
-        stock_name = symbol
-        if isinstance(info, dict):
-            stock_name = info.get('shortName') or info.get('longName') or symbol
-        # 只在 info 没给出有效名称时才回退到 get_stock_name（但A股映射表很快）
-        if stock_name == symbol and market == "CN":
-            try:
-                stock_name = fetcher.get_stock_name(symbol, market)
-            except Exception:
-                stock_name = symbol
-        elif stock_name == symbol:
-            stock_name = symbol  # 非A股就不调了，避免 yfinance 二次卡顿
+        status_text.text("正在渲染图表...")
+        progress_bar.progress(99)
 
         st.session_state.analyzed_data = data
         st.session_state.analyzed_signals = signals
@@ -1143,7 +1158,11 @@ def analyze_stock_page():
         st.session_state.analyzed_stock_name = stock_name
 
         # 渲染分析结果
-        _render_analysis_results(data, signals, quote, symbol, stock_name, market, period)
+        _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data)
+
+        # 全部就绪后清除进度条
+        progress_bar.empty()
+        status_text.empty()
 
     # rerun 恢复：st.rerun() 后 analyze_clicked=False，从 session_state 恢复全部结果
     if not analyze_clicked:
@@ -1367,12 +1386,19 @@ def display_recommendation_list(recommended, strategy_name):
     # 显示推荐列表
     for i, stock in enumerate(recommended, 1):
         with st.container():
+            change_pct = stock.get('change_pct', 0) or 0
+            if change_pct > 0:
+                arrow = "📈"
+            elif change_pct < 0:
+                arrow = "📉"
+            else:
+                arrow = "➡"
             st.markdown(f"""
             <div class="stock-card">
                 <h4>#{i} {html.escape(str(stock['symbol']))} {html.escape(str(stock['name']))}</h4>
                 <p><strong>综合评分:</strong> {stock['score']}/100 |
                 <strong>建议:</strong> {html.escape(str(stock['rating']))} |
-                <strong>当前价:</strong> {stock['latest_price']:.2f}</p>
+                <strong>当前价:</strong> {stock['latest_price']:.2f} {arrow}{change_pct:+.2f}%</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -1396,23 +1422,43 @@ def display_recommendation_list(recommended, strategy_name):
             st.divider()
 
 def recommended_stocks_page():
-    """推荐股票页面 - 短线龙头股推荐"""
-    st.markdown('<h1 class="main-header">短线龙头股推荐</h1>', unsafe_allow_html=True)
+    """推荐股票页面 - 短线/长线龙头股推荐"""
 
-    # 使用 session state 保存推荐页面状态
+    # session state 初始化
     if 'rec_sector' not in st.session_state:
         st.session_state.rec_sector = "全部"
     if 'rec_num_stocks' not in st.session_state:
         st.session_state.rec_num_stocks = 5
+    if 'rec_strategy' not in st.session_state:
+        st.session_state.rec_strategy = "短线"
 
     def on_sector_change():
         st.session_state.rec_sector = st.session_state.rec_sector_select
-        st.session_state.rec_data_loaded = False  # 板块切换时重新加载
+        st.session_state.rec_data_loaded = False
 
     def on_num_stocks_change():
         st.session_state.rec_num_stocks = st.session_state.rec_num_slider
 
-    st.info("基于MACD、RSI、KDJ等技术指标，筛选各板块短线龙头股")
+    def on_strategy_change():
+        st.session_state.rec_strategy = st.session_state.rec_strategy_radio
+        st.session_state.rec_data_loaded = False
+
+    # 读取当前值
+    strategy = st.session_state.rec_strategy
+    sector = st.session_state.rec_sector
+    num_stocks = st.session_state.rec_num_stocks
+
+    # 动态标题
+    st.markdown(f'<h1 class="main-header">龙头股推荐 — {strategy}</h1>', unsafe_allow_html=True)
+
+    # 策略选择
+    st.radio("策略选择", options=["短线", "长线"], index=0 if strategy == "短线" else 1,
+             horizontal=True, key="rec_strategy_radio", on_change=on_strategy_change)
+
+    if strategy == "短线":
+        st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选各板块短线龙头股（侧重短期动量与波动率）")
+    else:
+        st.info("基于MA60趋势、MACD趋势等长线指标，筛选各板块长线龙头股（侧重中长期趋势与估值合理性）")
 
     # 板块选择
     sector_options = ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
@@ -1427,11 +1473,10 @@ def recommended_stocks_page():
                           key="rec_num_slider",
                           on_change=on_num_stocks_change)
 
-    # 从 session state 读取当前值
+    # 从 session state 读取当前值（sector 已在上面赋值）
     sector = st.session_state.rec_sector
     num_stocks = st.session_state.rec_num_stocks
 
-    # 自动加载数据（首次进入时）
     if 'rec_data_loaded' not in st.session_state:
         st.session_state.rec_data_loaded = False
 
@@ -1442,16 +1487,43 @@ def recommended_stocks_page():
             st.success("数据已刷新")
 
     if st.button("生成推荐", type="primary") or not st.session_state.rec_data_loaded:
-        with st.spinner(f"正在分析{sector}板块，请稍候..."):
+        with st.spinner(f"正在分析{sector}板块（{strategy}），请稍候..."):
             recommender = StockRecommender()
-            if sector == "全部":
-                recommended = recommender.get_short_term_recommendations(num_stocks)
-                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
-                display_recommendation_list(recommended, "短线推荐")
+            if strategy == "短线":
+                if sector == "全部":
+                    recommended = recommender.get_short_term_recommendations(num_stocks)
+                    title = "短线推荐"
+                else:
+                    recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
+                    title = f"{sector} 短线龙头股"
             else:
-                recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
-                st.caption(f"分析完成：找到 {len(recommended)} 只推荐股票")
-                display_recommendation_list(recommended, f"{sector} 短线龙头股")
+                if sector == "全部":
+                    recommended = recommender.get_long_term_recommendations(num_stocks)
+                    title = "长线推荐"
+                else:
+                    recommended = recommender.get_sector_long_term_recommendations(sector, num_stocks)
+                    title = f"{sector} 长线龙头股"
+
+            # 批量拉实时行情覆写价格（3s超时，失败不影响展示）
+            if recommended:
+                try:
+                    from data_fetcher import StockDataFetcher
+                    fetcher = StockDataFetcher()
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        future = executor.submit(
+                            fetcher.get_batch_realtime_quotes,
+                            [s['symbol'] for s in recommended]
+                        )
+                        quotes = future.result(timeout=3)
+                    for s in recommended:
+                        if s['symbol'] in quotes:
+                            s['latest_price'] = quotes[s['symbol']]['price']
+                            s['change_pct'] = quotes[s['symbol']]['change_pct']
+                except Exception:
+                    pass  # 实时行情失败，用 K 线收盘价展示
+
+            display_recommendation_list(recommended, title)
             st.session_state.rec_data_loaded = True
 
 def display_market_temperature():

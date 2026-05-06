@@ -506,6 +506,32 @@ class StockRecommender:
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
 
+    def get_long_term_recommendations(self, num_stocks=10):
+        """
+        获取长线推荐股票（基于1年趋势指标），并发分析加速
+        """
+        results = []
+
+        def analyze_one(stock):
+            try:
+                analysis = self._analyze_long_term(stock['code'], market='CN')
+                if analysis:
+                    analysis['name'] = stock['name']
+                    return analysis
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:num_stocks]
+
     def get_sector_short_term_recommendations(self, sector_name, num_stocks=5):
         """
         获取指定板块的短线龙头股推荐，并发分析加速

@@ -606,7 +606,16 @@ class TestGetStockName:
 class TestGetRealtimeQuote:
 
     def test_cn_from_akshare_spot(self, monkeypatch):
+        # 新浪 HTTP 优先，先 mock 它失败，测试 AKShare fallback
         from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
+
+        def mock_http_fail(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 404
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_http_fail)
         monkeypatch.setattr(StockDataFetcher, '_get_spot_snapshot',
                             classmethod(lambda cls: _make_spot_df()))
         fetcher = StockDataFetcher()
@@ -1075,3 +1084,98 @@ class TestIndexRealtime:
         _ = fetcher.get_stock_data("000001", period="1y", market="CN")
         # 缓存命中：第一次获取后缓存，后续命中缓存，不再调用源方法
         assert call_count[0] == 1
+
+
+# ============================================================
+# TestBatchRealtimeQuotes
+# ============================================================
+
+class TestBatchRealtimeQuotes:
+
+    def test_returns_dict(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            fields = ['测试'] + ['0'] * 32
+            fields[2] = '14.0'  # 昨收
+            fields[3] = '15.0'  # 当前价
+            resp.text = '"{}"'.format(','.join(fields))
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_batch_realtime_quotes(['000001', '000002'])
+        assert isinstance(result, dict)
+        assert '000001' in result
+        assert result['000001']['price'] == 15.0
+
+    def test_empty_symbols_returns_empty(self):
+        from data_fetcher import StockDataFetcher
+        fetcher = StockDataFetcher()
+        result = fetcher.get_batch_realtime_quotes([])
+        assert result == {}
+
+    def test_invalid_symbol_not_in_result(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            if '999999' in url:
+                resp.status_code = 404
+                resp.text = ''
+            else:
+                resp.status_code = 200
+                fields = ['测试'] + ['0'] * 32
+                fields[2] = '14.0'  # 昨收
+                fields[3] = '15.0'  # 当前价
+                resp.text = '"{}"'.format(','.join(fields))
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_batch_realtime_quotes(['000001', '999999'])
+        assert '000001' in result
+        assert '999999' not in result
+
+    def test_returns_price_and_change_pct(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        from unittest.mock import MagicMock
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            if 'sz000001' in url or 'sh000001' in url:
+                fields = ['股票A'] + ['0'] * 32
+                fields[2] = '14.0'
+                fields[3] = '15.0'
+                resp.text = '"{}"'.format(','.join(fields))
+            else:
+                fields = ['股票B'] + ['0'] * 32
+                fields[2] = '22.0'
+                fields[3] = '20.0'
+                resp.text = '"{}"'.format(','.join(fields))
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_batch_realtime_quotes(['000001', '000002'])
+        assert result['000001']['price'] == 15.0
+        assert result['000002']['price'] == 20.0
+        # change_pct: (最新价/昨收 - 1) * 100
+        assert abs(result['000001']['change_pct'] - (15.0 / 14.0 - 1) * 100) < 0.01
+        assert abs(result['000002']['change_pct'] - (20.0 / 22.0 - 1) * 100) < 0.01
+
+    def test_exception_returns_empty(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            raise Exception("fail")
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        fetcher = StockDataFetcher()
+        result = fetcher.get_batch_realtime_quotes(['000001'])
+        assert result == {}

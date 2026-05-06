@@ -1,7 +1,7 @@
 """
 股票数据获取模块 - 获取真实股票数据
 支持A股、港股、美股
-使用 AKShare（同花顺/东方财富数据源）作为主要A股数据源
+使用 AKShare（新浪/东方财富数据源）作为主要A股数据源，实时行情优先新浪
 """
 import yfinance as yf
 import pandas as pd
@@ -88,7 +88,9 @@ class StockDataFetcher:
 
     @classmethod
     def _get_spot_snapshot(cls):
-        """获取A股全市场快照（带缓存，60秒内复用，避免重复下载5000+条）"""
+        """获取A股全市场快照（带缓存，60秒内复用，避免重复下载5000+条）
+        数据源：新浪财经（通过 AKShare）
+        """
         now = datetime.now()
         if cls._spot_cache is not None and cls._spot_cache_time is not None:
             if now - cls._spot_cache_time < cls._spot_cache_ttl:
@@ -97,7 +99,7 @@ class StockDataFetcher:
             try:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(ak.stock_zh_a_spot_em)
+                    future = executor.submit(ak.stock_zh_a_spot)
                     cls._spot_cache = future.result(timeout=8)
                 cls._spot_cache_time = now
                 return cls._spot_cache
@@ -543,12 +545,13 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
-        """获取股票名称，A股优先从 AKShare 实时获取（东方财富数据）"""
+        """获取股票名称，A股优先从 AKShare 实时获取（新浪数据）"""
         if market == "CN":
             # 第一优先：AKShare 实时数据（使用缓存的快照，避免重复下载全市场数据）
             spot_df = self._get_spot_snapshot()
             if spot_df is not None:
-                stock_row = spot_df[spot_df['代码'] == symbol]
+                # AKShare 返回的代码带交易所前缀（sh600519/sz000001/bj920000），用 endswith 兼容两种格式
+                stock_row = spot_df[spot_df['代码'].str.endswith(symbol)]
                 if not stock_row.empty:
                     return stock_row.iloc[0]['名称']
 
@@ -597,64 +600,33 @@ class StockDataFetcher:
         return symbol
 
     def get_realtime_quote(self, symbol, market="US"):
-        """获取实时行情 - A股优先使用 AKShare（同花顺/东方财富数据）"""
+        """获取实时行情 - A股优先新浪HTTP（~200ms），AKShare快照做 fallback"""
         try:
             if market == "CN":
-                # 第一优先：AKShare 实时行情（使用缓存的快照，避免重复下载全市场数据）
-                spot_df = self._get_spot_snapshot()
-                if spot_df is not None:
-                    stock_row = spot_df[spot_df['代码'] == symbol]
-                    if not stock_row.empty:
-                        row = stock_row.iloc[0]
-                        return {
-                            'symbol': symbol,
-                            'name': row['名称'],
-                            'price': float(row['最新价']),
-                            'open': float(row['今开']),
-                            'high': float(row['最高']),
-                            'low': float(row['最低']),
-                            'volume': int(float(row['成交量']) / 100),  # 转换为手
-                            'prev_close': float(row['昨收']),
-                            'change': (float(row['最新价']) / float(row['昨收']) - 1) * 100
-                        }
+                # 确定交易所前缀
+                if symbol.startswith('6'):
+                    prefix = 'sh'
+                elif symbol.startswith('0') or symbol.startswith('3'):
+                    prefix = 'sz'
+                elif symbol.startswith('4') or symbol.startswith('8'):
+                    prefix = 'bj'
+                else:
+                    prefix = 'sz'
 
-                # 第二优先：新浪财经实时行情
-                url = f"https://hq.sinajs.cn/list=sz{symbol}"
                 headers = {
                     'Referer': 'https://finance.sina.com.cn',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 }
 
+                # 第一优先：新浪财经实时行情（~200ms，快）
+                url = f"https://hq.sinajs.cn/list={prefix}{symbol}"
                 response = _session.get(url, headers=headers, timeout=5)
-
                 if response.status_code == 200:
                     content = response.text
                     match = re.search(r'"([^"]*)"', content)
                     if match:
                         data = match.group(1).split(',')
-                        if len(data) >= 33:
-                            return {
-                                'symbol': symbol,
-                                'name': data[0],
-                                'price': float(data[3]),
-                                'open': float(data[1]),
-                                'high': float(data[4]),
-                                'low': float(data[5]),
-                                'volume': int(float(data[8]) / 100),  # 转换为手
-                                'prev_close': float(data[2]),
-                                'change': (float(data[3]) / float(data[2]) - 1) * 100
-                            }
-
-                # 如果深圳失败，尝试上海
-                url = f"https://hq.sinajs.cn/list=sh{symbol}"
-                response = _session.get(url, headers=headers, timeout=5)
-
-                if response.status_code == 200:
-                    content = response.text
-                    match = re.search(r'"([^"]*)"', content)
-                    if match:
-                        data = match.group(1).split(',')
-                        if len(data) >= 33:
+                        if len(data) >= 33 and data[3]:
                             return {
                                 'symbol': symbol,
                                 'name': data[0],
@@ -666,6 +638,24 @@ class StockDataFetcher:
                                 'prev_close': float(data[2]),
                                 'change': (float(data[3]) / float(data[2]) - 1) * 100
                             }
+
+                # 第二优先：AKShare 全市场快照（带缓存，首次慢后续快）
+                spot_df = self._get_spot_snapshot()
+                if spot_df is not None:
+                    stock_row = spot_df[spot_df['代码'].str.endswith(symbol)]
+                    if not stock_row.empty:
+                        row = stock_row.iloc[0]
+                        return {
+                            'symbol': symbol,
+                            'name': row['名称'],
+                            'price': float(row['最新价']),
+                            'open': float(row['今开']),
+                            'high': float(row['最高']),
+                            'low': float(row['最低']),
+                            'volume': int(float(row['成交量']) / 100),
+                            'prev_close': float(row['昨收']),
+                            'change': (float(row['最新价']) / float(row['昨收']) - 1) * 100
+                        }
 
                 # 备选：使用yfinance
                 ticker = yf.Ticker(f"{symbol}.SS")
@@ -737,6 +727,59 @@ class StockDataFetcher:
         except Exception as e:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
         return None
+
+    def get_batch_realtime_quotes(self, symbols, market="CN"):
+        """批量获取实时行情，并行新浪HTTP调用（每只~200ms）
+        返回 {symbol: {price, change_pct}}，查不到的 symbol 不在结果中
+        """
+        result = {}
+        if not symbols or market != "CN":
+            return result
+
+        import concurrent.futures as _cf
+
+        def _fetch_one(symbol):
+            try:
+                # 确定交易所前缀
+                if symbol.startswith('6'):
+                    prefix = 'sh'
+                elif symbol.startswith('0') or symbol.startswith('3'):
+                    prefix = 'sz'
+                elif symbol.startswith('4') or symbol.startswith('8'):
+                    prefix = 'bj'
+                else:
+                    prefix = 'sz'
+                url = f"https://hq.sinajs.cn/list={prefix}{symbol}"
+                headers = {
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = _session.get(url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    match = re.search(r'"([^"]*)"', response.text)
+                    if match:
+                        data = match.group(1).split(',')
+                        if len(data) >= 33 and data[3]:
+                            price = float(data[3])
+                            prev_close = float(data[2])
+                            return symbol, {
+                                'price': price,
+                                'change_pct': round((price / prev_close - 1) * 100, 2),
+                            }
+            except Exception:
+                pass
+            return symbol, None
+
+        with _cf.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(_fetch_one, s): s for s in symbols}
+            for future in _cf.as_completed(futures, timeout=8):
+                try:
+                    symbol, data = future.result(timeout=5)
+                    if data is not None:
+                        result[symbol] = data
+                except Exception:
+                    pass
+        return result
 
     def get_index_realtime(self, symbol):
         """获取A股指数实时行情

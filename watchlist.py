@@ -114,9 +114,18 @@ def get_watchlist_summary(watchlist_items):
             latest = df.iloc[-1]
             prev = df.iloc[-2] if len(df) >= 2 else latest
 
-            result['price'] = float(latest['close'])
-            change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] != 0 else 0
-            result['change_pct'] = round(change_pct, 2)
+            # 优先使用实时行情，拿不到再用 K 线收盘价
+            try:
+                quote = fetcher.get_realtime_quote(symbol, market)
+                if quote and quote.get('price') is not None:
+                    result['price'] = float(quote['price'])
+                    result['change_pct'] = round(quote.get('change', 0), 2)
+                else:
+                    raise ValueError("实时行情为空")
+            except Exception:
+                result['price'] = float(latest['close'])
+                change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] != 0 else 0
+                result['change_pct'] = round(change_pct, 2)
             result['signal_summary'] = signals.get('recommendation', signals.get('summary', '--'))
 
             # 提取指标快照

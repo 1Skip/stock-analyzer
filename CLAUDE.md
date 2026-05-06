@@ -206,6 +206,13 @@ pip-audit
 - **所有网络调用必须加超时保护**：调用 AKShare / yfinance / 新浪等外部数据源时，用 `concurrent.futures.ThreadPoolExecutor` + `future.result(timeout=N)` 包装，超时后降级而非卡死。已在 `get_cached_stock_info`(5s) / `get_cached_stock_data`(20s) / `get_cached_realtime_quote`(3s) / `_get_spot_snapshot`(8s) 统一实现
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
+- **所有对用户的汇报必须基于验证后的结论**：对用户说"X 是原因"之前，必须用代码/数据/测试实际验证过。不确定时就说不确定，然后去验证。禁止未经证实的猜测当作结论汇报
+- **用户报bug时必须一次性修完，禁止反复修复**：
+  1. 先完整追踪调用链（从 UI → 业务逻辑 → 数据源，每层都查），找到所有相关代码路径
+  2. 必要时调用相关 skill（finance-ai-expert / python-data-expert / frontend-expert / architect-expert 等）协助分析
+  3. 把所有问题一次性列出、一次性修复，而不是修一个→等用户验证→不行再修下一个
+  4. 修完后自己跑一遍完整数据流验证（用真实数据调核心函数），确认所有路径都通，再汇报"已修复"
+  5. 如果用户再次验证后仍然不对，说明分析不彻底，需要更深入排查而非表面修复
 - **绝对不要**将 token、密码、API key 提交到 git（参见[安全注意事项](#12-安全注意事项)）
 
 ## 10. 项目路线图
