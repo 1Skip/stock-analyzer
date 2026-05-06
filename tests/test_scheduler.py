@@ -175,3 +175,72 @@ class TestWatchlistPriority:
         run_scheduled_analysis()
 
         mock_push.assert_called_once()
+
+
+# ============================================================
+# TestSectorPushIntegration
+# ============================================================
+
+class TestSectorPushIntegration:
+
+    def test_sector_disabled_skips_analysis(self):
+        """SECTOR_PUSH_ENABLED=false 时不调用板块分析"""
+        with patch("stock_recommendation.StockRecommender") as mock_rec, \
+             patch("data_fetcher.StockDataFetcher"), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", False), \
+             patch("scheduler.NOTIFY_ENABLED", False):
+            mock_rec.return_value.get_recommended_stocks_cn.return_value = []
+            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
+            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+
+            from scheduler import run_scheduled_analysis
+            run_scheduled_analysis()
+            mock_rec.return_value.get_all_sector_recommendations.assert_not_called()
+
+    def test_sector_enabled_calls_analysis(self):
+        """SECTOR_PUSH_ENABLED=true 时调用板块分析"""
+        with patch("stock_recommendation.StockRecommender") as mock_rec, \
+             patch("data_fetcher.StockDataFetcher"), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
+             patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.send_push", return_value={"feishu": True}):
+            sample = {
+                "symbol": "000001", "name": "平安银行",
+                "latest_price": 12.50, "change_pct": 2.35,
+                "signals": {"macd": "偏多"},
+            }
+            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample]
+            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
+            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+            mock_rec.return_value.get_all_sector_recommendations.return_value = {
+                "苹果概念": {"短线": [], "长线": []},
+                "特斯拉概念": {"短线": [], "长线": []},
+                "电力": {"短线": [], "长线": []},
+                "算力租赁": {"短线": [], "长线": []},
+            }
+
+            from scheduler import run_scheduled_analysis
+            run_scheduled_analysis()
+            mock_rec.return_value.get_all_sector_recommendations.assert_called_once()
+
+    def test_sector_failure_does_not_block_main_push(self):
+        """板块分析失败时主推送不受影响"""
+        with patch("stock_recommendation.StockRecommender") as mock_rec, \
+             patch("data_fetcher.StockDataFetcher"), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
+             patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.send_push", return_value={"feishu": True}) as mock_push:
+            sample = {
+                "symbol": "000001", "name": "平安银行",
+                "latest_price": 12.50, "change_pct": 2.35,
+                "signals": {"macd": "偏多"},
+            }
+            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample]
+            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
+            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+            mock_rec.return_value.get_all_sector_recommendations.side_effect = Exception("板块分析崩溃")
+
+            from scheduler import run_scheduled_analysis
+            run_scheduled_analysis()
+
+            mock_push.assert_called_once()  # 主推送仍然执行

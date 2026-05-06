@@ -651,12 +651,14 @@ class StockRecommender:
         else:
             rating = "偏空信号（强）"
 
+        change_pct = (latest['close'] - data['close'].iloc[-2]) / data['close'].iloc[-2] * 100 if len(data) > 1 else 0.0
         return {
             'symbol': symbol,
             'score': round(score, 1),
             'rating': rating,
             'signals': signals,
             'latest_price': latest['close'],
+            'change_pct': round(change_pct, 2),
             'strategy': '短线',
             'indicators': {
                 'macd': round(latest['macd'], 3),
@@ -669,6 +671,196 @@ class StockRecommender:
                 'boll_upper': round(latest['boll_upper'], 2),
             }
         }
+
+
+    def get_sector_long_term_recommendations(self, sector_name, num_stocks=5):
+        """
+        获取指定板块的长线龙头股推荐，并发分析加速
+        """
+        if sector_name not in SECTOR_STOCKS:
+            return []
+
+        results = []
+        sector_stocks = SECTOR_STOCKS[sector_name]
+
+        def analyze_one(stock):
+            try:
+                analysis = self._analyze_long_term(stock['code'], market='CN')
+                if analysis:
+                    analysis['name'] = stock['name']
+                    analysis['sector'] = sector_name
+                    return analysis
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:num_stocks]
+
+    def _analyze_long_term(self, symbol, market='CN'):
+        """
+        长线分析 - 使用1年数据，侧重MA60趋势和MACD趋势，降低RSI/KDJ权重
+        """
+        from data_fetcher import StockDataFetcher
+        from technical_indicators import TechnicalIndicators
+
+        fetcher = StockDataFetcher()
+        try:
+            data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
+        except Exception as e:
+            print(f"获取股票 {symbol} 长线数据失败: {str(e)}")
+            return None
+
+        if data is None or len(data) < 50:
+            return None
+
+        try:
+            df = TechnicalIndicators.calculate_all(data)
+            signals = TechnicalIndicators.get_signals(df)
+        except Exception as e:
+            print(f"股票 {symbol} 长线指标计算失败: {str(e)}")
+            return None
+
+        if 'error' in signals:
+            return None
+
+        latest = df.iloc[-1]
+
+        # 长线评分系统 - 侧重MA60趋势和MACD趋势，降低RSI/KDJ权重
+        score = 50
+
+        # MACD评分（长线高权重：趋势方向比金叉/死叉更重要）
+        if "金叉" in signals['macd']:
+            score += 20
+        elif "多头" in signals['macd']:
+            score += 12
+        elif "死叉" in signals['macd']:
+            score -= 15
+
+        # RSI评分（长线低权重：长线不看重短期超买超卖）
+        rsi = latest['rsi']
+        if rsi < 30:
+            score += 10
+        elif rsi < 40:
+            score += 8
+        elif rsi < 50:
+            score += 5
+        elif rsi > 70:
+            score -= 8
+        elif rsi > 60:
+            score -= 5
+
+        # KDJ评分（长线低权重）
+        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
+            score += 15
+        elif "金叉" in signals['kdj']:
+            score += 10
+        elif "超卖" in signals['kdj']:
+            score += 8
+        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
+            score -= 15
+        elif "死叉" in signals['kdj']:
+            score -= 10
+        elif "超买" in signals['kdj']:
+            score -= 8
+
+        # 布林带评分（长线中等权重）
+        if "反弹" in signals['boll']:
+            score += 12
+        elif "偏多" in signals['boll']:
+            score += 8
+        elif "回调" in signals['boll']:
+            score -= 10
+        elif "偏空" in signals['boll']:
+            score -= 5
+
+        # MA60趋势评分（长线核心指标，高权重）
+        if 'ma20' in df.columns and 'ma60' in df.columns:
+            if latest['ma20'] > latest['ma60']:
+                score += 15
+                # MA20上穿MA60金叉额外加分
+                if len(df) > 1:
+                    prev = df.iloc[-2]
+                    if prev['ma20'] <= prev['ma60']:
+                        score += 15
+            else:
+                score -= 15
+
+        # MA60自身趋势（中长期方向）
+        if 'ma60' in df.columns and len(df) > 20:
+            ma60_now = latest['ma60']
+            ma60_20d_ago = df['ma60'].iloc[-21] if len(df) > 20 else df['ma60'].iloc[0]
+            if ma60_now > ma60_20d_ago:
+                score += 8
+            else:
+                score -= 8
+
+        score = max(0, min(100, score))
+
+        if score >= 80:
+            rating = "偏多信号（强）"
+        elif score >= 65:
+            rating = "偏多信号"
+        elif score >= 50:
+            rating = "观望"
+        elif score >= 35:
+            rating = "偏空信号"
+        else:
+            rating = "偏空信号（强）"
+
+        change_pct = (latest['close'] - data['close'].iloc[-2]) / data['close'].iloc[-2] * 100 if len(data) > 1 else 0.0
+        return {
+            'symbol': symbol,
+            'score': round(score, 1),
+            'rating': rating,
+            'signals': signals,
+            'latest_price': latest['close'],
+            'change_pct': round(change_pct, 2),
+            'strategy': '长线',
+            'indicators': {
+                'macd': round(latest['macd'], 3),
+                'macd_signal': round(latest['macd_signal'], 3),
+                'rsi': round(latest['rsi'], 2),
+                'kdj_k': round(latest['kdj_k'], 2),
+                'kdj_d': round(latest['kdj_d'], 2),
+                'kdj_j': round(latest['kdj_j'], 2),
+                'boll_lower': round(latest['boll_lower'], 2),
+                'boll_upper': round(latest['boll_upper'], 2),
+            }
+        }
+
+    def get_all_sector_recommendations(self):
+        """
+        获取全部4个板块的短线+长线推荐，并发分析加速
+        返回 {板块名: {'短线': [...], '长线': [...]}}
+        """
+        from config import SECTOR_PUSH_TOP_N
+
+        result = {}
+        top_n = SECTOR_PUSH_TOP_N
+
+        def analyze_sector(sector_name):
+            short = self.get_sector_short_term_recommendations(sector_name, num_stocks=top_n)
+            long = self.get_sector_long_term_recommendations(sector_name, num_stocks=top_n)
+            return sector_name, {'短线': short, '长线': long}
+
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(analyze_sector, s): s for s in SECTOR_STOCKS}
+            for future in as_completed(futures):
+                try:
+                    sector_name, data = future.result()
+                    result[sector_name] = data
+                except Exception as e:
+                    print(f"板块分析失败: {e}")
+
+        return result
 
 
 if __name__ == "__main__":

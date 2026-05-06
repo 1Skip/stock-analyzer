@@ -12,8 +12,9 @@ import schedule
 
 from config import (
     SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY, NOTIFY_ENABLED, NOTIFY_CHANNELS,
+    SECTOR_PUSH_ENABLED,
 )
-from notification import send_push, build_analysis_report
+from notification import send_push, build_analysis_report, build_sector_report
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,21 @@ def run_scheduled_analysis():
                         break
                 except Exception as e:
                     logger.warning(f"{s.get('symbol', '?')} 分析失败: {e}")
+
+        if not reports and not SECTOR_PUSH_ENABLED:
+            logger.warning("无有效分析结果，跳过推送")
+            return
+
+        # 板块龙头推荐（短线+长线），默认关闭，失败不影响主推送
+        if SECTOR_PUSH_ENABLED:
+            try:
+                sector_data = recommender.get_all_sector_recommendations()
+                if sector_data:
+                    sector_title, sector_body = build_sector_report(sector_data)
+                    reports.append((sector_title, sector_body))
+                    logger.info("板块推荐已生成")
+            except Exception as e:
+                logger.warning(f"板块推荐分析失败，跳过: {e}")
 
         if not reports:
             logger.warning("无有效分析结果，跳过推送")

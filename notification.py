@@ -88,6 +88,68 @@ def _send_feishu(title: str, body: str) -> bool:
     return ok
 
 
+def build_sector_report(sector_data: dict) -> tuple[str, str]:
+    """构造板块推荐推送标题和正文
+
+    Args:
+        sector_data: get_all_sector_recommendations() 的返回值
+            {板块名: {'短线': [...], '长线': [...]}}
+
+    Returns:
+        (title, body) 元组
+    """
+    SECTOR_ICONS = {
+        "苹果概念": "🍎",
+        "特斯拉概念": "🚗",
+        "电力": "⚡",
+        "算力租赁": "💻",
+    }
+
+    title = "📊 板块龙头推荐 — 短线/长线"
+
+    body_lines = []
+    for sector_name in ["苹果概念", "特斯拉概念", "电力", "算力租赁"]:
+        data = sector_data.get(sector_name)
+        if not data:
+            continue
+
+        icon = SECTOR_ICONS.get(sector_name, "📌")
+        body_lines.append(f"## {icon} {sector_name}")
+
+        # 短线
+        short_stocks = data.get('短线', [])
+        if short_stocks:
+            short_parts = []
+            for s in short_stocks:
+                direction = "📈" if s['change_pct'] > 0 else "📉" if s['change_pct'] < 0 else "➡"
+                short_parts.append(
+                    f"{s['name']}({s['symbol']}) {s['latest_price']:.2f} "
+                    f"{direction}{s['change_pct']:+.2f}%"
+                )
+            body_lines.append(f"**短线**: {' | '.join(short_parts)}")
+        else:
+            body_lines.append(f"**短线**: 暂无推荐")
+
+        # 长线
+        long_stocks = data.get('长线', [])
+        if long_stocks:
+            long_parts = []
+            for s in long_stocks:
+                direction = "📈" if s['change_pct'] > 0 else "📉" if s['change_pct'] < 0 else "➡"
+                long_parts.append(
+                    f"{s['name']}({s['symbol']}) {s['latest_price']:.2f} "
+                    f"{direction}{s['change_pct']:+.2f}%"
+                )
+            body_lines.append(f"**长线**: {' | '.join(long_parts)}")
+        else:
+            body_lines.append(f"**长线**: 暂无推荐")
+
+        body_lines.append("")
+
+    body = "\n".join(body_lines).strip()
+    return title, body
+
+
 def build_analysis_report(symbol: str, name: str, price: float,
                            change_pct: float, signals: dict,
                            ai_summary: str = "") -> tuple[str, str]:

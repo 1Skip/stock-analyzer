@@ -197,3 +197,93 @@ class TestFeishuSender:
              patch("requests.post", return_value=mock_resp):
             from notification import _send_feishu
             assert _send_feishu("t", "b") is False
+
+
+# ============================================================
+# TestBuildSectorReport
+# ============================================================
+
+class TestBuildSectorReport:
+
+    def _make_sector_data(self):
+        return {
+            "苹果概念": {
+                "短线": [
+                    {'symbol': '002475', 'name': '立讯精密', 'latest_price': 35.20, 'change_pct': 2.1, 'strategy': '短线'},
+                    {'symbol': '002241', 'name': '歌尔股份', 'latest_price': 22.15, 'change_pct': 1.8, 'strategy': '短线'},
+                ],
+                "长线": [
+                    {'symbol': '603501', 'name': '韦尔股份', 'latest_price': 95.30, 'change_pct': 0.5, 'strategy': '长线'},
+                ],
+            },
+            "电力": {
+                "短线": [
+                    {'symbol': '600900', 'name': '长江电力', 'latest_price': 22.50, 'change_pct': 0.0, 'strategy': '短线'},
+                ],
+                "长线": [
+                    {'symbol': '601985', 'name': '中国核电', 'latest_price': 8.20, 'change_pct': 1.2, 'strategy': '长线'},
+                    {'symbol': '600011', 'name': '华能国际', 'latest_price': 7.80, 'change_pct': -0.8, 'strategy': '长线'},
+                ],
+            },
+            "特斯拉概念": {"短线": [], "长线": []},
+            "算力租赁": {"短线": [], "长线": []},
+        }
+
+    def test_returns_title_and_body(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "板块龙头推荐" in title
+        assert len(body) > 0
+
+    def test_includes_sector_names(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "苹果概念" in body
+        assert "电力" in body
+
+    def test_includes_strategy_labels(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "短线" in body
+        assert "长线" in body
+
+    def test_includes_stock_info(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "立讯精密" in body
+        assert "002475" in body
+        assert "35.20" in body
+
+    def test_positive_change_shows_up_arrow(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "📈" in body
+
+    def test_negative_change_shows_down_arrow(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "📉" in body
+
+    def test_zero_change_shows_neutral(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "➡" in body
+
+    def test_empty_sector_shows_no_recommendation(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "暂无推荐" in body
+
+    def test_empty_data_still_returns_valid(self):
+        from notification import build_sector_report
+        title, body = build_sector_report({})
+        assert "板块龙头推荐" in title
+        assert isinstance(body, str)

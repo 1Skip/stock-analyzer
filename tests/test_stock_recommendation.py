@@ -792,9 +792,51 @@ def _mock_short_analysis(code):
         'rating': '偏多信号',
         'signals': {},
         'latest_price': 10.0 + code_int * 0.1,
+        'change_pct': round(1.5 + code_int * 0.1, 2),
         'strategy': '短线',
         'indicators': {},
     }
+
+
+def _mock_long_analysis(code):
+    code_int = int(code)
+    return {
+        'symbol': code,
+        'score': 50 + (code_int % 40),
+        'rating': '偏多信号',
+        'signals': {},
+        'latest_price': 10.0 + code_int * 0.1,
+        'change_pct': round(0.8 + code_int * 0.05, 2),
+        'strategy': '长线',
+        'indicators': {},
+    }
+
+
+def _setup_long_term_mocks(monkeypatch, data, signal_type):
+    """设置 _analyze_long_term 所需的 mock"""
+    from data_fetcher import StockDataFetcher
+    from technical_indicators import TechnicalIndicators
+
+    monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                        lambda self, symbol, period='1y', interval='1d', market='CN': data)
+    monkeypatch.setattr(TechnicalIndicators, 'calculate_all', lambda d: d)
+    if signal_type == 'uptrend':
+        signals = {
+            'macd': 'MACD金叉，偏多',
+            'rsi': 'RSI 55，中性',
+            'kdj': 'KDJ向上，偏多',
+            'boll': '中轨附近，偏多',
+            'recommendation': '偏多信号',
+        }
+    else:
+        signals = {
+            'macd': 'MACD死叉，偏空',
+            'rsi': 'RSI 60，偏空',
+            'kdj': 'KDJ向下，偏空',
+            'boll': '上轨回调',
+            'recommendation': '偏空信号',
+        }
+    monkeypatch.setattr(TechnicalIndicators, 'get_signals', lambda d: signals)
 
 
 # ============================================================
@@ -852,3 +894,127 @@ class TestGetTopGainersLosersUS:
         monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_us_ticker)
         result = recommender.get_top_gainers_us(limit=3)
         assert len(result) <= 3
+
+
+# ============================================================
+# TestAnalyzeLongTerm
+# ============================================================
+
+class TestAnalyzeLongTerm:
+
+    def test_returns_none_for_short_data(self, recommender, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        short_df = pd.DataFrame({
+            'close': [10, 11], 'rsi': [50, 50],
+        })
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                            lambda self, symbol, period='1y', interval='1d', market='CN': short_df)
+        result = recommender._analyze_long_term('000001')
+        assert result is None
+
+    def test_returns_none_for_none_data(self, recommender, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
+                            lambda self, symbol, period='1y', interval='1d', market='CN': None)
+        result = recommender._analyze_long_term('000001')
+        assert result is None
+
+    def test_result_has_strategy_field(self, recommender, uptrend_data_60d, monkeypatch):
+        _setup_long_term_mocks(monkeypatch, uptrend_data_60d, 'uptrend')
+        result = recommender._analyze_long_term('000001')
+        assert result is not None
+        assert result['strategy'] == '长线'
+
+    def test_score_clamped_0_100(self, recommender, uptrend_data_60d, monkeypatch):
+        _setup_long_term_mocks(monkeypatch, uptrend_data_60d, 'uptrend')
+        result = recommender._analyze_long_term('000001')
+        assert 0 <= result['score'] <= 100
+
+    def test_uptrend_scores_higher_than_downtrend(self, recommender, uptrend_data_60d, downtrend_data_60d, monkeypatch):
+        """上升趋势长线评分应高于下降趋势"""
+        _setup_long_term_mocks(monkeypatch, uptrend_data_60d, 'uptrend')
+        up_result = recommender._analyze_long_term('000001')
+        up_score = up_result['score']
+
+        _setup_long_term_mocks(monkeypatch, downtrend_data_60d, 'downtrend')
+        down_result = recommender._analyze_long_term('000001')
+        down_score = down_result['score']
+
+        assert up_score > down_score, f"上升评分{up_score} 应 > 下降评分{down_score}"
+
+    def test_change_pct_field_present(self, recommender, uptrend_data_60d, monkeypatch):
+        _setup_long_term_mocks(monkeypatch, uptrend_data_60d, 'uptrend')
+        result = recommender._analyze_long_term('000001')
+        assert 'change_pct' in result
+        assert isinstance(result['change_pct'], (int, float))
+
+
+# ============================================================
+# TestGetSectorLongTerm
+# ============================================================
+
+class TestGetSectorLongTerm:
+
+    def test_invalid_sector_returns_empty(self, recommender):
+        result = recommender.get_sector_long_term_recommendations('不存在的板块')
+        assert result == []
+
+    def test_valid_sector_returns_list(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_sector_long_term_recommendations('苹果概念', num_stocks=3)
+        assert isinstance(result, list)
+
+    def test_includes_sector_name(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_sector_long_term_recommendations('电力', num_stocks=5)
+        if result:
+            assert result[0]['sector'] == '电力'
+
+    def test_respects_num_stocks(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_sector_long_term_recommendations('特斯拉概念', num_stocks=2)
+        assert len(result) <= 2
+
+
+# ============================================================
+# TestGetAllSectorRecommendations
+# ============================================================
+
+class TestGetAllSectorRecommendations:
+
+    def test_returns_dict_with_4_sectors(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_all_sector_recommendations()
+        assert isinstance(result, dict)
+        for sector in ['苹果概念', '特斯拉概念', '电力', '算力租赁']:
+            assert sector in result
+
+    def test_each_sector_has_short_and_long(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_all_sector_recommendations()
+        for sector, data in result.items():
+            assert '短线' in data
+            assert '长线' in data
+            assert isinstance(data['短线'], list)
+            assert isinstance(data['长线'], list)
+
+    def test_stocks_have_strategy_field(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
+                            lambda self, code, market='CN': _mock_long_analysis(code))
+        result = recommender.get_all_sector_recommendations()
+        for sector, data in result.items():
+            for s in data['短线']:
+                assert s['strategy'] == '短线'
+            for s in data['长线']:
+                assert s['strategy'] == '长线'
