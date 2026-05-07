@@ -1,0 +1,3 @@
+- [Project state 2026-04-29](project_state.md) — 技术指标精度修复完成，与同花顺对齐，UI改造待做
+- [Screenshot folder](screenshot_folder.md) — 问题截图存放路径：`Screenshot of the problem/`
+- [Bug fixes & context 2026-05-07](bug_fixes_and_context_2026-05-06.md) — 5/6-5/7修复：前缀匹配+自选股实时价+东方财富K线源恢复+指标卡片flexbox+MACD标识清理
