@@ -273,7 +273,7 @@ def plot_candlestick_chart(data, title=""):
         shared_xaxes=True,
         vertical_spacing=0.02,
         row_heights=[0.55, 0.15, 0.30],
-        subplot_titles=("K线 + 均线", "成交量", "MACD"),
+        subplot_titles=("K线 + 均线", "成交量", ""),
     )
 
     # --- Row 1: K线 + 均线 ---
@@ -311,22 +311,32 @@ def plot_candlestick_chart(data, title=""):
     if 'macd' in data.columns and 'macd_signal' in data.columns and 'macd_hist' in data.columns:
         fig.add_trace(go.Scatter(
             x=data.index, y=data['macd'],
-            mode='lines', name='DIF',
+            mode='lines', name='DIF (快线)',
             line=dict(color='#42a5f5', width=1),
         ), row=3, col=1)
         fig.add_trace(go.Scatter(
             x=data.index, y=data['macd_signal'],
-            mode='lines', name='DEA',
+            mode='lines', name='DEA (慢线)',
             line=dict(color='#ff7043', width=1),
         ), row=3, col=1)
         macd_hist_colors = [inc_color if v >= 0 else dec_color
                            for v in data['macd_hist'].fillna(0)]
         fig.add_trace(go.Bar(
             x=data.index, y=data['macd_hist'],
-            name='MACD',
+            name='MACD柱',
             marker_color=macd_hist_colors,
-            showlegend=False,
+            showlegend=True,
         ), row=3, col=1)
+
+        # MACD 零轴参考线 + 底部标注
+        fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5, row=3, col=1)
+        fig.add_annotation(
+            xref="paper", yref="paper", x=0.01, y=0.08,
+            text="<b>MACD</b>",
+            showarrow=False,
+            font=dict(size=12, color="gray"),
+            bgcolor="rgba(0,0,0,0)",
+        )
 
     # 布局
     fig.update_layout(
@@ -341,6 +351,11 @@ def plot_candlestick_chart(data, title=""):
     )
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
+
+    # 子图标题更显眼
+    for annotation in fig.layout.annotations:
+        annotation.font.size = 13
+        annotation.font.color = '#888'
 
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
 
@@ -791,6 +806,118 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
         _show_setup_form(symbol, period)
 
 
+def _display_indicator_values(data):
+    """显示技术指标实时数值卡片 — 每条左色条区分，底部留间距"""
+    if data is None or data.empty:
+        return
+
+    latest = data.iloc[-1]
+    rsi_ob = RSI_OVERBOUGHT
+    rsi_os = RSI_OVERSOLD
+    kdj_ob = KDJ_OVERBOUGHT
+    kdj_os = KDJ_OVERSOLD
+
+    card = (
+        "background:rgba(128,128,128,0.04);border-radius:8px;"
+        "padding:8px 14px;margin-bottom:6px;"
+        "border:1px solid rgba(128,128,128,0.1);"
+        "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 12px;"
+    )
+
+    st.markdown('<p class="chart-section-title">技术指标数值</p>', unsafe_allow_html=True)
+
+    # RSI — 红色左边条
+    rsi6 = _format_val(latest, 'rsi_6', 1)
+    rsi12 = _format_val(latest, 'rsi_12', 1)
+    rsi24 = _format_val(latest, 'rsi_24', 1)
+    st.markdown(
+        f'<div style="{card}border-left:3px solid #e53935;">'
+        f'<span><b style="margin-right:10px;">RSI</b>'
+        f'<span style="color:#e53935">6日 {rsi6}</span>  '
+        f'<span style="color:#fb8c00">12日 {rsi12}</span>  '
+        f'<span style="color:#7b1fa2">24日 {rsi24}</span></span>'
+        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">超买&gt;{rsi_ob} 超卖&lt;{rsi_os}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # KDJ — 蓝色左边条
+    k = _format_val(latest, 'kdj_k', 1)
+    d = _format_val(latest, 'kdj_d', 1)
+    j = _format_val(latest, 'kdj_j', 1)
+    st.markdown(
+        f'<div style="{card}border-left:3px solid #1e88e5;">'
+        f'<span><b style="margin-right:10px;">KDJ</b>'
+        f'<span style="color:#1e88e5">K {k}</span>  '
+        f'<span style="color:#fb8c00">D {d}</span>  '
+        f'<span style="color:#7b1fa2">J {j}</span></span>'
+        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">超买&gt;{kdj_ob} 超卖&lt;{kdj_os}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # MACD — 紫色左边条
+    dif = _format_val(latest, 'macd', 3)
+    dea = _format_val(latest, 'macd_signal', 3)
+    hist = _format_val(latest, 'macd_hist', 3)
+    hist_color = '#e53935' if (latest.get('macd_hist') or 0) >= 0 else '#2e7d32'
+    st.markdown(
+        f'<div style="{card}border-left:3px solid #7b1fa2;">'
+        f'<span><b style="margin-right:10px;">MACD</b>'
+        f'<span style="color:#42a5f5">DIF {dif}</span>  '
+        f'<span style="color:#ff7043">DEA {dea}</span>  '
+        f'<span style="color:{hist_color}">柱 {hist}</span></span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # BOLL — 绿色左边条
+    upper = _format_val(latest, 'boll_upper', 2)
+    mid = _format_val(latest, 'boll_mid', 2)
+    lower = _format_val(latest, 'boll_lower', 2)
+    price = latest.get('close')
+    if price is not None and latest.get('boll_upper') is not None:
+        pct_b = (price - latest['boll_lower']) / (latest['boll_upper'] - latest['boll_lower']) * 100
+        pct_str = f'%B {pct_b:.0f}%'
+    else:
+        pct_str = ''
+    st.markdown(
+        f'<div style="{card}border-left:3px solid #2e7d32;">'
+        f'<span><b style="margin-right:10px;">BOLL</b>'
+        f'<span style="color:#e53935">上轨 {upper}</span>  '
+        f'<span style="color:#1e88e5">中轨 {mid}</span>  '
+        f'<span style="color:#2e7d32">下轨 {lower}</span></span>'
+        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">{pct_str}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # MA 均线 — 灰色左边条
+    ma5 = _format_val(latest, 'ma5', 2)
+    ma10 = _format_val(latest, 'ma10', 2)
+    ma20 = _format_val(latest, 'ma20', 2)
+    ma60 = _format_val(latest, 'ma60', 2)
+    if ma5 != '--':
+        st.markdown(
+            f'<div style="{card}border-left:3px solid #888;">'
+            f'<span><b style="margin-right:10px;">均线</b>'
+            f'<span>MA5 {ma5}</span>  '
+            f'<span>MA10 {ma10}</span>  '
+            f'<span>MA20 {ma20}</span>  '
+            f'<span>MA60 {ma60}</span></span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def _format_val(row, col, precision):
+    """安全格式化指标值"""
+    val = row.get(col)
+    if val is None or (isinstance(val, float) and np.isnan(val)):
+        return '--'
+    return f'{float(val):.{precision}f}'
+
+
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
@@ -883,6 +1010,9 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
                 st.info("📌 今日非交易日，暂无分时数据")
             else:
                 st.info("📌 分时数据暂不可用，请稍后刷新")
+
+    # ③ 技术指标实时数值卡片
+    _display_indicator_values(data)
 
     st.divider()
 

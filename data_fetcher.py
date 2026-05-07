@@ -38,6 +38,7 @@ class StockDataFetcher:
 
     # 数据源健康状态缓存
     _health_status = {
+        'akshare_em': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'akshare': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'sina': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'yfinance': {'healthy': True, 'last_check': None, 'fail_count': 0}
@@ -253,7 +254,8 @@ class StockDataFetcher:
             if market == "CN":
                 # A股数据获取：始终构建完整回退链，按用户偏好排序
                 all_sources = [
-                    ('akshare', self._get_cn_stock_data_akshare, 'AKShare'),
+                    ('akshare_em', self._get_cn_stock_data_akshare_em, '东方财富'),
+                    ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('sina', self._get_cn_stock_data_sina_fallback, '新浪财经'),
                 ]
                 # yfinance 对 A 股数据不稳定，仅作最后兜底（不暴露为可选偏好）
@@ -280,7 +282,8 @@ class StockDataFetcher:
                         result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
                             data_source = {
-                                'akshare': 'AKShare',
+                                'akshare_em': '东方财富',
+                                'akshare': '腾讯财经',
                                 'sina': '新浪财经',
                                 'yfinance': 'Yahoo Finance'
                             }.get(source_name, source_name)
@@ -380,6 +383,55 @@ class StockDataFetcher:
             print(f"新浪美股历史数据获取失败 {symbol}: {str(e)}")
         return None
 
+    def _get_cn_stock_data_akshare_em(self, symbol, period, **kwargs):
+        """使用 AKShare 获取A股历史数据（东方财富数据源，与同花顺一致）"""
+        if not AKSHARE_AVAILABLE:
+            return None
+
+        try:
+            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            days = period_days.get(period, 365)
+
+            end_date = datetime.now().strftime('%Y%m%d')
+            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
+
+            df = ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=""  # 不复权，与同花顺默认一致
+            )
+
+            if df is not None and not df.empty and len(df) >= 10:
+                # stock_zh_a_hist 列名为中文，需要重命名
+                df = df.rename(columns={
+                    '日期': 'date',
+                    '开盘': 'open',
+                    '收盘': 'close',
+                    '最高': 'high',
+                    '最低': 'low',
+                    '成交量': 'volume',
+                })
+                df['date'] = pd.to_datetime(df['date'])
+                df.set_index('date', inplace=True)
+
+                for col in ['open', 'high', 'low', 'close', 'volume']:
+                    if col in df.columns:
+                        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+                df = df.dropna(subset=['open', 'high', 'low', 'close'])
+
+                if len(df) >= 10:
+                    df.attrs['adjust_method'] = '不复权'
+                    df.attrs['data_provider'] = '东方财富'
+                    return df
+
+        except Exception as e:
+            print(f"AKShare(东方财富) 获取失败 {symbol}: {str(e)}")
+
+        return None
+
     def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
         """使用 AKShare 获取A股历史数据（腾讯财经数据源，直连稳定）"""
         if not AKSHARE_AVAILABLE:
@@ -404,7 +456,7 @@ class StockDataFetcher:
                 symbol=ak_symbol,
                 start_date=start_date,
                 end_date=end_date,
-                adjust="qfq"
+                adjust=""  # 不复权，与同花顺默认一致
             )
 
             if df is not None and not df.empty and len(df) >= 10:
@@ -419,7 +471,7 @@ class StockDataFetcher:
                 df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
                 if len(df) >= 10:
-                    df.attrs['adjust_method'] = '前复权(qfq)'
+                    df.attrs['adjust_method'] = '不复权'
                     return df
 
         except Exception as e:

@@ -298,7 +298,7 @@ class TestGetStockDataCN:
         result = fetcher.get_stock_data('000001', period='1y', market='CN')
         assert result is not None
         assert len(result) >= 30
-        assert 'AKShare' in result.attrs.get('data_source', '')
+        assert '腾讯财经' in result.attrs.get('data_source', '')
 
     def test_falls_back_to_sina_when_akshare_fails(self, monkeypatch):
         from data_fetcher import StockDataFetcher
@@ -390,7 +390,7 @@ class TestGetStockDataCN:
         fetcher.set_preferred_source('akshare')
         result = fetcher.get_stock_data('000001', period='1y', market='CN')
         assert 'data_source' in result.attrs
-        assert 'AKShare' in result.attrs['data_source']
+        assert '腾讯财经' in result.attrs['data_source']
 
     def test_columns_normalized_to_lowercase(self, monkeypatch):
         from data_fetcher import StockDataFetcher
@@ -822,7 +822,7 @@ class TestSourcePriority:
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
         result = fetcher.get_stock_data('000001', period='1y', market='CN')
-        assert 'AKShare' in result.attrs.get('data_source', '')
+        assert '腾讯财经' in result.attrs.get('data_source', '')
 
     def test_sina(self, monkeypatch):
         from data_fetcher import StockDataFetcher
