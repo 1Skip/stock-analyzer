@@ -5,17 +5,124 @@
 import json
 import logging
 import hashlib
+import sys
 
 logger = logging.getLogger(__name__)
 
 try:
     from fastapi import FastAPI, Request, HTTPException
     from fastapi.responses import JSONResponse
+    from fastapi.middleware.cors import CORSMiddleware
+    from starlette.middleware.base import BaseHTTPMiddleware
     FASTAPI_AVAILABLE = True
 except ImportError:
     FASTAPI_AVAILABLE = False
 
 app = FastAPI(title="Stock Analyzer API", version="1.0.0") if FASTAPI_AVAILABLE else None
+
+
+# ============================================================
+# CORS 中间件配置
+# ============================================================
+
+def _setup_cors():
+    """配置 CORS 中间件，限制跨域来源"""
+    from config import API_CORS_ORIGINS
+    if not FASTAPI_AVAILABLE or app is None:
+        return
+
+    if API_CORS_ORIGINS:
+        origins = [o.strip() for o in API_CORS_ORIGINS.split(",") if o.strip()]
+    else:
+        # 默认仅允许本地来源
+        origins = ["http://localhost:*", "http://127.0.0.1:*"]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+    logger.info("CORS 已配置: %s", origins)
+
+
+# ============================================================
+# API 鉴权中间件
+# ============================================================
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    """简单的 API Key 鉴权中间件
+
+    验证规则（按优先级）：
+    1. URL 参数 ?api_key=xxx
+    2. Authorization: Bearer xxx 请求头
+    3. X-API-Key: xxx 请求头
+
+    如果 API_AUTH_KEY 为空（默认），则跳过验证。
+    """
+
+    # 不需要鉴权的路径
+    ALLOW_ANONYMOUS = ["/", "/health", "/webhook"]
+
+    async def dispatch(self, request: Request, call_next):
+        from config import API_AUTH_KEY
+
+        # 跳过不鉴权的路径
+        path = request.url.path.rstrip("/") or "/"
+        if path in self.ALLOW_ANONYMOUS:
+            return await call_next(request)
+
+        # 无鉴权密钥则跳过
+        if not API_AUTH_KEY:
+            return await call_next(request)
+
+        # 提取客户端提供的 API Key
+        client_key = (
+            request.query_params.get("api_key") or
+            request.headers.get("X-API-Key") or
+            (request.headers.get("Authorization", "").replace("Bearer ", ""))
+        )
+
+        if client_key != API_AUTH_KEY:
+            raise HTTPException(status_code=401, detail="Invalid API key")
+
+        return await call_next(request)
+
+
+def _setup_auth():
+    """配置 API 鉴权中间件"""
+    if not FASTAPI_AVAILABLE or app is None:
+        return
+    app.add_middleware(AuthMiddleware)
+    from config import API_AUTH_KEY
+    logger.info("API 鉴权: %s", "已启用" if API_AUTH_KEY else "已关闭（未设置 API_AUTH_KEY）")
+
+
+# ============================================================
+# 日志配置（统一结构化日志）
+# ============================================================
+
+def setup_logging():
+    """配置统一的结构化日志"""
+    from config import API_SERVER_PORT
+    format_str = "[%(asctime)s] %(levelname)-5s [%(name)s] %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+    
+    # 控制台输出
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter(format_str, datefmt=datefmt))
+    
+    # 根 logger 配置（避免重复添加）
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(console_handler)
+    
+    # 减少第三方库日志噪音
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+
 
 
 # ============================================================
@@ -265,11 +372,15 @@ def start():
         print("FastAPI 未安装。请运行: pip install fastapi uvicorn")
         return
 
-    from config import API_SERVER_PORT
+    from config import API_SERVER_PORT, API_SERVER_HOST
     import uvicorn
 
-    logger.info(f"Stock Analyzer API 启动 — 端口 {API_SERVER_PORT}")
-    uvicorn.run(app, host="0.0.0.0", port=API_SERVER_PORT, log_level="info")
+    # 初始化安全中间件
+    _setup_cors()
+    _setup_auth()
+
+    logger.info("Stock Analyzer API 启动 — %s:%s", API_SERVER_HOST, API_SERVER_PORT)
+    uvicorn.run(app, host=API_SERVER_HOST, port=API_SERVER_PORT, log_level="info")
 
 
 if __name__ == "__main__":

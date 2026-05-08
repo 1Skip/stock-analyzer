@@ -72,82 +72,116 @@ def get_entry_hint(price, indicators, signal_summary):
 # 自选股批量摘要（数据获取 + 指标计算）
 # ============================================================
 
-def get_watchlist_summary(watchlist_items):
-    """获取自选股列表中每只股票的技术摘要"""
+def _fetch_single_stock(item):
+    """获取单只股票的技术摘要（供并行调用）"""
     import pandas as _pd
     from data_fetcher import StockDataFetcher
     from technical_indicators import TechnicalIndicators
 
-    results = []
-    fetcher = StockDataFetcher()
+    symbol = item['symbol']
+    name = item.get('name', symbol)
+    market = item.get('market', 'CN')
 
-    for item in watchlist_items:
-        symbol = item['symbol']
-        name = item.get('name', symbol)
-        market = item.get('market', 'CN')
+    result = {
+        'symbol': symbol,
+        'name': name,
+        'market': market,
+        'price': None,
+        'change_pct': None,
+        'signal_summary': '--',
+        'entry_hint': '--',
+        'indicators': {},
+        'error': None,
+    }
 
-        result = {
-            'symbol': symbol,
-            'name': name,
-            'market': market,
-            'price': None,
-            'change_pct': None,
-            'signal_summary': '--',
-            'entry_hint': '--',
-            'indicators': {},
-            'error': None,
-        }
+    try:
+        # 每个线程独立创建 fetcher 实例（线程安全）
+        fetcher = StockDataFetcher()
 
+        # 获取 3 个月历史数据用于指标计算
+        df = fetcher.get_stock_data(symbol, period='3mo', market=market)
+        if df is None or df.empty or len(df) < 10:
+            result['error'] = '数据不足'
+            return result
+
+        # 计算技术指标
+        df = TechnicalIndicators.calculate_all(df)
+        signals = TechnicalIndicators.get_signals(df)
+
+        # 最新数据
+        latest = df.iloc[-1]
+        prev = df.iloc[-2] if len(df) >= 2 else latest
+
+        # 优先使用实时行情，拿不到再用 K 线收盘价
         try:
-            # 获取 3 个月历史数据用于指标计算
-            df = fetcher.get_stock_data(symbol, period='3mo', market=market)
-            if df is None or df.empty or len(df) < 10:
-                result['error'] = '数据不足'
-                results.append(result)
-                continue
+            quote = fetcher.get_realtime_quote(symbol, market)
+            if quote and quote.get('price') is not None:
+                result['price'] = float(quote['price'])
+                result['change_pct'] = round(quote.get('change', 0), 2)
+            else:
+                raise ValueError("实时行情为空")
+        except Exception:
+            result['price'] = float(latest['close'])
+            change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] != 0 else 0
+            result['change_pct'] = round(change_pct, 2)
+        result['signal_summary'] = signals.get('recommendation', signals.get('summary', '--'))
 
-            # 计算技术指标
-            df = TechnicalIndicators.calculate_all(df)
-            signals = TechnicalIndicators.get_signals(df)
+        # 提取指标快照
+        indicators = {}
+        for key in ('macd', 'macd_signal', 'rsi', 'kdj_k', 'kdj_d', 'kdj_j',
+                    'boll_upper', 'boll_mid', 'boll_lower', 'ma5', 'ma10', 'ma20'):
+            val = latest.get(key)
+            indicators[key] = round(float(val), 4) if val is not None and not (isinstance(val, float) and _pd.isna(val)) else None
 
-            # 最新数据
-            latest = df.iloc[-1]
-            prev = df.iloc[-2] if len(df) >= 2 else latest
+        result['indicators'] = indicators
 
-            # 优先使用实时行情，拿不到再用 K 线收盘价
+        # 生成入场提示
+        if indicators['boll_upper'] is not None:
+            result['entry_hint'] = get_entry_hint(
+                result['price'], indicators, result['signal_summary'])
+
+    except Exception as e:
+        result['error'] = str(e)[:60]
+
+    return result
+
+
+def get_watchlist_summary(watchlist_items):
+    """获取自选股列表中每只股票的技术摘要（并行获取）"""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    if not watchlist_items:
+        return []
+
+    # 并行获取，最多 8 个并发线程
+    max_workers = min(len(watchlist_items), 8)
+    results_map = {}
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(_fetch_single_stock, item): idx
+            for idx, item in enumerate(watchlist_items)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
             try:
-                quote = fetcher.get_realtime_quote(symbol, market)
-                if quote and quote.get('price') is not None:
-                    result['price'] = float(quote['price'])
-                    result['change_pct'] = round(quote.get('change', 0), 2)
-                else:
-                    raise ValueError("实时行情为空")
-            except Exception:
-                result['price'] = float(latest['close'])
-                change_pct = (latest['close'] - prev['close']) / prev['close'] * 100 if prev['close'] != 0 else 0
-                result['change_pct'] = round(change_pct, 2)
-            result['signal_summary'] = signals.get('recommendation', signals.get('summary', '--'))
+                results_map[idx] = future.result()
+            except Exception as e:
+                item = watchlist_items[idx]
+                results_map[idx] = {
+                    'symbol': item['symbol'],
+                    'name': item.get('name', item['symbol']),
+                    'market': item.get('market', 'CN'),
+                    'price': None,
+                    'change_pct': None,
+                    'signal_summary': '--',
+                    'entry_hint': '--',
+                    'indicators': {},
+                    'error': str(e)[:60],
+                }
 
-            # 提取指标快照
-            indicators = {}
-            for key in ('macd', 'macd_signal', 'rsi', 'kdj_k', 'kdj_d', 'kdj_j',
-                        'boll_upper', 'boll_mid', 'boll_lower', 'ma5', 'ma10', 'ma20'):
-                val = latest.get(key)
-                indicators[key] = round(float(val), 4) if val is not None and not (isinstance(val, float) and _pd.isna(val)) else None
-
-            result['indicators'] = indicators
-
-            # 生成入场提示
-            if indicators['boll_upper'] is not None:
-                result['entry_hint'] = get_entry_hint(
-                    result['price'], indicators, result['signal_summary'])
-
-        except Exception as e:
-            result['error'] = str(e)[:60]
-
-        results.append(result)
-
-    return results
+    # 按原始顺序返回
+    return [results_map[i] for i in range(len(watchlist_items))]
 
 
 def _load_from_file():

@@ -52,9 +52,10 @@ class TestRunScheduledAnalysis:
         }
 
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
+             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.NOTIFY_ENABLED", True), \
              patch("scheduler.send_push", return_value={"wechat": True}) as mock_push:
+            mock_fetcher.return_value.get_realtime_quote.return_value = None
             mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
             mock_rec.return_value.get_recommended_stocks_hk.return_value = []
             mock_rec.return_value.get_recommended_stocks_us.return_value = []
@@ -200,10 +201,11 @@ class TestSectorPushIntegration:
     def test_sector_enabled_calls_analysis(self):
         """SECTOR_PUSH_ENABLED=true 时调用板块分析"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
+             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.NOTIFY_ENABLED", True), \
              patch("scheduler.send_push", return_value={"feishu": True}):
+            mock_fetcher.return_value.get_realtime_quote.return_value = None
             sample = {
                 "symbol": "000001", "name": "平安银行",
                 "latest_price": 12.50, "change_pct": 2.35,
@@ -226,10 +228,11 @@ class TestSectorPushIntegration:
     def test_sector_failure_does_not_block_main_push(self):
         """板块分析失败时主推送不受影响"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
+             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.NOTIFY_ENABLED", True), \
              patch("scheduler.send_push", return_value={"feishu": True}) as mock_push:
+            mock_fetcher.return_value.get_realtime_quote.return_value = None
             sample = {
                 "symbol": "000001", "name": "平安银行",
                 "latest_price": 12.50, "change_pct": 2.35,

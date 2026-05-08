@@ -91,8 +91,15 @@ def run_scheduled_analysis():
                 try:
                     symbol = s["symbol"]
                     name = s["name"]
-                    price = s["latest_price"]
-                    change_pct = s.get("change_pct", 0)
+
+                    # 优先获取实时行情（更准确的价格和涨跌幅）
+                    quote = fetcher.get_realtime_quote(symbol, market=market)
+                    if quote and quote.get('price') and quote['price'] > 0:
+                        price = quote['price']
+                        change_pct = quote.get('change', 0)
+                    else:
+                        price = s["latest_price"]
+                        change_pct = s.get("change_pct", 0)
 
                     signals = s.get("signals", {})
                     if not signals:

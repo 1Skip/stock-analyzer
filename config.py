@@ -190,6 +190,9 @@ FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "")  # 事件订阅验证
 
 # API 服务
 API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8900"))
+API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")  # 默认仅本地访问
+API_AUTH_KEY = os.getenv("API_AUTH_KEY", "")  # API 鉴权密钥（为空则跳过验证）
+API_CORS_ORIGINS = os.getenv("API_CORS_ORIGINS", "")  # 允许的跨域来源，逗号分隔
 
 # ============================================================
 # 回测配置
