@@ -187,13 +187,41 @@ class StockRecommender:
         return code.startswith(('600', '601', '603', '605',     # 沪市主板
                                 '000', '001', '002', '003'))    # 深市主板
 
+    # 行业缓存（东方财富F10 API，首次查询后复用）
+    _sector_cache = {}
+
+    @classmethod
+    def _get_stock_sector(cls, code):
+        """获取股票所属行业板块（东方财富F10公司概况API，带缓存）"""
+        if code in cls._sector_cache:
+            return cls._sector_cache[code]
+        try:
+            mkt = 'SH' if code.startswith('6') else 'SZ'
+            url = 'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax'
+            resp = requests.get(url, params={'code': f'{mkt}{code}'}, headers={
+                'Referer': 'https://emweb.securities.eastmoney.com/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                sector = (data.get('jbzl', {}).get('sshy') or '').strip()
+                if sector:
+                    cls._sector_cache[code] = sector
+                    return sector
+        except Exception:
+            pass
+        # 回退：根据代码前缀判断交易所
+        fallback = '沪市主板' if code.startswith('6') else '深市主板'
+        cls._sector_cache[code] = fallback
+        return fallback
+
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨幅榜/跌幅榜（新浪财经数据源，自动过滤创业板/科创板）"""
+        """获取全市场涨幅榜/跌幅榜（新浪财经数据源，自动过滤创业板/科创板/北交所）"""
         try:
             url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
             params = {
                 'page': 1,
-                'num': limit + 20,  # 多取一些以弥补过滤掉的创业板/科创板
+                'num': 80,  # 北交所30%涨跌幅限制占据前排，需多取才能拿到主板
                 'sort': 'changepercent',
                 'asc': 1 if sort_asc else 0,
                 'node': 'hs_a',
@@ -225,7 +253,11 @@ class StockRecommender:
                         })
                     except (ValueError, KeyError):
                         continue
-                return results[:limit]
+                # 截取最终结果后补行业板块（避免对已过滤掉的N只股票做HTTP请求）
+                final = results[:limit]
+                for s in final:
+                    s['所属板块'] = self._get_stock_sector(s['代码'])
+                return final
         except Exception:
             return []
 

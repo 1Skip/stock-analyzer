@@ -1421,7 +1421,8 @@ def hot_stocks_page():
                     '名称': 'Name',
                     '最新价': 'Price',
                     '涨跌幅': 'Change%',
-                    '换手率': 'Turnover%'
+                    '换手率': 'Turnover%',
+                    '所属板块': 'Sector',
                 })
                 st.dataframe(df_gainers, use_container_width=True)
             else:
@@ -1436,7 +1437,8 @@ def hot_stocks_page():
                     '名称': 'Name',
                     '最新价': 'Price',
                     '涨跌幅': 'Change%',
-                    '换手率': 'Turnover%'
+                    '换手率': 'Turnover%',
+                    '所属板块': 'Sector',
                 })
                 st.dataframe(df_losers, use_container_width=True)
             else:
