@@ -196,7 +196,12 @@ class StockRecommender:
         if code in cls._sector_cache:
             return cls._sector_cache[code]
         try:
-            mkt = 'SH' if code.startswith('6') else 'SZ'
+            if code.startswith(('8', '9')):
+                mkt = 'BJ'
+            elif code.startswith('6'):
+                mkt = 'SH'
+            else:
+                mkt = 'SZ'
             url = 'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax'
             resp = requests.get(url, params={'code': f'{mkt}{code}'}, headers={
                 'Referer': 'https://emweb.securities.eastmoney.com/',
@@ -204,14 +209,24 @@ class StockRecommender:
             }, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
-                sector = (data.get('jbzl', {}).get('sshy') or '').strip()
-                if sector:
+                jbzl = data.get('jbzl') or {}
+                sector = (jbzl.get('sshy') or '').strip()
+                if sector and sector != '--':
                     cls._sector_cache[code] = sector
                     return sector
         except Exception:
             pass
         # 回退：根据代码前缀判断交易所
-        fallback = '沪市主板' if code.startswith('6') else '深市主板'
+        if code.startswith(('8', '9')):
+            fallback = '北交所'
+        elif code.startswith('68'):
+            fallback = '科创板'
+        elif code.startswith('30'):
+            fallback = '创业板'
+        elif code.startswith('6'):
+            fallback = '沪市主板'
+        else:
+            fallback = '深市主板'
         cls._sector_cache[code] = fallback
         return fallback
 
@@ -221,7 +236,7 @@ class StockRecommender:
             url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
             params = {
                 'page': 1,
-                'num': 80,  # 北交所30%涨跌幅限制占据前排，需多取才能拿到主板
+                'num': limit + 5,
                 'sort': 'changepercent',
                 'asc': 1 if sort_asc else 0,
                 'node': 'hs_a',
@@ -239,9 +254,6 @@ class StockRecommender:
                 for item in data:
                     try:
                         code = item['code']
-                        # 过滤创业板（300/301）和科创板（688/689）
-                        if not self._is_main_board(code):
-                            continue
                         results.append({
                             '代码': code,
                             '名称': item['name'],
