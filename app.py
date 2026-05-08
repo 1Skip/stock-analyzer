@@ -1181,7 +1181,7 @@ def analyze_stock_page():
         data = None
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(get_cached_stock_data, symbol, period, market)
+                future = executor.submit(get_cached_stock_data, symbol, '1y', market)
                 data = future.result(timeout=20)
         except Exception:
             data = None
@@ -1287,8 +1287,13 @@ def analyze_stock_page():
         st.session_state.analyzed_quote = quote
         st.session_state.analyzed_stock_name = stock_name
 
+        # 图表展示按用户选择的周期裁剪（指标已基于1y全量数据计算，精度有保证）
+        period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
+        cutoff = data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
+        display_data = data[data.index >= cutoff] if len(data[data.index >= cutoff]) >= 10 else data
+
         # 渲染分析结果
-        _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data)
+        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data)
 
         # 全部就绪后清除进度条
         progress_bar.empty()
@@ -1298,8 +1303,11 @@ def analyze_stock_page():
     if not analyze_clicked:
         cached_data = st.session_state.get("analyzed_data")
         if cached_data is not None:
+            period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
+            cutoff = cached_data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
+            display_data = cached_data[cached_data.index >= cutoff] if len(cached_data[cached_data.index >= cutoff]) >= 10 else cached_data
             _render_analysis_results(
-                cached_data,
+                display_data,
                 st.session_state.get("analyzed_signals", {}),
                 st.session_state.get("analyzed_quote"),
                 symbol,
@@ -1537,15 +1545,14 @@ def display_recommendation_list(recommended, strategy_name):
             sig = stock["signals"]
             cols = st.columns(4)
             with cols[0]:
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> DIF:{ind["macd"]:.3f} DEA:{ind["macd_signal"]:.3f}</p>', unsafe_allow_html=True)
-                macd_hist_val = ind.get("macd_hist", 0)
-                st.markdown(f'<p style="font-size:0.9rem;margin:0">MACD柱:{macd_hist_val:.3f}</p>', unsafe_allow_html=True)
+                macd_hist = ind.get("macd_hist", 0)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> 柱:{macd_hist:.2f} DIF:{ind["macd"]:.2f} DEA:{ind["macd_signal"]:.2f}</p>', unsafe_allow_html=True)
                 st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["macd"])}</p>', unsafe_allow_html=True)
             with cols[1]:
                 rsi6 = ind.get("rsi_6", ind.get("rsi", 0))
                 rsi12 = ind.get("rsi_12", 0)
                 rsi24 = ind.get("rsi_24", 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> 6:{rsi6:.1f} 12:{rsi12:.1f} 24:{rsi24:.1f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> 6:{rsi6:.2f} 12:{rsi12:.2f} 24:{rsi24:.2f}</p>', unsafe_allow_html=True)
                 st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["rsi"])}</p>', unsafe_allow_html=True)
             with cols[2]:
                 st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>KDJ:</b> K:{ind["kdj_k"]:.2f} D:{ind["kdj_d"]:.2f} J:{ind["kdj_j"]:.2f}</p>', unsafe_allow_html=True)

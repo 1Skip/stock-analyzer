@@ -360,7 +360,7 @@ class StockRecommender:
         from technical_indicators import TechnicalIndicators
 
         fetcher = StockDataFetcher()
-        data = fetcher.get_stock_data(symbol, period=period, market=market)
+        data = fetcher.get_stock_data(symbol, period='1y', market=market)
 
         if data is None or len(data) < 30:
             return None
@@ -643,7 +643,7 @@ class StockRecommender:
 
         fetcher = StockDataFetcher()
         try:
-            data = fetcher.get_stock_data(symbol, period='1mo', interval='1d', market=market)
+            data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
         except Exception as e:
             print(f"获取股票 {symbol} 数据失败: {str(e)}")
             return None
