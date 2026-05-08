@@ -179,10 +179,24 @@ def _get_analysis_text(symbol, market='CN'):
     from technical_indicators import TechnicalIndicators
 
     fetcher = StockDataFetcher()
-    df = fetcher.get_stock_data(symbol, period='3mo', market=market)
+    df = fetcher.get_stock_data(symbol, period='1y', market=market)
 
     if df is None or df.empty or len(df) < 10:
         return f"未找到 {symbol} 的数据"
+
+    # 合并实时行情到最后一根K线
+    try:
+        quote = fetcher.get_realtime_quote(symbol, market)
+        if quote and quote.get('price'):
+            import pandas as pd
+            today = pd.Timestamp.now().normalize()
+            if df.index[-1].normalize() == today:
+                idx = df.index[-1]
+                df.loc[idx, 'close'] = quote['price']
+                df.loc[idx, 'high'] = max(df.loc[idx, 'high'], quote['high'])
+                df.loc[idx, 'low'] = min(df.loc[idx, 'low'], quote['low'])
+    except Exception:
+        pass
 
     df = TechnicalIndicators.calculate_all(df)
     signals = TechnicalIndicators.get_signals(df)

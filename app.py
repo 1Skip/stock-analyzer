@@ -2017,7 +2017,7 @@ def compare_stocks_page():
 
             status_text.text("并发获取股票数据...")
             results = StockDataFetcher.fetch_multiple_stocks(
-                stocks_to_fetch, period='3mo', market=market, max_workers=5
+                stocks_to_fetch, period='1y', market=market, max_workers=5
             )
 
             progress_bar.progress(60)
@@ -2031,14 +2031,20 @@ def compare_stocks_page():
                         data = TechnicalIndicators.calculate_all(result['data'])
                         latest = data.iloc[-1]
 
-                        # 计算涨跌幅
-                        change_pct = ((latest['close'] - data.iloc[0]['close']) / data.iloc[0]['close']) * 100
+                        # 获取实时行情（最新价和涨跌幅优先实时数据）
+                        quote = fetcher.get_realtime_quote(symbol, market)
+                        if quote and quote.get('price'):
+                            price = quote['price']
+                            change_pct = quote.get('change', 0)
+                        else:
+                            price = latest['close']
+                            change_pct = ((latest['close'] - data.iloc[0]['close']) / data.iloc[0]['close']) * 100
 
                         comparison_data.append({
                             '代码': symbol,
                             '名称': fetcher.get_stock_name(symbol, market),
-                            '最新价': f"{latest['close']:.2f}",
-                            '涨跌幅': f"{change_pct:.2f}%",
+                            '最新价': f"{price:.2f}",
+                            '涨跌幅': f"{change_pct:+.2f}%",
                             '成交量': (
                                 f"{latest['volume']/1e8:.1f}亿" if latest['volume'] >= 1e8 else
                                 f"{latest['volume']/1e4:.0f}万" if latest['volume'] >= 1e4 else

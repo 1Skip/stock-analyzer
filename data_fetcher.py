@@ -13,6 +13,8 @@ import time
 # 创建专用 session，trust_env=False 避免读取 Windows 注册表中的代理配置
 _session = requests.Session()
 _session.trust_env = False
+
+from config import SPOT_CACHE_TTL_SECONDS
 import random
 import io
 import json
@@ -47,7 +49,7 @@ class StockDataFetcher:
     # 全市场快照缓存（避免每次获取单只股票名称/行情都下载5000+行）
     _spot_cache = None
     _spot_cache_time = None
-    _spot_cache_ttl = timedelta(seconds=60)  # 60秒内复用
+    _spot_cache_ttl = timedelta(seconds=SPOT_CACHE_TTL_SECONDS)
 
     _index_spot_cache = None
     _index_spot_cache_time = None
@@ -971,7 +973,7 @@ class StockDataFetcher:
         """获取A股指数快照（类级别缓存60秒）"""
         now = datetime.now()
         if (cls._index_spot_cache is not None and cls._index_spot_cache_time is not None
-                and (now - cls._index_spot_cache_time).seconds < 60):
+                and (now - cls._index_spot_cache_time).seconds < SPOT_CACHE_TTL_SECONDS):
             return cls._index_spot_cache
         if not AKSHARE_AVAILABLE:
             return None
