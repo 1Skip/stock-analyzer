@@ -19,22 +19,22 @@ from data_fetcher import POPULAR_CN_STOCKS, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
 SECTOR_STOCKS = {
     "苹果概念": [
         {'code': '002475', 'name': '立讯精密'},  # AirPods主力供应商
-        {'code': '300433', 'name': '蓝思科技'},  # 玻璃盖板龙头
+        {'code': '002456', 'name': '欧菲光'},    # 光学镜头模组
         {'code': '601231', 'name': '环旭电子'},  # SiP模组龙头
         {'code': '002241', 'name': '歌尔股份'},  # 声学组件龙头
         {'code': '603501', 'name': '韦尔股份'},  # 摄像头芯片
         {'code': '000725', 'name': '京东方A'},   # 显示屏供应商
         {'code': '002600', 'name': '领益智造'},  # 精密功能件
-        {'code': '300136', 'name': '信维通信'},  # 射频天线
+        {'code': '002938', 'name': '鹏鼎控股'},  # PCB龙头
     ],
     "特斯拉概念": [
         {'code': '002594', 'name': '比亚迪'},    # 新能源汽车对标
-        {'code': '300750', 'name': '宁德时代'},  # 动力电池龙头
+        {'code': '002460', 'name': '赣锋锂业'},  # 锂资源龙头
         {'code': '002050', 'name': '三花智控'},  # 热管理系统
         {'code': '600885', 'name': '宏发股份'},  # 继电器龙头
         {'code': '603305', 'name': '旭升集团'},  # 特斯拉零部件
         {'code': '002101', 'name': '广东鸿图'},  # 压铸零部件
-        {'code': '300124', 'name': '汇川技术'},  # 电机电控
+        {'code': '600580', 'name': '卧龙电驱'},  # 电机龙头
         {'code': '603596', 'name': '伯特利'},    # 汽车制动系统
     ],
     "电力": [
@@ -50,11 +50,11 @@ SECTOR_STOCKS = {
     "算力租赁": [
         {'code': '603019', 'name': '中科曙光'},  # AI服务器龙头
         {'code': '000938', 'name': '中核科技'},  # 算力基础设施
-        {'code': '300212', 'name': '易华录'},    # 数据湖+算力
+        {'code': '002335', 'name': '科华数据'},  # 数据中心+UPS
         {'code': '600756', 'name': '浪潮软件'},  # 服务器相关
         {'code': '000977', 'name': '浪潮信息'},  # 服务器龙头
-        {'code': '300383', 'name': '光环新网'},  # IDC+云计算
-        {'code': '300738', 'name': '奥飞数据'},  # IDC服务商
+        {'code': '600845', 'name': '宝信软件'},  # 工业IDC龙头
+        {'code': '002929', 'name': '润建股份'},  # IDC运维
         {'code': '603881', 'name': '数据港'},    # 数据中心运营
     ],
 }
@@ -71,7 +71,8 @@ class StockRecommender:
         获取A股热门股票（使用新浪财经批量行情，一次请求全部获取）
         """
         results = []
-        stocks = POPULAR_CN_STOCKS[:max(limit, 30)]  # 至少取30只用于涨跌幅榜
+        stocks = [s for s in POPULAR_CN_STOCKS[:max(limit, 30)]
+                  if self._is_main_board(s['code'])]  # 排除创业板/科创板
 
         try:
             # 为每只股票构造新浪代码（优先上海，尝试深圳）
@@ -180,13 +181,18 @@ class StockRecommender:
             print(f"获取板块排行失败: {e}")
             return []
 
+    @staticmethod
+    def _is_main_board(code):
+        """判断是否为主板股票（排除创业板30xxxx/301xxx和科创板688xxx/689xxx）"""
+        return not code.startswith(('300', '301', '688', '689'))
+
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨幅榜/跌幅榜（新浪财经数据源）"""
+        """获取全市场涨幅榜/跌幅榜（新浪财经数据源，自动过滤创业板/科创板）"""
         try:
             url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
             params = {
                 'page': 1,
-                'num': limit + 5,  # 多取几条以防新股/异常数据
+                'num': limit + 20,  # 多取一些以弥补过滤掉的创业板/科创板
                 'sort': 'changepercent',
                 'asc': 1 if sort_asc else 0,
                 'node': 'hs_a',
@@ -203,8 +209,12 @@ class StockRecommender:
                 results = []
                 for item in data:
                     try:
+                        code = item['code']
+                        # 过滤创业板（300/301）和科创板（688/689）
+                        if not self._is_main_board(code):
+                            continue
                         results.append({
-                            '代码': item['code'],
+                            '代码': code,
                             '名称': item['name'],
                             '最新价': round(float(item['trade']), 2),
                             '涨跌幅': round(float(item['changepercent']), 2),
@@ -219,13 +229,13 @@ class StockRecommender:
             return []
 
     def get_top_gainers_cn(self, limit=10):
-        """获取A股全市场涨幅榜（新浪财经实时排行，过滤非上涨股）"""
+        """获取A股全市场涨幅榜（新浪财经实时排行，过滤非上涨股及创业板/科创板）"""
         ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5)
         gainers = [s for s in ranking if s['涨跌幅'] > 0]
         return gainers[:limit]
 
     def get_top_losers_cn(self, limit=10):
-        """获取A股全市场跌幅榜（新浪财经实时排行，过滤非下跌股）"""
+        """获取A股全市场跌幅榜（新浪财经实时排行，过滤非下跌股及创业板/科创板）"""
         ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5)
         losers = [s for s in ranking if s['涨跌幅'] < 0]
         return losers[:limit]
@@ -453,6 +463,58 @@ class StockRecommender:
             }
         }
 
+    def get_recommended_stocks_hk(self, num_stocks=10):
+        """
+        获取港股推荐股票列表（基于技术分析）
+        """
+        results = []
+
+        def analyze_one(stock):
+            try:
+                analysis = self.analyze_stock(stock['code'], market='HK', period='3mo')
+                if analysis and analysis['score'] >= 60:
+                    analysis['name'] = stock['name']
+                    return analysis
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_HK_STOCKS[:20]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:num_stocks]
+
+    def get_recommended_stocks_us(self, num_stocks=10):
+        """
+        获取美股推荐股票列表（基于技术分析）
+        """
+        results = []
+
+        def analyze_one(symbol):
+            try:
+                analysis = self.analyze_stock(symbol, market='US', period='3mo')
+                if analysis and analysis['score'] >= 60:
+                    analysis['name'] = symbol
+                    return analysis
+            except Exception:
+                pass
+            return None
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_US_STOCKS[:20]}
+            for future in as_completed(futures):
+                result = future.result()
+                if result:
+                    results.append(result)
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        return results[:num_stocks]
+
     def get_recommended_stocks_cn(self, num_stocks=10):
         """
         获取推荐股票列表（基于技术分析）
@@ -471,7 +533,8 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:20]}
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:20]
+                       if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -497,7 +560,8 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]}
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]
+                       if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -523,7 +587,8 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]}
+            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]
+                       if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -554,7 +619,8 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks
+                       if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -721,7 +787,8 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks
+                       if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
                 if result:

@@ -271,7 +271,7 @@ def plot_candlestick_chart(data, title=""):
     fig = make_subplots(
         rows=3, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.02,
+        vertical_spacing=0.04,
         row_heights=[0.55, 0.15, 0.30],
         subplot_titles=("K线 + 均线", "成交量", ""),
     )
@@ -328,10 +328,10 @@ def plot_candlestick_chart(data, title=""):
             showlegend=True,
         ), row=3, col=1)
 
-        # MACD 零轴参考线 + 底部标注
+        # MACD 零轴参考线 + 标识（子图内坐标，避免与成交量重叠）
         fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5, row=3, col=1)
         fig.add_annotation(
-            xref="paper", yref="paper", x=0.01, y=0.08,
+            xref="x3 domain", yref="y3 domain", x=0.01, y=0.95,
             text="<b>MACD</b>",
             showarrow=False,
             font=dict(size=12, color="gray"),
