@@ -39,6 +39,7 @@ update.json
 *.b64.clean
 *.b64.oneline
 .stock_cache.json
+.main_board_cache.json
 watchlist.json
 
 # 测试

@@ -91,6 +91,7 @@ class StockDataFetcher:
     def _get_spot_snapshot(cls):
         """获取A股全市场快照（带缓存，60秒内复用，避免重复下载5000+条）
         数据源：新浪财经（通过 AKShare）
+        成功下载后自动生成主板股票池缓存文件
         """
         now = datetime.now()
         if cls._spot_cache is not None and cls._spot_cache_time is not None:
@@ -101,12 +102,40 @@ class StockDataFetcher:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(ak.stock_zh_a_spot)
-                    cls._spot_cache = future.result(timeout=8)
+                    cls._spot_cache = future.result(timeout=15)
                 cls._spot_cache_time = now
+
+                # 自动生成主板股票池缓存（供推荐系统使用）
+                cls._save_main_board_cache(cls._spot_cache)
+
                 return cls._spot_cache
             except Exception:
                 return None
         return None
+
+    @classmethod
+    def _save_main_board_cache(cls, spot_df):
+        """从全市场快照中提取主板股票并写入缓存文件"""
+        import json as _json
+        cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+        try:
+            stocks = []
+            for _, row in spot_df.iterrows():
+                code = str(row['代码'])
+                if code.startswith(('sh', 'sz', 'bj')):
+                    code = code[2:]
+                if code.startswith(('300', '301', '688', '689')):
+                    continue
+                stocks.append({'code': code, 'name': str(row['名称'])})
+
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                _json.dump({
+                    'updated': datetime.now().isoformat(),
+                    'count': len(stocks),
+                    'stocks': stocks
+                }, f, ensure_ascii=False)
+        except Exception:
+            pass
 
     def _retry_with_backoff(self, func, source_name, *args, **kwargs):
         """带指数退避和智能重试间隔的重试机制"""
@@ -597,46 +626,71 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
-        """获取股票名称，A股优先从 AKShare 实时获取（新浪数据）"""
+        """获取股票名称，新浪优先（快~200ms），AKShare快照兜底，映射表最终回退"""
         if market == "CN":
-            # 第一优先：AKShare 实时数据（使用缓存的快照，避免重复下载全市场数据）
-            spot_df = self._get_spot_snapshot()
-            if spot_df is not None:
-                # AKShare 返回的代码带交易所前缀（sh600519/sz000001/bj920000），用 endswith 兼容两种格式
-                stock_row = spot_df[spot_df['代码'].str.endswith(symbol)]
-                if not stock_row.empty:
-                    return stock_row.iloc[0]['名称']
+            # 第一优先：新浪财经实时行情（~200ms，快）
+            prefix_map = [
+                ('sz', lambda s: s.startswith(('0', '3'))),
+                ('sh', lambda s: s.startswith('6')),
+                ('bj', lambda s: s.startswith(('4', '8'))),
+            ]
+            for prefix, check in prefix_map:
+                if check(symbol):
+                    try:
+                        url = f"https://hq.sinajs.cn/list={prefix}{symbol}"
+                        headers = {
+                            'Referer': 'https://finance.sina.com.cn',
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                        }
+                        response = _session.get(url, headers=headers, timeout=3)
+                        if response.status_code == 200:
+                            match = re.search(r'"([^"]*)"', response.text)
+                            if match:
+                                data = match.group(1).split(',')
+                                if len(data) >= 1 and data[0]:
+                                    return data[0]
+                    except Exception:
+                        pass
+                    break  # 匹配到前缀就不再试其他
 
-            # 第二优先：新浪财经
+            # 前缀不明确时，先试深圳再试上海
             try:
                 url = f"https://hq.sinajs.cn/list=sz{symbol}"
-                headers = {
+                response = _session.get(url, headers={
                     'Referer': 'https://finance.sina.com.cn',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                }
-                response = _session.get(url, headers=headers, timeout=5)
+                }, timeout=3)
                 if response.status_code == 200:
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
                         data = match.group(1).split(',')
                         if len(data) >= 1 and data[0]:
                             return data[0]
-
                 url = f"https://hq.sinajs.cn/list=sh{symbol}"
-                response = _session.get(url, headers=headers, timeout=5)
+                response = _session.get(url, headers={
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }, timeout=3)
                 if response.status_code == 200:
                     match = re.search(r'"([^"]*)"', response.text)
                     if match:
                         data = match.group(1).split(',')
                         if len(data) >= 1 and data[0]:
                             return data[0]
-            except Exception as e:
-                print(f"获取股票名称失败 {symbol}: {e}")
+            except Exception:
+                pass
 
-            # 备选：查映射表
+            # 第二优先：查映射表（即时）
             name = CN_STOCK_NAMES_EXTENDED.get(symbol)
             if name:
                 return name
+
+            # 第三优先：AKShare 全市场快照（慢，但覆盖全）
+            spot_df = self._get_spot_snapshot()
+            if spot_df is not None:
+                stock_row = spot_df[spot_df['代码'].str.endswith(symbol)]
+                if not stock_row.empty:
+                    return stock_row.iloc[0]['名称']
 
             return symbol
 
@@ -1113,26 +1167,185 @@ class StockDataFetcher:
         """获取当前优先数据源设置"""
         return self.preferred_source
 
+    @classmethod
+    def get_main_board_stocks(cls):
+        """获取全部主板A股股票列表（排除创业板/科创板），缓存24小时
 
-# 股票名称映射表
+        优先从缓存文件加载，过期后从 AKShare 全市场快照刷新。
+        返回 [{'code': '000001', 'name': '平安银行'}, ...]
+        """
+        import json as _json
+        cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+
+        # 1. 尝试从缓存加载（24小时有效）
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    cached = _json.load(f)
+                cache_time = datetime.fromisoformat(cached.get('updated', '2000-01-01'))
+                if datetime.now() - cache_time < timedelta(hours=24):
+                    return cached['stocks']
+        except Exception:
+            pass
+
+        # 2. 从AKShare全市场快照获取
+        stocks = []
+        try:
+            spot_df = cls._get_spot_snapshot()
+            if spot_df is not None and not spot_df.empty:
+                for _, row in spot_df.iterrows():
+                    code = str(row['代码'])
+                    # 去掉交易所前缀（sh600519 → 600519）
+                    if code.startswith(('sh', 'sz', 'bj')):
+                        code = code[2:]
+                    # 排除创业板和科创板
+                    if code.startswith(('300', '301', '688', '689')):
+                        continue
+                    stocks.append({'code': code, 'name': str(row['名称'])})
+
+                # 写入缓存
+                try:
+                    with open(cache_file, 'w', encoding='utf-8') as f:
+                        _json.dump({
+                            'updated': datetime.now().isoformat(),
+                            'count': len(stocks),
+                            'stocks': stocks
+                        }, f, ensure_ascii=False)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return stocks
+
+
+# 股票名称映射表（静态回退，覆盖沪深主板主要龙头 ~200只）
 CN_STOCK_NAMES_EXTENDED = {
-    '000001': '平安银行', '000002': '万科A', '000858': '五粮液', '002594': '比亚迪',
-    '600519': '贵州茅台', '601398': '工商银行', '601857': '中国石油',
-    '601318': '中国平安', '601012': '隆基绿能', '600036': '招商银行', '000333': '美的集团',
-    '002415': '海康威视', '600276': '恒瑞医药', '600887': '伊利股份', '601888': '中国中免',
-    '002714': '牧原股份', '000725': '京东方A', '601288': '农业银行',
-    '601939': '建设银行', '601988': '中国银行', '601628': '中国人寿', '000568': '泸州老窖',
-    '000651': '格力电器', '002475': '立讯精密', '603501': '韦尔股份', '603019': '中科曙光',
-    '600570': '恒生电子', '002230': '科大讯飞', '603986': '兆易创新',
-    '000063': '中兴通讯', '600009': '上海机场', '600048': '保利发展',
-    '600309': '万华化学', '601066': '中信建投', '601211': '国泰君安', '600030': '中信证券',
-    '000027': '深圳能源', '600900': '长江电力', '601985': '中国核电', '603920': '世运电路'
+    # 金融
+    '000001': '平安银行', '002142': '宁波银行', '600000': '浦发银行', '600015': '华夏银行',
+    '600016': '民生银行', '600036': '招商银行', '601009': '南京银行', '601166': '兴业银行',
+    '601229': '上海银行', '601288': '农业银行', '601328': '交通银行', '601398': '工商银行',
+    '601818': '光大银行', '601939': '建设银行', '601988': '中国银行', '601997': '贵阳银行',
+    # 券商
+    '000166': '申万宏源', '000776': '广发证券', '002736': '国信证券', '600030': '中信证券',
+    '600837': '海通证券', '600958': '东方证券', '601066': '中信建投', '601211': '国泰君安',
+    '601236': '红塔证券', '601377': '兴业证券', '601688': '华泰证券', '601878': '浙商证券',
+    # 保险
+    '601318': '中国平安', '601319': '中国人保', '601336': '新华保险', '601601': '中国太保',
+    '601628': '中国人寿',
+    # 白酒食品
+    '000568': '泸州老窖', '000596': '古井贡酒', '000799': '酒鬼酒', '000858': '五粮液',
+    '000860': '顺鑫农业', '002304': '洋河股份', '600519': '贵州茅台', '600559': '老白干酒',
+    '600600': '青岛啤酒', '600702': '舍得酒业', '600779': '水井坊', '600809': '山西汾酒',
+    '600887': '伊利股份', '002568': '百润股份', '603288': '海天味业', '603345': '安井食品',
+    '600882': '妙可蓝多', '002847': '盐津铺子',
+    # 医药
+    '000423': '东阿阿胶', '000538': '云南白药', '000963': '华东医药', '002001': '新和成',
+    '002007': '华兰生物', '002422': '科伦药业', '600085': '同仁堂', '600196': '复星医药',
+    '600276': '恒瑞医药', '600332': '白云山', '600436': '片仔癀', '600566': '济川药业',
+    '603259': '药明康德', '603392': '万泰生物', '603658': '安图生物',
+    # 家电家居
+    '000333': '美的集团', '000651': '格力电器', '002032': '苏泊尔', '002242': '九阳股份',
+    '002508': '老板电器', '600690': '海尔智家', '603486': '科沃斯', '000100': 'TCL科技',
+    '002705': '新宝股份',
+    # 新能源
+    '002074': '国轩高科', '002129': 'TCL中环', '002459': '晶澳科技', '002460': '赣锋锂业',
+    '600438': '通威股份', '600732': '爱旭股份', '601012': '隆基绿能', '601615': '明阳智能',
+    '601865': '福莱特', '603185': '上机数控', '603799': '华友钴业', '603806': '福斯特',
+    # 新能源汽车
+    '002594': '比亚迪', '000625': '长安汽车', '000800': '一汽解放', '600104': '上汽集团',
+    '600733': '北汽蓝谷', '601127': '赛力斯', '601238': '广汽集团', '601633': '长城汽车',
+    # 电力能源
+    '000027': '深圳能源', '000539': '粤电力A', '000543': '皖能电力', '600011': '华能国际',
+    '600023': '浙能电力', '600025': '华能水电', '600027': '华电国际', '600795': '国电电力',
+    '600886': '国投电力', '600900': '长江电力', '600905': '三峡能源', '601985': '中国核电',
+    '601857': '中国石油', '600028': '中国石化', '601088': '中国神华', '600188': '兖矿能源',
+    '601225': '陕西煤业', '601699': '潞安环能', '601898': '中煤能源',
+    # 电子半导体
+    '000725': '京东方A', '002049': '紫光国微', '002156': '通富微电', '002185': '华天科技',
+    '002371': '北方华创', '002409': '雅克科技', '002916': '深南电路', '002938': '鹏鼎控股',
+    '600171': '上海贝岭', '600460': '士兰微', '600584': '长电科技', '600703': '三安光电',
+    '603005': '晶方科技', '603160': '汇顶科技', '603501': '韦尔股份', '603986': '兆易创新',
+    '002456': '欧菲光', '002475': '立讯精密',
+    # 计算机软件
+    '002230': '科大讯飞', '002410': '广联达', '002439': '启明星辰', '600536': '中国软件',
+    '600570': '恒生电子', '600588': '用友网络', '603019': '中科曙光', '000977': '浪潮信息',
+    '002335': '科华数据', '600845': '宝信软件', '603881': '数据港', '600756': '浪潮软件',
+    '000938': '中核科技',
+    # 通信
+    '000063': '中兴通讯', '002396': '星网锐捷', '600487': '亨通光电', '600498': '烽火通信',
+    '600522': '中天科技', '601138': '工业富联', '601728': '中国电信', '601869': '长飞光纤',
+    '600941': '中国移动',
+    # 军工
+    '000768': '中航西飞', '002013': '中航机电', '002025': '航天电器', '002179': '中航光电',
+    '600038': '中直股份', '600118': '中国卫星', '600150': '中国船舶', '600391': '航发科技',
+    '600685': '中船防务', '600760': '中航沈飞', '600862': '中航高科', '600893': '航发动力',
+    '601989': '中国重工',
+    # 化工
+    '000301': '东方盛虹', '000408': '藏格矿业', '000792': '盐湖股份', '000830': '鲁西化工',
+    '002064': '华峰化学', '002601': '龙佰集团', '600309': '万华化学', '600346': '恒力石化',
+    '600352': '浙江龙盛', '600426': '华鲁恒升', '600989': '宝丰能源', '601233': '桐昆股份',
+    # 有色钢铁
+    '000630': '铜陵有色', '000831': '中国稀土', '000878': '云南铜业', '000933': '神火股份',
+    '002155': '湖南黄金', '600010': '包钢股份', '600019': '宝钢股份', '600111': '北方稀土',
+    '600362': '江西铜业', '600547': '山东黄金', '600585': '海螺水泥', '600489': '中金黄金',
+    '601168': '西部矿业', '601600': '中国铝业', '601899': '紫金矿业',
+    # 地产基建
+    '000002': '万科A', '000006': '深振业A', '000069': '华侨城A', '000401': '冀东水泥',
+    '001979': '招商蛇口', '002146': '荣盛发展', '002244': '滨江集团', '600048': '保利发展',
+    '600325': '华发股份', '600383': '金地集团', '600606': '绿地控股',
+    '601668': '中国建筑', '601800': '中国交建', '601390': '中国中铁', '601186': '中国铁建',
+    # 交通运输
+    '000089': '深圳机场', '000338': '潍柴动力', '002352': '顺丰控股', '600004': '白云机场',
+    '600009': '上海机场', '600029': '南方航空', '600115': '中国东航', '600377': '宁沪高速',
+    '601006': '大秦铁路', '601021': '春秋航空', '601111': '中国国航', '601816': '京沪高铁',
+    '601919': '中远海控',
+    # 大消费
+    '000999': '华润三九', '002024': '苏宁易购', '002127': '南极电商', '002277': '友阿股份',
+    '002419': '天虹股份', '002563': '森马服饰', '600655': '豫园股份', '600859': '王府井',
+    '601888': '中国中免', '600415': '小商品城',
+    # 农业
+    '000876': '新希望', '002311': '海大集团', '002714': '牧原股份',
+    '600737': '中粮糖业', '600873': '梅花生物', '603363': '傲农生物',
+    # 其他制造
+    '000157': '中联重科', '000425': '徐工机械', '002050': '三花智控', '002101': '广东鸿图',
+    '600031': '三一重工', '600580': '卧龙电驱', '600885': '宏发股份', '603305': '旭升集团',
+    '603596': '伯特利', '603920': '世运电路', '002241': '歌尔股份', '002600': '领益智造',
+    '601231': '环旭电子', '002929': '润建股份',
+    # 传媒
+    '000156': '华数传媒', '002027': '分众传媒', '002555': '三七互娱', '002624': '完美世界',
+    '600373': '中文传媒', '600637': '东方明珠', '601595': '上海电影', '601928': '凤凰传媒',
+    '603444': '吉比特',
 }
 
 POPULAR_US_STOCKS = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'TSLA', 'META', 'NVDA', 'NFLX', 'AMD', 'INTC',
                    'JPM', 'V', 'WMT', 'JNJ', 'MA', 'PG', 'UNH', 'HD', 'BAC', 'DIS']
 
-POPULAR_CN_STOCKS = [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
+def _build_cn_stock_pool():
+    """构建A股推荐池：优先加载磁盘缓存（24h有效），无缓存时退回静态映射表
+
+    缓存文件由 StockDataFetcher.get_main_board_stocks() 在首次成功下载后写入。
+    应用冷启动后缓存就已存在（除首次部署外），无需每次导入都下载全市场快照。
+    """
+    import json as _json
+    cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+    try:
+        if os.path.exists(cache_file):
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cached = _json.load(f)
+            cache_time = datetime.fromisoformat(cached.get('updated', '2000-01-01'))
+            if datetime.now() - cache_time < timedelta(hours=24):
+                stocks = cached.get('stocks', [])
+                if stocks and len(stocks) >= 20:
+                    return stocks
+    except Exception:
+        pass
+
+    # 无缓存或缓存过期：退回静态映射表（首次部署时）
+    return [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
+
+# 直接加载缓存中的股票池（首次启动时只有静态列表，之后会被动态刷新）
+POPULAR_CN_STOCKS = _build_cn_stock_pool()
 
 POPULAR_HK_STOCKS = [
     {'code': '00700', 'name': '腾讯控股'},

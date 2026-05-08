@@ -1248,7 +1248,7 @@ def analyze_stock_page():
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(fetcher.get_stock_name, symbol, market)
-                    stock_name = future.result(timeout=3)
+                    stock_name = future.result(timeout=5)
             except Exception:
                 stock_name = symbol
         elif stock_name == symbol:
