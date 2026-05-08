@@ -1,13 +1,13 @@
 """
 热门股票和推荐股票模块
-A股使用新浪财经批量行情，港股美股使用yfinance
-板块排行使用AKShare（同花顺数据源）
+涨跌幅榜使用同花顺实时排行，行业板块使用同花顺，港股美股使用yfinance
 """
 import requests
 import re
 import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from bs4 import BeautifulSoup
 import warnings
 import akshare as ak
 warnings.filterwarnings('ignore')
@@ -231,56 +231,57 @@ class StockRecommender:
         return fallback
 
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨幅榜/跌幅榜（新浪财经数据源，自动过滤创业板/科创板/北交所）"""
+        """获取全市场涨跌幅榜（同花顺实时排行）"""
         try:
-            url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
-            params = {
-                'page': 1,
-                'num': limit + 5,
-                'sort': 'changepercent',
-                'asc': 1 if sort_asc else 0,
-                'node': 'hs_a',
-                'symbol': '',
-                '_s_r_a': 'init'
-            }
+            if sort_asc:
+                url = 'http://data.10jqka.com.cn/rank/xstp/order/asc/'
+            else:
+                url = 'http://data.10jqka.com.cn/rank/xstp/'
             headers = {
-                'Referer': 'https://finance.sina.com.cn/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://data.10jqka.com.cn/',
             }
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            if resp.status_code == 200:
-                data = resp.json()
-                results = []
-                for item in data:
-                    try:
-                        code = item['code']
-                        results.append({
-                            '代码': code,
-                            '名称': item['name'],
-                            '最新价': round(float(item['trade']), 2),
-                            '涨跌幅': round(float(item['changepercent']), 2),
-                            '换手率': round(float(item.get('turnoverratio', 0)), 2) if item.get('turnoverratio') else None,
-                            '成交量': int(float(item['volume'])),
-                            '成交额': int(float(item['amount'])),
-                        })
-                    except (ValueError, KeyError):
-                        continue
-                # 截取最终结果后补行业板块（避免对已过滤掉的N只股票做HTTP请求）
-                final = results[:limit]
-                for s in final:
-                    s['所属板块'] = self._get_stock_sector(s['代码'])
-                return final
+            resp = requests.get(url, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return []
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            table = soup.find('table', class_='m-table')
+            if not table:
+                return []
+            rows = table.find('tbody').find_all('tr')
+            results = []
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) < 8:
+                    continue
+                try:
+                    code = cols[1].text.strip()
+                    results.append({
+                        '代码': code,
+                        '名称': cols[2].text.strip(),
+                        '最新价': round(float(cols[3].text.strip()), 2),
+                        '涨跌幅': round(float(cols[6].text.strip().rstrip('%')), 2),
+                        '换手率': round(float(cols[7].text.strip().rstrip('%')), 2) if cols[7].text.strip() else None,
+                    })
+                except (ValueError, AttributeError):
+                    continue
+                if len(results) >= limit:
+                    break
+            # 补行业板块
+            for s in results:
+                s['所属板块'] = self._get_stock_sector(s['代码'])
+            return results
         except Exception:
             return []
 
     def get_top_gainers_cn(self, limit=10):
-        """获取A股全市场涨幅榜（新浪财经实时排行，过滤非上涨股及创业板/科创板）"""
+        """获取A股全市场涨幅榜（同花顺实时排行）"""
         ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5)
         gainers = [s for s in ranking if s['涨跌幅'] > 0]
         return gainers[:limit]
 
     def get_top_losers_cn(self, limit=10):
-        """获取A股全市场跌幅榜（新浪财经实时排行，过滤非下跌股及创业板/科创板）"""
+        """获取A股全市场跌幅榜（同花顺实时排行）"""
         ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5)
         losers = [s for s in ranking if s['涨跌幅'] < 0]
         return losers[:limit]
