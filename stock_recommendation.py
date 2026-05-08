@@ -365,6 +365,28 @@ class StockRecommender:
         if data is None or len(data) < 30:
             return None
 
+        # 合并实时行情到最后一根K线（与个股分析页保持一致）
+        try:
+            quote = fetcher.get_realtime_quote(symbol, market)
+            if quote and quote.get('price'):
+                today = pd.Timestamp.now().normalize()
+                if data.index[-1].normalize() == today:
+                    idx = data.index[-1]
+                    data.loc[idx, 'close'] = quote['price']
+                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+                else:
+                    realtime_row = pd.DataFrame({
+                        'open': [quote.get('open', quote['price'])],
+                        'high': [quote.get('high', quote['price'])],
+                        'low': [quote.get('low', quote['price'])],
+                        'close': [quote['price']],
+                        'volume': [quote.get('volume', 0)]
+                    }, index=[pd.Timestamp.now()])
+                    data = pd.concat([data, realtime_row])
+        except Exception:
+            pass
+
         # 计算指标
         df = TechnicalIndicators.calculate_all(data)
         signals = TechnicalIndicators.get_signals(df)
@@ -656,6 +678,28 @@ class StockRecommender:
             print(f"股票 {symbol} 数据不足: {len(data)} 天")
             return None
 
+        # 合并实时行情到最后一根K线（与个股分析页保持一致）
+        try:
+            quote = fetcher.get_realtime_quote(symbol, market)
+            if quote and quote.get('price'):
+                today = pd.Timestamp.now().normalize()
+                if data.index[-1].normalize() == today:
+                    idx = data.index[-1]
+                    data.loc[idx, 'close'] = quote['price']
+                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+                else:
+                    realtime_row = pd.DataFrame({
+                        'open': [quote.get('open', quote['price'])],
+                        'high': [quote.get('high', quote['price'])],
+                        'low': [quote.get('low', quote['price'])],
+                        'close': [quote['price']],
+                        'volume': [quote.get('volume', 0)]
+                    }, index=[pd.Timestamp.now()])
+                    data = pd.concat([data, realtime_row])
+        except Exception:
+            pass
+
         try:
             df = TechnicalIndicators.calculate_all(data)
             signals = TechnicalIndicators.get_signals(df)
@@ -823,6 +867,28 @@ class StockRecommender:
 
         if data is None or len(data) < 50:
             return None
+
+        # 合并实时行情到最后一根K线（与个股分析页保持一致）
+        try:
+            quote = fetcher.get_realtime_quote(symbol, market)
+            if quote and quote.get('price'):
+                today = pd.Timestamp.now().normalize()
+                if data.index[-1].normalize() == today:
+                    idx = data.index[-1]
+                    data.loc[idx, 'close'] = quote['price']
+                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+                else:
+                    realtime_row = pd.DataFrame({
+                        'open': [quote.get('open', quote['price'])],
+                        'high': [quote.get('high', quote['price'])],
+                        'low': [quote.get('low', quote['price'])],
+                        'close': [quote['price']],
+                        'volume': [quote.get('volume', 0)]
+                    }, index=[pd.Timestamp.now()])
+                    data = pd.concat([data, realtime_row])
+        except Exception:
+            pass
 
         try:
             df = TechnicalIndicators.calculate_all(data)

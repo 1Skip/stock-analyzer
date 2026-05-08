@@ -827,9 +827,9 @@ def _display_indicator_values(data):
     st.markdown('<p class="chart-section-title">技术指标数值</p>', unsafe_allow_html=True)
 
     # RSI — 红色左边条
-    rsi6 = _format_val(latest, 'rsi_6', 1)
-    rsi12 = _format_val(latest, 'rsi_12', 1)
-    rsi24 = _format_val(latest, 'rsi_24', 1)
+    rsi6 = _format_val(latest, 'rsi_6', 2)
+    rsi12 = _format_val(latest, 'rsi_12', 2)
+    rsi24 = _format_val(latest, 'rsi_24', 2)
     st.markdown(
         f'<div style="{card}border-left:3px solid #e53935;">'
         f'<span><b style="margin-right:10px;">RSI</b>'
@@ -842,9 +842,9 @@ def _display_indicator_values(data):
     )
 
     # KDJ — 蓝色左边条
-    k = _format_val(latest, 'kdj_k', 1)
-    d = _format_val(latest, 'kdj_d', 1)
-    j = _format_val(latest, 'kdj_j', 1)
+    k = _format_val(latest, 'kdj_k', 2)
+    d = _format_val(latest, 'kdj_d', 2)
+    j = _format_val(latest, 'kdj_j', 2)
     st.markdown(
         f'<div style="{card}border-left:3px solid #1e88e5;">'
         f'<span><b style="margin-right:10px;">KDJ</b>'
@@ -857,9 +857,9 @@ def _display_indicator_values(data):
     )
 
     # MACD — 紫色左边条
-    dif = _format_val(latest, 'macd', 3)
-    dea = _format_val(latest, 'macd_signal', 3)
-    hist = _format_val(latest, 'macd_hist', 3)
+    dif = _format_val(latest, 'macd', 2)
+    dea = _format_val(latest, 'macd_signal', 2)
+    hist = _format_val(latest, 'macd_hist', 2)
     hist_color = '#e53935' if (latest.get('macd_hist') or 0) >= 0 else '#2e7d32'
     st.markdown(
         f'<div style="{card}border-left:3px solid #7b1fa2;">'
