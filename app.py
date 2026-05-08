@@ -1533,21 +1533,29 @@ def display_recommendation_list(recommended, strategy_name):
             """, unsafe_allow_html=True)
 
             # 显示详细指标
+            ind = stock["indicators"]
+            sig = stock["signals"]
             cols = st.columns(4)
             with cols[0]:
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> {stock["indicators"]["macd"]:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["macd"])}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> DIF:{ind["macd"]:.3f} DEA:{ind["macd_signal"]:.3f}</p>', unsafe_allow_html=True)
+                macd_hist_val = ind.get("macd_hist", 0)
+                st.markdown(f'<p style="font-size:0.9rem;margin:0">MACD柱:{macd_hist_val:.3f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["macd"])}</p>', unsafe_allow_html=True)
             with cols[1]:
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> {stock["indicators"]["rsi"]:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["rsi"])}</p>', unsafe_allow_html=True)
+                rsi6 = ind.get("rsi_6", ind.get("rsi", 0))
+                rsi12 = ind.get("rsi_12", 0)
+                rsi24 = ind.get("rsi_24", 0)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> 6:{rsi6:.1f} 12:{rsi12:.1f} 24:{rsi24:.1f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["rsi"])}</p>', unsafe_allow_html=True)
             with cols[2]:
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>KDJ:</b> K:{stock["indicators"]["kdj_k"]:.2f} D:{stock["indicators"]["kdj_d"]:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["kdj"])}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>KDJ:</b> K:{ind["kdj_k"]:.2f} D:{ind["kdj_d"]:.2f} J:{ind["kdj_j"]:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["kdj"])}</p>', unsafe_allow_html=True)
             with cols[3]:
-                boll_lower = stock['indicators'].get('boll_lower', 0)
-                boll_upper = stock['indicators'].get('boll_upper', 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>布林带:</b> {boll_lower:.2f}-{boll_upper:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(stock["signals"]["boll"])}</p>', unsafe_allow_html=True)
+                boll_up = ind.get("boll_upper", 0)
+                boll_mid = ind.get("boll_mid", 0)
+                boll_low = ind.get("boll_lower", 0)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>布林带:</b> UP:{boll_up:.2f} MID:{boll_mid:.2f} LOW:{boll_low:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(sig["boll"])}</p>', unsafe_allow_html=True)
 
             st.divider()
 
