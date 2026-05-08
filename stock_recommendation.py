@@ -183,8 +183,9 @@ class StockRecommender:
 
     @staticmethod
     def _is_main_board(code):
-        """判断是否为主板股票（排除创业板30xxxx/301xxx和科创板688xxx/689xxx）"""
-        return not code.startswith(('300', '301', '688', '689'))
+        """判断是否为沪深主板股票（排除创业板/科创板/北交所）"""
+        return code.startswith(('600', '601', '603', '605',     # 沪市主板
+                                '000', '001', '002', '003'))    # 深市主板
 
     def _get_market_ranking(self, sort_asc=False, limit=10):
         """获取全市场涨幅榜/跌幅榜（新浪财经数据源，自动过滤创业板/科创板）"""

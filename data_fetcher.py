@@ -102,7 +102,7 @@ class StockDataFetcher:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(ak.stock_zh_a_spot)
-                    cls._spot_cache = future.result(timeout=15)
+                    cls._spot_cache = future.result(timeout=45)
                 cls._spot_cache_time = now
 
                 # 自动生成主板股票池缓存（供推荐系统使用）
@@ -124,7 +124,9 @@ class StockDataFetcher:
                 code = str(row['代码'])
                 if code.startswith(('sh', 'sz', 'bj')):
                     code = code[2:]
-                if code.startswith(('300', '301', '688', '689')):
+                # 仅保留沪深主板（排除创业板/科创板/北交所）
+                if not (code.startswith(('600', '601', '603', '605')) or
+                        code.startswith(('000', '001', '002', '003'))):
                     continue
                 stocks.append({'code': code, 'name': str(row['名称'])})
 
@@ -1198,8 +1200,9 @@ class StockDataFetcher:
                     # 去掉交易所前缀（sh600519 → 600519）
                     if code.startswith(('sh', 'sz', 'bj')):
                         code = code[2:]
-                    # 排除创业板和科创板
-                    if code.startswith(('300', '301', '688', '689')):
+                    # 仅保留沪深主板（排除创业板/科创板/北交所）
+                    if not (code.startswith(('600', '601', '603', '605')) or
+                            code.startswith(('000', '001', '002', '003'))):
                         continue
                     stocks.append({'code': code, 'name': str(row['名称'])})
 
