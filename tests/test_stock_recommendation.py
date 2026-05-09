@@ -272,24 +272,54 @@ class TestGetTopLosersCN:
 class TestGetHotSectorsCN:
 
     def test_returns_list(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.ak.stock_board_industry_summary_ths',
-                            lambda: _mock_sector_df())
+        mock_resp = _make_mock_response(_mock_sector_html())
+        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
         result = recommender.get_hot_sectors_cn(limit=10)
         assert isinstance(result, list)
+        assert len(result) > 0
 
     def test_each_sector_has_fields(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.ak.stock_board_industry_summary_ths',
-                            lambda: _mock_sector_df())
+        mock_resp = _make_mock_response(_mock_sector_html())
+        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
         result = recommender.get_hot_sectors_cn(limit=5)
         if result:
             s = result[0]
             for key in ['板块', '涨跌幅', '领涨股', '上涨家数', '下跌家数']:
                 assert key in s
 
-    def test_akshare_failure_returns_empty(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.ak.stock_board_industry_summary_ths',
-                            lambda: exec('raise Exception("fail")'))
+    def test_request_failure_returns_empty(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.requests.get',
+                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
         result = recommender.get_hot_sectors_cn()
+        assert result == []
+
+
+# ============================================================
+# TestGetHotConceptsCN
+# ============================================================
+
+class TestGetHotConceptsCN:
+
+    def test_returns_list(self, recommender, monkeypatch):
+        mock_resp = _make_mock_response(_mock_concept_html())
+        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        result = recommender.get_hot_concepts_cn(limit=10)
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+    def test_each_concept_has_fields(self, recommender, monkeypatch):
+        mock_resp = _make_mock_response(_mock_concept_html())
+        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        result = recommender.get_hot_concepts_cn(limit=5)
+        if result:
+            s = result[0]
+            for key in ['板块', '涨跌幅', '领涨股', '净流入(亿)']:
+                assert key in s
+
+    def test_request_failure_returns_empty(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.requests.get',
+                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+        result = recommender.get_hot_concepts_cn()
         assert result == []
 
 
@@ -668,18 +698,44 @@ def _mock_ranking_resp():
     return MockResponse()
 
 
-def _mock_sector_df():
-    return pd.DataFrame({
-        '板块': ['半导体', '新能源汽车', '人工智能', '医药', '白酒'],
-        '涨跌幅': [3.5, 2.8, 2.1, -1.2, 0.5],
-        '领涨股': ['中芯国际', '比亚迪', '科大讯飞', '恒瑞医药', '贵州茅台'],
-        '领涨股-最新价': [55.0, 280.0, 52.0, 42.0, 1800.0],
-        '领涨股-涨跌幅': [7.5, 5.2, 4.8, 0.8, 1.2],
-        '上涨家数': [45, 38, 32, 15, 10],
-        '下跌家数': [5, 8, 12, 28, 8],
-        '总成交额': [1250, 980, 750, 420, 350],
-        '净流入': [85, 52, 30, -45, 18],
-    })
+class MockResponse:
+    def __init__(self, html, status_code=200, encoding='utf-8'):
+        self.text = html
+        self.status_code = status_code
+        self.encoding = encoding
+
+
+def _make_mock_response(html, status_code=200):
+    """创建一个模拟的 requests.Response"""
+    return MockResponse(html, status_code)
+
+
+def _mock_sector_html():
+    """构建模拟同花顺行业板块页面HTML"""
+    rows_html = ""
+    data = [
+        ('半导体', '3.5', '中芯国际', '55.0', '7.5', '45', '5', '1250', '85'),
+        ('新能源汽车', '2.8', '比亚迪', '280.0', '5.2', '38', '8', '980', '52'),
+        ('人工智能', '2.1', '科大讯飞', '52.0', '4.8', '32', '12', '750', '30'),
+        ('医药', '-1.2', '恒瑞医药', '42.0', '0.8', '15', '28', '420', '-45'),
+        ('白酒', '0.5', '贵州茅台', '1800.0', '1.2', '10', '8', '350', '18'),
+    ]
+    for i, (name, change, lead, lead_price, lead_change, up, down, vol, net) in enumerate(data, 1):
+        rows_html += f'<tr><td>{i}</td><td>{name}</td><td>{change}</td><td>1000</td><td>{vol}</td><td>{net}</td><td>{up}</td><td>{down}</td><td>10.0</td><td>{lead}</td><td>{lead_price}</td><td>{lead_change}</td></tr>'
+    return f'<html><body><table class="m-table"><tr><th>序号</th><th>板块</th><th>涨跌幅(%)</th><th>总成交量</th><th>总成交额</th><th>净流入</th><th>上涨家数</th><th>下跌家数</th><th>均价</th><th>领涨股</th><th>领涨股-最新价</th><th>领涨股-涨跌幅</th></tr>{rows_html}</table></body></html>'
+
+
+def _mock_concept_html():
+    """构建模拟同花顺概念板块资金流向页面HTML"""
+    rows_html = ""
+    data = [
+        ('F5G概念', '3.13', '仕佳为', '240.40', '20.00', '28.61'),
+        ('算力', '3.06', '焊湔工程', '41.56', '20.01', '38.34'),
+        ('科创板新股', '2.81', '天铭科技', '85.64', '19.99', '-8.86'),
+    ]
+    for i, (name, change, lead, lead_price, lead_change, net) in enumerate(data, 1):
+        rows_html += f'<tr><td>{i}</td><td>{name}</td><td>1000</td><td>{change}%</td><td>100</td><td>100</td><td>{net}</td><td>30</td><td>{lead}</td><td>{lead_change}%</td><td>{lead_price}</td></tr>'
+    return f'<html><body><table><tr><th>序号</th><th>行业</th><th>行业指数</th><th>涨跌幅</th><th>主力资金(亿)</th><th>最大资金(亿)</th><th>净流入(亿)</th><th>公司数目</th><th>领涨股</th><th>涨跌幅</th><th>当前价(元)</th></tr>{rows_html}</table></body></html>'
 
 
 def _make_mock_hk_ticker(symbol):

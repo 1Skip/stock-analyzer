@@ -1,14 +1,14 @@
 """
 热门股票和推荐股票模块
-涨跌幅榜使用新浪财经实时排行（沪深京全市场），行业板块使用同花顺，港股美股使用yfinance
+涨跌幅榜使用新浪财经实时排行（沪深京全市场），行业/概念板块使用同花顺HTML抓取，港股美股使用yfinance
 """
 import requests
 import re
 import yfinance as yf
 import pandas as pd
+from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
-import akshare as ak
 warnings.filterwarnings('ignore')
 
 # 导入热门股票列表
@@ -159,26 +159,109 @@ class StockRecommender:
         return results[:limit]
 
     def get_hot_sectors_cn(self, limit=30):
-        """获取A股热门板块排行（同花顺行业板块实时数据）"""
+        """获取A股行业板块排行（同花顺实时数据，HTML抓取）"""
+        sectors = []
         try:
-            df = ak.stock_board_industry_summary_ths()
-            sectors = []
-            for _, row in df.head(limit).iterrows():
-                sectors.append({
-                    '板块': row['板块'],
-                    '涨跌幅': round(float(row['涨跌幅']), 2),
-                    '领涨股': row['领涨股'],
-                    '领涨股价格': round(float(row['领涨股-最新价']), 2),
-                    '领涨股涨幅': round(float(row['领涨股-涨跌幅']), 2),
-                    '上涨家数': int(row['上涨家数']),
-                    '下跌家数': int(row['下跌家数']),
-                    '总成交额(亿)': round(float(row['总成交额']), 2),
-                    '净流入(亿)': round(float(row['净流入']), 2),
-                })
-            return sectors
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
+            page = 1
+            while len(sectors) < limit:
+                url = f'https://q.10jqka.com.cn/thshy/index/field/199112/order/desc/page/{page}/'
+                resp = requests.get(url, headers=headers, timeout=10)
+                resp.encoding = 'gbk'
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                table = soup.find('table', class_='m-table')
+                if not table:
+                    break
+                rows = table.find_all('tr')[1:]  # 跳过表头
+                if not rows:
+                    break
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) < 12:
+                        continue
+                    try:
+                        sectors.append({
+                            '板块': cols[1].get_text(strip=True),
+                            '涨跌幅': round(float(cols[2].get_text(strip=True).replace('%', '')), 2),
+                            '领涨股': cols[9].get_text(strip=True),
+                            '领涨股价格': round(float(cols[10].get_text(strip=True)), 2),
+                            '领涨股涨幅': round(float(cols[11].get_text(strip=True).replace('%', '')), 2),
+                            '上涨家数': int(cols[6].get_text(strip=True)),
+                            '下跌家数': int(cols[7].get_text(strip=True)),
+                            '总成交额(亿)': round(float(cols[4].get_text(strip=True)), 2),
+                            '净流入(亿)': round(float(cols[5].get_text(strip=True)), 2),
+                        })
+                    except (ValueError, IndexError):
+                        continue
+                page += 1
+                if page > 10:  # 安全上限
+                    break
+            return sectors[:limit]
         except Exception as e:
-            print(f"获取板块排行失败: {e}")
-            return []
+            print(f"获取行业板块排行失败: {e}")
+            return sectors if sectors else []
+
+    def get_hot_concepts_cn(self, limit=30):
+        """获取A股概念板块排行（同花顺概念资金流向，全量抓取后按涨跌幅排序）
+
+        注意：同花顺web端概念板块页面(/gn/)是大事记而非排行，
+        概念排行数据从概念资金流向页面抓取后客户端排序。
+        """
+        concepts = []
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
+            # 先获取首页确定总页数
+            url = 'https://data.10jqka.com.cn/funds/gnzjl/order/desc/page/1/'
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.encoding = 'gbk'
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            page_info = soup.find('span', class_='page_info')
+            total_pages = 8  # 默认
+            if page_info:
+                match = re.search(r'/(\d+)', page_info.get_text(strip=True))
+                if match:
+                    total_pages = int(match.group(1))
+
+            for page in range(1, total_pages + 1):
+                if page > 1:
+                    url = f'https://data.10jqka.com.cn/funds/gnzjl/order/desc/page/{page}/'
+                    resp = requests.get(url, headers=headers, timeout=10)
+                    resp.encoding = 'gbk'
+                    soup = BeautifulSoup(resp.text, 'html.parser')
+                table = soup.find('table')
+                if not table:
+                    break
+                for row in table.find_all('tr')[1:]:  # 跳过表头
+                    cols = row.find_all('td')
+                    if len(cols) < 11:
+                        continue
+                    try:
+                        change_str = cols[3].get_text(strip=True).replace('%', '')
+                        lead_change_str = cols[9].get_text(strip=True).replace('%', '')
+                        concepts.append({
+                            '板块': cols[1].get_text(strip=True),
+                            '涨跌幅': round(float(change_str), 2),
+                            '领涨股': cols[8].get_text(strip=True),
+                            '领涨股价格': round(float(cols[10].get_text(strip=True)), 2),
+                            '领涨股涨幅': round(float(lead_change_str), 2),
+                            '上涨家数': 0,
+                            '下跌家数': 0,
+                            '总成交额(亿)': 0,
+                            '净流入(亿)': round(float(cols[6].get_text(strip=True)), 2),
+                        })
+                    except (ValueError, IndexError):
+                        continue
+
+            # 按涨跌幅降序排列（资金流向页默认按主力资金排序）
+            concepts.sort(key=lambda x: x['涨跌幅'], reverse=True)
+            return concepts[:limit]
+        except Exception as e:
+            print(f"获取概念板块排行失败: {e}")
+            return concepts if concepts else []
 
     @staticmethod
     def _is_main_board(code):

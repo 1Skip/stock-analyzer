@@ -1338,7 +1338,8 @@ def get_cached_hot_stocks(market):
             'hot': recommender.get_hot_stocks_cn(limit=20),
             'gainers': recommender.get_top_gainers_cn(limit=10),
             'losers': recommender.get_top_losers_cn(limit=10),
-            'sectors': recommender.get_hot_sectors_cn(limit=30)
+            'sectors': recommender.get_hot_sectors_cn(limit=30),
+            'concepts': recommender.get_hot_concepts_cn(limit=30)
         }
     elif market == "HK":
         hot = recommender.get_hot_stocks_hk(limit=20)
@@ -1396,14 +1397,14 @@ def hot_stocks_page():
     if data:
         if market == "CN":
             sectors = data.get('sectors', [])
+            concepts = data.get('concepts', [])
             gainers = data.get('gainers', [])
             losers = data.get('losers', [])
 
-            # 热门板块（同花顺行业板块排行）
+            # 行业板块排行（同花顺）
             st.subheader("行业板块排行")
             if sectors:
                 df_sectors = pd.DataFrame(sectors)
-                # 涨跌幅着色
                 def color_change(val):
                     if val > 0:
                         return 'color: #ff3b30'
@@ -1413,7 +1414,16 @@ def hot_stocks_page():
                 df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
                 st.dataframe(df_styled, use_container_width=True, hide_index=True)
             else:
-                st.info("暂无板块数据")
+                st.info("暂无行业板块数据")
+
+            # 概念板块排行（同花顺）
+            st.subheader("概念板块排行")
+            if concepts:
+                df_concepts = pd.DataFrame(concepts)
+                df_c_styled = df_concepts.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
+                st.dataframe(df_c_styled, use_container_width=True, hide_index=True)
+            else:
+                st.info("暂无概念板块数据")
 
             # 涨幅榜
             st.subheader("个股涨幅榜")
