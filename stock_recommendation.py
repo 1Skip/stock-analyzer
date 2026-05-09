@@ -230,17 +230,8 @@ class StockRecommender:
         cls._sector_cache[code] = fallback
         return fallback
 
-    @staticmethod
-    def _is_cyb_kcb_st(code, name):
-        """创业板(300/301)、科创板(688/689)、ST"""
-        if code.startswith(('300', '301', '688', '689')):
-            return True
-        if 'ST' in name:
-            return True
-        return False
-
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨跌幅榜（同花顺实时排行，仅创业板/科创板/ST）"""
+        """获取全市场涨跌幅榜（同花顺实时排行）"""
         try:
             if sort_asc:
                 url = 'https://data.10jqka.com.cn/rank/xstp/order/asc/'
@@ -266,8 +257,6 @@ class StockRecommender:
                 try:
                     code = cols[1].text.strip()
                     name = cols[2].text.strip()
-                    if not self._is_cyb_kcb_st(code, name):
-                        continue
                     results.append({
                         '代码': code,
                         '名称': name,
