@@ -230,13 +230,22 @@ class StockRecommender:
         cls._sector_cache[code] = fallback
         return fallback
 
+    @staticmethod
+    def _is_cyb_kcb_st(code, name):
+        """创业板(300/301)、科创板(688/689)、ST"""
+        if code.startswith(('300', '301', '688', '689')):
+            return True
+        if 'ST' in name:
+            return True
+        return False
+
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨跌幅榜（同花顺实时排行）"""
+        """获取全市场涨跌幅榜（同花顺实时排行，仅创业板/科创板/ST）"""
         try:
             if sort_asc:
-                url = 'http://data.10jqka.com.cn/rank/xstp/order/asc/'
+                url = 'https://data.10jqka.com.cn/rank/xstp/order/asc/'
             else:
-                url = 'http://data.10jqka.com.cn/rank/xstp/'
+                url = 'https://data.10jqka.com.cn/rank/xstp/'
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://data.10jqka.com.cn/',
@@ -256,9 +265,12 @@ class StockRecommender:
                     continue
                 try:
                     code = cols[1].text.strip()
+                    name = cols[2].text.strip()
+                    if not self._is_cyb_kcb_st(code, name):
+                        continue
                     results.append({
                         '代码': code,
-                        '名称': cols[2].text.strip(),
+                        '名称': name,
                         '最新价': round(float(cols[3].text.strip()), 2),
                         '涨跌幅': round(float(cols[6].text.strip().rstrip('%')), 2),
                         '换手率': round(float(cols[7].text.strip().rstrip('%')), 2) if cols[7].text.strip() else None,
