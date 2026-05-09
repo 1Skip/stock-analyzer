@@ -61,25 +61,25 @@ SECTOR_PUSH_TOP_N = int(os.getenv("SECTOR_PUSH_TOP_N", "3"))
 # ============================================================
 # 配色方案
 # ============================================================
-# A股传统配色（红涨绿跌）
+# A股传统配色（红涨绿跌）— Apple 系统色
 COLOR_RED_UP = {
-    "increasing": "#e53935",   # 涨（红），对比度 ~5.1:1
-    "decreasing": "#2e7d32",   # 跌（绿），对比度 ~5.3:1
-    "volume_up": "#e53935",
-    "volume_down": "#2e7d32",
-    "macd_hist_up": "#e53935",
-    "macd_hist_down": "#2e7d32",
+    "increasing": "#ff3b30",   # 涨（红），Apple SF Red
+    "decreasing": "#34c759",   # 跌（绿），Apple SF Green
+    "volume_up": "#ff3b30",
+    "volume_down": "#34c759",
+    "macd_hist_up": "#ff3b30",
+    "macd_hist_down": "#34c759",
     "label": "A股传统（红涨绿跌）",
 }
 
-# 国际惯例配色（绿涨红跌）
+# 国际惯例配色（绿涨红跌）— Apple 系统色
 COLOR_GREEN_UP = {
-    "increasing": "#2e7d32",   # 涨（绿）
-    "decreasing": "#e53935",   # 跌（红）
-    "volume_up": "#2e7d32",
-    "volume_down": "#e53935",
-    "macd_hist_up": "#2e7d32",
-    "macd_hist_down": "#e53935",
+    "increasing": "#34c759",   # 涨（绿），Apple SF Green
+    "decreasing": "#ff3b30",   # 跌（红），Apple SF Red
+    "volume_up": "#34c759",
+    "volume_down": "#ff3b30",
+    "macd_hist_up": "#34c759",
+    "macd_hist_down": "#ff3b30",
     "label": "国际惯例（绿涨红跌）",
 }
 

@@ -88,11 +88,11 @@ st.markdown("""
         --font-section: 1.1rem;
         --font-body: 0.9rem;
         --font-caption: 0.75rem;
-        --color-primary: #1a73e8;
-        --color-rise: #e53935;
-        --color-fall: #2e7d32;
-        --color-warning: #f9a825;
-        --color-flat: #757575;
+        --color-primary: #0071e3;
+        --color-rise: #ff3b30;
+        --color-fall: #34c759;
+        --color-warning: #ff9500;
+        --color-flat: #8e8e93;
     }
 
     /* ===== 全局字体 ===== */
@@ -132,26 +132,28 @@ st.markdown("""
 
     /* ===== 卡片 ===== */
     .stock-card {
-        background: rgba(128, 128, 128, 0.04);
-        border-radius: 14px;
+        background: rgba(128, 128, 128, 0.03);
+        border-radius: 12px;
         padding: 1.25rem;
         margin: 0.6rem 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         transition: background 0.2s ease;
     }
     .stock-card:hover {
-        background: rgba(128, 128, 128, 0.08);
+        background: rgba(128, 128, 128, 0.06);
     }
 
     /* ===== 自选股条目 ===== */
     .watchlist-item {
-        background: rgba(128, 128, 128, 0.04);
+        background: rgba(128, 128, 128, 0.03);
         border-radius: var(--space-8);
         padding: var(--space-8);
         margin: var(--space-4) 0;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
         transition: background 0.2s ease;
     }
     .watchlist-item:hover {
-        background: rgba(128, 128, 128, 0.08);
+        background: rgba(128, 128, 128, 0.06);
     }
 
     /* ===== 按钮 ===== */
@@ -165,11 +167,11 @@ st.markdown("""
         transform: scale(0.97);
     }
     .stButton button[data-kind="primary"] {
-        background-color: #333;
+        background-color: var(--color-primary);
         color: #fff;
     }
     .stButton button[data-kind="secondary"] {
-        background-color: rgba(128, 128, 128, 0.1);
+        background-color: rgba(128, 128, 128, 0.08);
         color: inherit;
     }
 
@@ -189,9 +191,10 @@ st.markdown("""
 
     /* ===== Metric 指标卡片 ===== */
     [data-testid="stMetric"] {
-        background: rgba(128, 128, 128, 0.04);
+        background: rgba(128, 128, 128, 0.03);
         border-radius: var(--space-12);
         padding: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
         transition: background 0.2s ease;
     }
     [data-testid="stMetricValue"] {
@@ -355,7 +358,7 @@ def plot_candlestick_chart(data, title=""):
     # 子图标题更显眼
     for annotation in fig.layout.annotations:
         annotation.font.size = 13
-        annotation.font.color = '#888'
+        annotation.font.color = '#8e8e93'
 
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
 
@@ -486,7 +489,7 @@ def plot_intraday_chart(df, quote):
     fig.add_trace(go.Scatter(
         x=df['time'], y=df['close'],
         mode='lines', name='价格',
-        line=dict(color='#1a73e8', width=1.5),
+        line=dict(color='#0071e3', width=1.5),
         hovertemplate='%{y:.2f}<extra></extra>'
     ))
 
@@ -502,7 +505,7 @@ def plot_intraday_chart(df, quote):
     # 昨收线
     if quote and quote.get('prev_close'):
         prev = quote['prev_close']
-        fig.add_hline(y=prev, line=dict(color='#808080', width=0.8, dash='dot'),
+        fig.add_hline(y=prev, line=dict(color='#8e8e93', width=0.8, dash='dot'),
                       annotation_text=f'昨收 {prev:.2f}')
 
     # 成交量柱状图（叠加在底部）
@@ -515,7 +518,7 @@ def plot_intraday_chart(df, quote):
 
     # 双Y轴布局
     change_pct = quote.get('change', 0) if quote else 0
-    title_color = '#e53935' if change_pct > 0 else '#2e7d32' if change_pct < 0 else '#808080'
+    title_color = '#ff3b30' if change_pct > 0 else '#34c759' if change_pct < 0 else '#8e8e93'
 
     # 30分钟间隔刻度（基于数据实际日期）
     data_date = df['time'].iloc[0].date()
@@ -831,9 +834,9 @@ def _display_indicator_values(data):
     rsi12 = _format_val(latest, 'rsi_12', 2)
     rsi24 = _format_val(latest, 'rsi_24', 2)
     st.markdown(
-        f'<div style="{card}border-left:3px solid #e53935;">'
+        f'<div style="{card}border-left:3px solid #ff3b30;">'
         f'<span><b style="margin-right:10px;">RSI</b>'
-        f'<span style="color:#e53935">6日 {rsi6}</span>  '
+        f'<span style="color:#ff3b30">6日 {rsi6}</span>  '
         f'<span style="color:#fb8c00">12日 {rsi12}</span>  '
         f'<span style="color:#7b1fa2">24日 {rsi24}</span></span>'
         f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">超买&gt;{rsi_ob} 超卖&lt;{rsi_os}</span>'
@@ -860,7 +863,7 @@ def _display_indicator_values(data):
     dif = _format_val(latest, 'macd', 2)
     dea = _format_val(latest, 'macd_signal', 2)
     hist = _format_val(latest, 'macd_hist', 2)
-    hist_color = '#e53935' if (latest.get('macd_hist') or 0) >= 0 else '#2e7d32'
+    hist_color = '#ff3b30' if (latest.get('macd_hist') or 0) >= 0 else '#34c759'
     st.markdown(
         f'<div style="{card}border-left:3px solid #7b1fa2;">'
         f'<span><b style="margin-right:10px;">MACD</b>'
@@ -882,11 +885,11 @@ def _display_indicator_values(data):
     else:
         pct_str = ''
     st.markdown(
-        f'<div style="{card}border-left:3px solid #2e7d32;">'
+        f'<div style="{card}border-left:3px solid #34c759;">'
         f'<span><b style="margin-right:10px;">BOLL</b>'
-        f'<span style="color:#e53935">上轨 {upper}</span>  '
+        f'<span style="color:#ff3b30">上轨 {upper}</span>  '
         f'<span style="color:#1e88e5">中轨 {mid}</span>  '
-        f'<span style="color:#2e7d32">下轨 {lower}</span></span>'
+        f'<span style="color:#34c759">下轨 {lower}</span></span>'
         f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">{pct_str}</span>'
         f'</div>',
         unsafe_allow_html=True,
@@ -899,7 +902,7 @@ def _display_indicator_values(data):
     ma60 = _format_val(latest, 'ma60', 2)
     if ma5 != '--':
         st.markdown(
-            f'<div style="{card}border-left:3px solid #888;">'
+            f'<div style="{card}border-left:3px solid #8e8e93;">'
             f'<span><b style="margin-right:10px;">均线</b>'
             f'<span>MA5 {ma5}</span>  '
             f'<span>MA10 {ma10}</span>  '
@@ -962,7 +965,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         col_price, col_h, col_l, col_v, col_o = st.columns([2, 1, 1, 1, 1])
         with col_price:
             change = quote['change']
-            delta_color = "#e53935" if change >= 0 else "#2e7d32"
+            delta_color = "#ff3b30" if change >= 0 else "#34c759"
             delta_sign = "+" if change >= 0 else ""
             st.markdown(f'''
             <div style="background:rgba(26,115,232,0.12);border:1px solid rgba(26,115,232,0.18);
@@ -1403,9 +1406,9 @@ def hot_stocks_page():
                 # 涨跌幅着色
                 def color_change(val):
                     if val > 0:
-                        return 'color: #e53935'
+                        return 'color: #ff3b30'
                     elif val < 0:
-                        return 'color: #2e7d32'
+                        return 'color: #34c759'
                     return ''
                 df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
                 st.dataframe(df_styled, use_container_width=True, hide_index=True)
@@ -1777,7 +1780,7 @@ def display_watchlist_sidebar():
                 with col_price:
                     if item['price'] is not None:
                         change = item.get('change_pct', 0) or 0
-                        color = "#e53935" if change >= 0 else "#2e7d32"
+                        color = "#ff3b30" if change >= 0 else "#34c759"
                         arrow = "+" if change >= 0 else ""
                         st.markdown(f'<span style="color:{color};font-weight:600">{arrow}{change:.2f}%</span> '
                                    f'<span style="font-size:0.85rem">¥{item["price"]:.2f}</span>',
@@ -1870,7 +1873,7 @@ def display_watchlist_mini_panel(summaries):
             st.caption(f"⚠ {error}")
             return
 
-        change_color = "#e53935" if change_pct >= 0 else "#2e7d32"
+        change_color = "#ff3b30" if change_pct >= 0 else "#34c759"
         arrow_sign = "+" if change_pct >= 0 else ""
         st.markdown(
             f'<span style="font-weight:600">{symbol}</span> · {name[:6]}'
