@@ -1,3 +1,6 @@
 - [Project state 2026-04-29](project_state.md) — 技术指标精度修复完成，与同花顺对齐，UI改造待做
 - [Screenshot folder](screenshot_folder.md) — 问题截图存放路径：`Screenshot of the problem/`
 - [Bug fixes & context 2026-05-07](bug_fixes_and_context_2026-05-06.md) — 5/6-5/7修复：前缀匹配+自选股实时价+东方财富K线源恢复+指标卡片flexbox+MACD标识清理
+- [Auto-save memory and push](auto_memory_on_change.md) — 每次代码改动后自动记录到 memory 并推送，无需用户提醒
+- [Bug fixes & context 2026-05-09](bug_fixes_and_context_2026-05-09.md) — 5/9修复：涨跌幅榜从新浪切换到同花顺+板块数据源改为东方财富F10 API+涨跌幅榜放开非主板股票
+- [Bug fixes & context 2026-05-08](bug_fixes_and_context_2026-05-08.md) — 5/8修复：指标补全(MACD/RSI/KDJ/BOLL)+RSI精度(数据周期1y)+小数位统一+推荐vs分析实时行情合并
