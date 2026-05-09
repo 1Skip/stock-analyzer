@@ -1,13 +1,12 @@
 """
 热门股票和推荐股票模块
-涨跌幅榜使用同花顺实时排行，行业板块使用同花顺，港股美股使用yfinance
+涨跌幅榜使用新浪财经实时排行（沪深京全市场），行业板块使用同花顺，港股美股使用yfinance
 """
 import requests
 import re
 import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
 import warnings
 import akshare as ak
 warnings.filterwarnings('ignore')
@@ -231,44 +230,47 @@ class StockRecommender:
         return fallback
 
     def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨跌幅榜（同花顺实时排行）"""
+        """获取全市场涨跌幅榜（新浪财经实时排行，沪深京全市场含北交所）"""
         try:
-            if sort_asc:
-                url = 'https://data.10jqka.com.cn/market/zdfph/order/asc/'
-            else:
-                url = 'https://data.10jqka.com.cn/market/zdfph/'
+            url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
+            params = {
+                'page': 1,
+                'num': min(limit + 20, 80),
+                'sort': 'changepercent',
+                'asc': 1 if sort_asc else 0,
+                'node': 'hs_a',
+                'symbol': '',
+                '_s_r_a': 'init',
+            }
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://data.10jqka.com.cn/',
             }
-            resp = requests.get(url, headers=headers, timeout=10)
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
             if resp.status_code != 200:
                 return []
-            soup = BeautifulSoup(resp.text, 'html.parser')
-            table = soup.find('table', class_='m-table')
-            if not table:
+            resp.encoding = 'gbk'
+            data = resp.json()
+            if not isinstance(data, list):
                 return []
-            rows = table.find('tbody').find_all('tr')
             results = []
-            for row in rows:
-                cols = row.find_all('td')
-                if len(cols) < 8:
-                    continue
+            for item in data:
                 try:
-                    code = cols[1].text.strip()
-                    name = cols[2].text.strip()
+                    code = item.get('code', '')
+                    name = item.get('name', '')
+                    if not code or not name:
+                        continue
+                    turnover = item.get('turnoverratio')
                     results.append({
                         '代码': code,
                         '名称': name,
-                        '最新价': round(float(cols[3].text.strip()), 2),
-                        '涨跌幅': round(float(cols[4].text.strip().rstrip('%')), 2),
-                        '换手率': round(float(cols[5].text.strip().rstrip('%')), 2) if cols[5].text.strip() else None,
+                        '最新价': round(float(item.get('trade', 0)), 2),
+                        '涨跌幅': round(float(item.get('changepercent', 0)), 2),
+                        '换手率': round(float(turnover), 2) if turnover and turnover != '0.0000' else None,
                     })
-                except (ValueError, AttributeError):
+                except (ValueError, TypeError):
                     continue
                 if len(results) >= limit:
                     break
-            # 补行业板块
             for s in results:
                 s['所属板块'] = self._get_stock_sector(s['代码'])
             return results
