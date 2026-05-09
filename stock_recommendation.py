@@ -234,9 +234,9 @@ class StockRecommender:
         """获取全市场涨跌幅榜（同花顺实时排行）"""
         try:
             if sort_asc:
-                url = 'https://data.10jqka.com.cn/rank/xstp/order/asc/'
+                url = 'https://data.10jqka.com.cn/market/zdfph/order/asc/'
             else:
-                url = 'https://data.10jqka.com.cn/rank/xstp/'
+                url = 'https://data.10jqka.com.cn/market/zdfph/'
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 'Referer': 'https://data.10jqka.com.cn/',
@@ -261,8 +261,8 @@ class StockRecommender:
                         '代码': code,
                         '名称': name,
                         '最新价': round(float(cols[3].text.strip()), 2),
-                        '涨跌幅': round(float(cols[6].text.strip().rstrip('%')), 2),
-                        '换手率': round(float(cols[7].text.strip().rstrip('%')), 2) if cols[7].text.strip() else None,
+                        '涨跌幅': round(float(cols[4].text.strip().rstrip('%')), 2),
+                        '换手率': round(float(cols[5].text.strip().rstrip('%')), 2) if cols[5].text.strip() else None,
                     })
                 except (ValueError, AttributeError):
                     continue
