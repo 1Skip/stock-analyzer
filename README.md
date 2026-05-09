@@ -5,7 +5,7 @@
 ## 功能特点
 
 ### 技术指标
-- **K线图** — TradingView 交互式蜡烛图（Web），Matplotlib 静态图（CLI）
+- **K线图** — Plotly 交互式蜡烛图（Web），Matplotlib 静态图（CLI）
 - **MACD** — 趋势判断和买卖时机，含金叉/死叉标注
 - **RSI** — 6/12/24 三周期相对强弱指数
 - **KDJ** — 随机指标，含金叉/死叉标注
@@ -30,9 +30,14 @@
 - **美股** — 新浪财经 → Yahoo Finance
 
 ### 其他功能
-- **热门股票** — 基于成交量、涨跌幅筛选
-- **推荐股票** — 多因子技术分析评分（0-100）
-- **自选股** — 持久化管理，支持 A股/港股/美股
+- **热门股票** — 涨幅榜/跌幅榜/成交量榜 + 行业板块排行 + 概念板块排行
+- **推荐股票** — 多因子技术分析评分（0-100），含短线/长线/板块推荐
+- **股票对比** — 多只股票技术指标横向对比
+- **回测引擎** — 信号→交易模拟，含止损/止盈/中性区间
+- **大盘温度** — 上证/深证/沪深300/北证50 实时跟踪
+- **自选股** — 持久化管理，支持 A股/港股/美股，侧边栏 mini 分析面板
+- **定时调度** — 收盘后自动分析+推送（默认关闭）
+- **飞书机器人** — 对话式股票查询（默认关闭）
 - **三种配色** — A股传统（红涨绿跌）/ 国际惯例（绿涨红跌）/ 色盲友好（蓝涨橙跌）
 - **离线缓存** — 所有在线源失败时使用 24h 缓存兜底
 
@@ -85,14 +90,19 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `main.py` | CLI 入口 |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 |
 | `technical_indicators.py` | 技术指标计算 |
-| `ai_analysis.py` | AI 智能解读 |
+| `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
 | `chart_utils.py` | 共享图表工具 |
-| `stock_recommendation.py` | 热门股票 + 评分推荐 |
-| `notification.py` | 通知推送（企业微信/Telegram/Bark） |
+| `stock_recommendation.py` | 热门排行 + 板块排行 + 评分推荐 |
+| `backtest_engine.py` | 回测引擎 |
+| `backtest_adapter.py` | 回测信号适配 |
+| `backtest_ui.py` | 回测 Web UI |
+| `notification.py` | 通知推送（企业微信/飞书/Telegram/Bark） |
+| `api_server.py` | FastAPI 服务（飞书机器人回调 + 股票查询 API） |
+| `scheduler.py` | 定时调度 |
 | `config.py` | 集中配置 |
 | `watchlist.py` | 自选股管理 |
-| `tests/` | 测试（12 文件，307 测试） |
+| `tests/` | 测试（18 文件，514 测试） |
 
 ## 指标说明
 
