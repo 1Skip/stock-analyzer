@@ -30,6 +30,33 @@ from chart_utils import resolve_color_scheme, MA_CONFIG
 # 初始化缓存数据获取器
 fetcher = StockDataFetcher()
 
+
+def _classify_signal(text):
+    """信号分类：返回 'buy' / 'sell' / 'neutral'"""
+    s = str(text)
+    if "金叉" in s or "超卖" in s or "反弹" in s or "偏多" in s:
+        return "buy"
+    if "死叉" in s or "超买" in s or "回调" in s or "偏空" in s:
+        return "sell"
+    return "neutral"
+
+
+def _validate_symbol(sym, mkt):
+    """校验股票代码格式，返回(valid, error_msg)"""
+    sym = sym.strip()
+    if not sym:
+        return False, "请输入股票代码"
+    if mkt == "CN":
+        if not sym.isdigit() or len(sym) != 6:
+            return False, "A股代码应为6位数字，如: 000001, 600519"
+    elif mkt == "US":
+        if not sym.isascii() or not sym.replace('.', '').replace('-', '').isalpha() or len(sym) > 10:
+            return False, "美股代码应为纯字母，如: AAPL, TSLA, BRK.B"
+    elif mkt == "HK":
+        if not sym.isdigit() or len(sym) < 1 or len(sym) > 5:
+            return False, "港股代码应为1-5位数字，如: 00700, 9988"
+    return True, ""
+
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
 def get_cached_stock_data(symbol, period, market):
     """缓存股票数据获取"""
@@ -551,16 +578,12 @@ def display_signals(signals):
         return
 
     def _signal_class(label):
-        if "金叉" in label or "超卖" in label or "反弹" in label or "偏多" in label:
-            return "buy"
-        if "死叉" in label or "超买" in label or "回调" in label or "偏空" in label:
-            return "sell"
-        return "neutral"
+        return _classify_signal(label)
 
     badges_html = ""
     for key, label in [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]:
         text = signals.get(label, '--')
-        cls = _signal_class(text)
+        cls = _classify_signal(text)
         badges_html += f'<span class="signal-badge {cls}" style="font-size:1rem">{key} · {html.escape(text)}</span>'
 
     st.markdown(f'<div style="margin:12px 0;font-size:1.05rem">{badges_html}</div>', unsafe_allow_html=True)
@@ -1140,25 +1163,8 @@ def analyze_stock_page():
     with col_analyze:
         analyze_clicked = st.button("开始分析", type="primary", use_container_width=True) or st.session_state.pop('trigger_analysis', False)
 
-    # 股票代码格式校验
-    def validate_symbol(sym, mkt):
-        """校验股票代码格式，返回(valid, error_msg)"""
-        sym = sym.strip()
-        if not sym:
-            return False, "请输入股票代码"
-        if mkt == "CN":
-            if not sym.isdigit() or len(sym) != 6:
-                return False, "A股代码应为6位数字，如: 000001, 600519"
-        elif mkt == "US":
-            if not sym.isascii() or not sym.replace('.', '').replace('-', '').isalpha() or len(sym) > 10:
-                return False, "美股代码应为纯字母，如: AAPL, TSLA, BRK.B"
-        elif mkt == "HK":
-            if not sym.isdigit() or len(sym) < 1 or len(sym) > 5:
-                return False, "港股代码应为1-5位数字，如: 00700, 9988"
-        return True, ""
-
     if analyze_clicked:
-        is_valid, err_msg = validate_symbol(symbol, market)
+        is_valid, err_msg = _validate_symbol(symbol, market)
         if not is_valid:
             st.error(f"输入的股票代码格式有误，{err_msg}")
             st.stop()
@@ -1809,12 +1815,7 @@ def display_watchlist_sidebar():
                     hint_text = item.get('entry_hint', '--')
 
                     # 信号分类
-                    if "金叉" in str(signal_text) or "超卖" in str(signal_text) or "反弹" in str(signal_text) or "偏多" in str(signal_text):
-                        cls = "buy"
-                    elif "死叉" in str(signal_text) or "超买" in str(signal_text) or "回调" in str(signal_text) or "偏空" in str(signal_text):
-                        cls = "sell"
-                    else:
-                        cls = "neutral"
+                    cls = _classify_signal(signal_text)
 
                     st.markdown(
                         f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span> '
@@ -1894,12 +1895,7 @@ def display_watchlist_mini_panel(summaries):
         st.divider()
 
         # 信号徽章
-        if "金叉" in str(signal_text) or "超卖" in str(signal_text) or "反弹" in str(signal_text) or "偏多" in str(signal_text):
-            cls = "buy"
-        elif "死叉" in str(signal_text) or "超买" in str(signal_text) or "回调" in str(signal_text) or "偏空" in str(signal_text):
-            cls = "sell"
-        else:
-            cls = "neutral"
+        cls = _classify_signal(signal_text)
 
         st.markdown(
             f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span>',
@@ -2014,10 +2010,19 @@ def compare_stocks_page():
         market = st.selectbox("市场", ["CN"], index=0, format_func=lambda x: "A股")
 
     if st.button("开始对比", type="primary"):
-        symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()][:5]
+        raw_symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()][:5]
+
+        # 校验每只股票代码
+        symbols = []
+        for s in raw_symbols:
+            ok, err = _validate_symbol(s, market)
+            if ok:
+                symbols.append(s)
+            else:
+                st.warning(f"跳过无效代码「{s}」：{err}")
 
         if len(symbols) < 2:
-            st.warning("请至少输入2只股票进行对比")
+            st.warning("请至少输入2只有效股票进行对比")
             return
 
         with st.spinner(f"正在并发获取 {len(symbols)} 只股票数据..."):

@@ -12,7 +12,8 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # 导入热门股票列表
-from data_fetcher import POPULAR_CN_STOCKS, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
+from data_fetcher import StockDataFetcher, POPULAR_CN_STOCKS, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
+from technical_indicators import TechnicalIndicators
 
 # 板块股票定义 - 短线龙头股
 SECTOR_STOCKS = {
@@ -64,6 +65,48 @@ class StockRecommender:
 
     def __init__(self):
         pass
+
+    def _merge_realtime_quote(self, data, fetcher, symbol, market):
+        """合并实时行情到最后一根K线"""
+        try:
+            quote = fetcher.get_realtime_quote(symbol, market)
+            if quote and quote.get('price'):
+                today = pd.Timestamp.now().normalize()
+                if data.index[-1].normalize() == today:
+                    idx = data.index[-1]
+                    data.loc[idx, 'close'] = quote['price']
+                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+                else:
+                    realtime_row = pd.DataFrame({
+                        'open': [quote.get('open', quote['price'])],
+                        'high': [quote.get('high', quote['price'])],
+                        'low': [quote.get('low', quote['price'])],
+                        'close': [quote['price']],
+                        'volume': [quote.get('volume', 0)]
+                    }, index=[pd.Timestamp.now()])
+                    data = pd.concat([data, realtime_row])
+        except Exception:
+            pass
+        return data
+
+    def _build_indicators_dict(self, latest):
+        """从最新一行数据构建标准化指标字典"""
+        return {
+            'macd': round(latest['macd'], 3),
+            'macd_signal': round(latest['macd_signal'], 3),
+            'macd_hist': round(latest['macd_hist'], 3),
+            'rsi': round(latest['rsi'], 2),
+            'rsi_6': round(latest['rsi_6'], 2),
+            'rsi_12': round(latest['rsi_12'], 2),
+            'rsi_24': round(latest['rsi_24'], 2),
+            'kdj_k': round(latest['kdj_k'], 2),
+            'kdj_d': round(latest['kdj_d'], 2),
+            'kdj_j': round(latest['kdj_j'], 2),
+            'boll_upper': round(latest['boll_upper'], 2),
+            'boll_mid': round(latest['boll_mid'], 2),
+            'boll_lower': round(latest['boll_lower'], 2),
+        }
 
     def get_hot_stocks_cn(self, limit=20):
         """
@@ -487,36 +530,13 @@ class StockRecommender:
         """
         分析单个股票的技术指标并评分
         """
-        from data_fetcher import StockDataFetcher
-        from technical_indicators import TechnicalIndicators
-
         fetcher = StockDataFetcher()
         data = fetcher.get_stock_data(symbol, period='1y', market=market)
 
         if data is None or len(data) < 30:
             return None
 
-        # 合并实时行情到最后一根K线（与个股分析页保持一致）
-        try:
-            quote = fetcher.get_realtime_quote(symbol, market)
-            if quote and quote.get('price'):
-                today = pd.Timestamp.now().normalize()
-                if data.index[-1].normalize() == today:
-                    idx = data.index[-1]
-                    data.loc[idx, 'close'] = quote['price']
-                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
-                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
-                else:
-                    realtime_row = pd.DataFrame({
-                        'open': [quote.get('open', quote['price'])],
-                        'high': [quote.get('high', quote['price'])],
-                        'low': [quote.get('low', quote['price'])],
-                        'close': [quote['price']],
-                        'volume': [quote.get('volume', 0)]
-                    }, index=[pd.Timestamp.now()])
-                    data = pd.concat([data, realtime_row])
-        except Exception:
-            pass
+        data = self._merge_realtime_quote(data, fetcher, symbol, market)
 
         # 计算指标
         df = TechnicalIndicators.calculate_all(data)
@@ -604,21 +624,7 @@ class StockRecommender:
             'rating': rating,
             'signals': signals,
             'latest_price': latest['close'],
-            'indicators': {
-                'macd': round(latest['macd'], 3),
-                'macd_signal': round(latest['macd_signal'], 3),
-                'macd_hist': round(latest['macd_hist'], 3),
-                'rsi': round(latest['rsi'], 2),
-                'rsi_6': round(latest['rsi_6'], 2),
-                'rsi_12': round(latest['rsi_12'], 2),
-                'rsi_24': round(latest['rsi_24'], 2),
-                'kdj_k': round(latest['kdj_k'], 2),
-                'kdj_d': round(latest['kdj_d'], 2),
-                'kdj_j': round(latest['kdj_j'], 2),
-                'boll_upper': round(latest['boll_upper'], 2),
-                'boll_mid': round(latest['boll_mid'], 2),
-                'boll_lower': round(latest['boll_lower'], 2)
-            }
+            'indicators': self._build_indicators_dict(latest)
         }
 
     def get_recommended_stocks_hk(self, num_stocks=10):
@@ -791,9 +797,6 @@ class StockRecommender:
         """
         短线分析 - 使用更短的周期和更敏感的指标权重
         """
-        from data_fetcher import StockDataFetcher
-        from technical_indicators import TechnicalIndicators
-
         fetcher = StockDataFetcher()
         try:
             data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
@@ -809,27 +812,7 @@ class StockRecommender:
             print(f"股票 {symbol} 数据不足: {len(data)} 天")
             return None
 
-        # 合并实时行情到最后一根K线（与个股分析页保持一致）
-        try:
-            quote = fetcher.get_realtime_quote(symbol, market)
-            if quote and quote.get('price'):
-                today = pd.Timestamp.now().normalize()
-                if data.index[-1].normalize() == today:
-                    idx = data.index[-1]
-                    data.loc[idx, 'close'] = quote['price']
-                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
-                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
-                else:
-                    realtime_row = pd.DataFrame({
-                        'open': [quote.get('open', quote['price'])],
-                        'high': [quote.get('high', quote['price'])],
-                        'low': [quote.get('low', quote['price'])],
-                        'close': [quote['price']],
-                        'volume': [quote.get('volume', 0)]
-                    }, index=[pd.Timestamp.now()])
-                    data = pd.concat([data, realtime_row])
-        except Exception:
-            pass
+        data = self._merge_realtime_quote(data, fetcher, symbol, market)
 
         try:
             df = TechnicalIndicators.calculate_all(data)
@@ -932,21 +915,7 @@ class StockRecommender:
             'latest_price': latest['close'],
             'change_pct': round(change_pct, 2),
             'strategy': '短线',
-            'indicators': {
-                'macd': round(latest['macd'], 3),
-                'macd_signal': round(latest['macd_signal'], 3),
-                'macd_hist': round(latest['macd_hist'], 3),
-                'rsi': round(latest['rsi'], 2),
-                'rsi_6': round(latest['rsi_6'], 2),
-                'rsi_12': round(latest['rsi_12'], 2),
-                'rsi_24': round(latest['rsi_24'], 2),
-                'kdj_k': round(latest['kdj_k'], 2),
-                'kdj_d': round(latest['kdj_d'], 2),
-                'kdj_j': round(latest['kdj_j'], 2),
-                'boll_lower': round(latest['boll_lower'], 2),
-                'boll_mid': round(latest['boll_mid'], 2),
-                'boll_upper': round(latest['boll_upper'], 2),
-            }
+            'indicators': self._build_indicators_dict(latest)
         }
 
 
@@ -986,9 +955,6 @@ class StockRecommender:
         """
         长线分析 - 使用1年数据，侧重MA60趋势和MACD趋势，降低RSI/KDJ权重
         """
-        from data_fetcher import StockDataFetcher
-        from technical_indicators import TechnicalIndicators
-
         fetcher = StockDataFetcher()
         try:
             data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
@@ -999,27 +965,7 @@ class StockRecommender:
         if data is None or len(data) < 50:
             return None
 
-        # 合并实时行情到最后一根K线（与个股分析页保持一致）
-        try:
-            quote = fetcher.get_realtime_quote(symbol, market)
-            if quote and quote.get('price'):
-                today = pd.Timestamp.now().normalize()
-                if data.index[-1].normalize() == today:
-                    idx = data.index[-1]
-                    data.loc[idx, 'close'] = quote['price']
-                    data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
-                    data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
-                else:
-                    realtime_row = pd.DataFrame({
-                        'open': [quote.get('open', quote['price'])],
-                        'high': [quote.get('high', quote['price'])],
-                        'low': [quote.get('low', quote['price'])],
-                        'close': [quote['price']],
-                        'volume': [quote.get('volume', 0)]
-                    }, index=[pd.Timestamp.now()])
-                    data = pd.concat([data, realtime_row])
-        except Exception:
-            pass
+        data = self._merge_realtime_quote(data, fetcher, symbol, market)
 
         try:
             df = TechnicalIndicators.calculate_all(data)
@@ -1124,21 +1070,7 @@ class StockRecommender:
             'latest_price': latest['close'],
             'change_pct': round(change_pct, 2),
             'strategy': '长线',
-            'indicators': {
-                'macd': round(latest['macd'], 3),
-                'macd_signal': round(latest['macd_signal'], 3),
-                'macd_hist': round(latest['macd_hist'], 3),
-                'rsi': round(latest['rsi'], 2),
-                'rsi_6': round(latest['rsi_6'], 2),
-                'rsi_12': round(latest['rsi_12'], 2),
-                'rsi_24': round(latest['rsi_24'], 2),
-                'kdj_k': round(latest['kdj_k'], 2),
-                'kdj_d': round(latest['kdj_d'], 2),
-                'kdj_j': round(latest['kdj_j'], 2),
-                'boll_lower': round(latest['boll_lower'], 2),
-                'boll_mid': round(latest['boll_mid'], 2),
-                'boll_upper': round(latest['boll_upper'], 2),
-            }
+            'indicators': self._build_indicators_dict(latest)
         }
 
     def get_all_sector_recommendations(self):
