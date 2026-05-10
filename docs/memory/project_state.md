@@ -1,23 +1,36 @@
 ---
-name: project state 2026-04-29
-description: 技术指标精度修复完成，等待UI改造
+name: project state 2026-05-10
+description: P0代码质量修复完成，P1/P2优化待做，514测试通过
 type: project
-originSessionId: 95efc3a3-2817-4aae-901d-8b6b78afe903
+originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 ---
-## 已完成
+## 最新状态（2026-05-10）
 
-技术指标（MACD/RSI/KDJ/BOLL/MA）与同花顺完全对齐，所有37个测试通过。
+P0 代码质量修复完成并推送（commit 5bba44e），净减63行代码。
 
-关键修复：
-1. 数据默认周期 3mo→1y（EMA/SMA 需120期收敛）
-2. MyTT 库替换自写公式（同花顺标准算法）
-3. MACD/BOLL 跳过 MyTT 的 RD() 舍入，直接使用 EMA/MA/STD 原语
-4. BOLL 改用样本标准差 ddof=1（同花顺标准）
-5. 实时行情拼接去重（同一交易日更新而非追加）
-6. 显示精度统一为 2 位小数（`.2f`）
-7. MACD 标签改为同花顺命名（DIF/DEA/MACD）
+## 已完成里程碑
+
+- P0 测试补齐：478 tests pass
+- P1 调度+通知：scheduler.py + notification.py
+- P2 回测引擎：backtest_engine.py + backtest_adapter.py + backtest_ui.py
+- P3 多Agent AI：技术+风险+决策三Agent协作
+- P4 代码瘦身
+- P5 大盘温度
+- P6 回测中文国际化
+- P7 测试补齐第二轮：478→514 tests
+- P8 自选股增强+飞书机器人
+- P9 自选股状态分离+mini面板
+- P11 K线图迁移Plotly
+- UI 苹果极简风 P0 色板统一
+- 涨跌幅榜改用新浪JSON API（沪深京全市场含北交所）
+- 行业板块排行改用同花顺HTML抓取（替代失效的AKShare）
+- 新增概念板块排行（同花顺概念资金流向，客户端排序）
+- P0 代码质量修复：提取公共方法消除6处重复代码 + 修信号分类bug
 
 ## 待做
 
-- UI 苹果极简风改造（计划在 C:\Users\skip8\.claude\plans\merry-napping-wolf.md）
-- BOLL 上轨/下轨剩余 ~0.02 差异可能是 AKShare 数据源与同花顺原生数据差异
+- P0 #1 评分逻辑合并（~30min）
+- P1 ai_analysis.py os.environ 线程安全（~10min）
+- P1 依赖版本更新（~15min）
+- P2 app.py 拆分页面模块（~2-3h，风险高）
+- P2 CSS提取/XSS修复/测试覆盖补齐/板块选项去硬编码
