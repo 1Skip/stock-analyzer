@@ -1,4 +1,5 @@
 - [Project state 2026-05-10](project_state.md) — P0代码质量修复完成，P1/P2优化待做，514测试通过
+- [Optimization plan 2026-05-10](optimization_plan.md) — 测试隔离+缓存写坏+XSS+大文件拆分+评分合并+AI线程安全+依赖CI+两个配置坑
 - [Screenshot folder](screenshot_folder.md) — 问题截图存放路径：`Screenshot of the problem/`
 - [Bug fixes & context 2026-05-07](bug_fixes_and_context_2026-05-06.md) — 5/6-5/7修复：前缀匹配+自选股实时价+东方财富K线源恢复+指标卡片flexbox+MACD标识清理
 - [Auto-save memory and push](auto_memory_on_change.md) — 每次代码改动后自动记录到 memory 并推送，无需用户提醒
