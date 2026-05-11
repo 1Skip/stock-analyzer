@@ -63,7 +63,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     """
 
     # 不需要鉴权的路径
-    ALLOW_ANONYMOUS = ["/", "/health", "/webhook"]
+    ALLOW_ANONYMOUS = ["/", "/health", "/webhook", "/webhook/feishu"]
 
     async def dispatch(self, request: Request, call_next):
         from config import API_AUTH_KEY

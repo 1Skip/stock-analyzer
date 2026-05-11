@@ -207,7 +207,7 @@ BACKTEST_RESULTS_DIR = os.getenv("BACKTEST_RESULTS_DIR", "backtest_results")
 # ============================================================
 # 大盘指数配置
 # ============================================================
-# 大盘温度功能开关（默认关闭）
+# 大盘温度功能开关（默认开启）
 MARKET_INDEX_ENABLED = os.getenv("MARKET_INDEX_ENABLED", "true").lower() == "true"
 # 监控的A股指数列表（代码: 名称）
 INDEX_WATCHLIST = [
