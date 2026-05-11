@@ -17,9 +17,9 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 - 根因：data_fetcher.py 多线程下直接读写同一个文件，无锁保护
 - 修复：加 `_cache_lock` + 原子写入 `os.replace` + JSONDecodeError 自动重建
 
-### 3. 收敛 unsafe_allow_html
-- app.py 955行、1794行、1890行有外部股票名/自选股名称进入 HTML 但未 escape
-- 修复方案：小 helper 统一 `html.escape(str(x))`，常量样式和动态内容分开
+### 3. ~~收敛 unsafe_allow_html~~ ✅ 已完成 (commit b344c2f)
+- 修复4处：分析标题、watchlist卡片、mini面板、大盘温度指数名
+- 全部动态字段统一 `html.escape()`
 
 ## 下一批优化
 
@@ -28,14 +28,14 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 - 建议先拆 app.py：pages/analyze.py、pages/hot.py、pages/recommend.py、components/charts.py、styles.py
 - 先移动不改逻辑，风险最低
 
-### 5. 合并评分逻辑
-- 评分在 stock_recommendation.py 三处重复（标准/短线/长线）
-- config.py 的 RATING_THRESHOLDS 和 LONG_TERM_WEIGHTS 基本没被真正用起来
-- 建议抽成 `score_indicators(strategy, df, signals, weights)`
+### 5. ~~合并评分逻辑~~ ✅ 已完成 (commit c62877b)
+- 新增 _STANDARD_WEIGHTS / _SHORT_TERM_WEIGHTS / _LONG_TERM_WEIGHTS 三组权重配置
+- 新增 _score_from_signals() 通用评分函数 + _score_rating() 统一评级
+- 净减115行，三个分析方法从~60行评分代码缩减为1行调用
 
-### 6. AI 调用线程安全
-- ai_analysis.py 80行和244行改 `os.environ["OPENAI_API_BASE"]`，多Agent并发有串线风险
-- 改成每次调用传 base_url/api_base 参数
+### 6. ~~AI 调用线程安全~~ ✅ 已完成 (commit bcf7470)
+- 移除 os.environ["OPENAI_API_BASE"] 全局修改
+- 改为 litellm.completion(api_base=base_url) 参数传递
 
 ### 7. 统一依赖和 CI
 - requirements.txt 固定老版本，实际环境 pandas 3.0.2 / numpy 2.4.4 / streamlit 1.57.0
