@@ -8,6 +8,11 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 
 优化计划全部 7 项完成，app.py 从 2173 行拆分为 267 行 + 8 个模块。514 测试全部通过。
 
+### 新增功能（5/11）
+- **股票名称搜索**：data_fetcher.py 新增 `resolve_stock_input()`，支持中文名称输入（精确/前缀/包含匹配），静态 dict 快查 + AKShare 全量快照 fallback
+- **Enter 键搜索**：个股分析页使用 `st.form` 包装搜索框，按回车直接触发分析
+- **搜索区域 UI 改版**：主搜索框提升到第一行（视觉焦点），市场/周期/配色/刷新缓存合并到第二行 4 列紧凑布局，placeholder 替代 label，表单去边框，输入框 focus 发光
+
 ## 已完成里程碑
 
 - P0 测试补齐：478 tests pass
