@@ -56,6 +56,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
+个股分析页支持**股票中文名称搜索**（如"平安银行"、"茅台"），输入后按 **Enter 键**直接分析。
+
 ### CLI 命令行
 
 ```bash
@@ -86,9 +88,17 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 | 文件 | 职责 |
 |------|------|
-| `app.py` | Streamlit Web UI |
+| `app.py` | Streamlit Web 入口 + CSS + 路由 + re-export（~267行） |
 | `main.py` | CLI 入口 |
-| `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 |
+| `ui/analyze_page.py` | 个股分析页面（股票名称搜索 + Enter 键搜索 + 指标图表） |
+| `ui/hot_stocks_page.py` | 热门板块页面（行业/概念排行 + 涨跌幅榜） |
+| `ui/recommend_page.py` | 智能推荐页面（短线/长线龙头股推荐） |
+| `ui/compare_page.py` | 股票对比页面（多股票指标横向对比） |
+| `ui/sidebar.py` | 侧边栏组件（大盘温度 + 自选股 + mini 面板） |
+| `ui/ai_analysis_ui.py` | AI 分析 UI（API 配置 + 单/多Agent 结果渲染） |
+| `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |
+| `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
+| `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 股票名称解析 |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
