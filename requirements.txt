@@ -1,17 +1,20 @@
-streamlit==1.28.2
-plotly==5.18.0
-yfinance==0.2.31
-pandas==2.1.4
-numpy==1.26.2
-requests==2.31.0
-akshare==1.11.88
-MyTT==2.9.3
+streamlit>=1.40
+plotly>=5.24
+yfinance>=0.2.40
+pandas>=2.2
+numpy>=2.1
+requests>=2.31
+akshare>=1.14
+MyTT>=2.9
 litellm>=1.80
-pytest>=8.0
-pytest-cov>=7.0
-pytest-mock>=3.12
 matplotlib>=3.8
 schedule>=1.2
 
-fastapi>=0.115     # 飞书机器人 API 服务（可选）
-uvicorn[standard]>=0.34  # 飞书机器人 API 服务（可选）
+# 测试（开发环境）
+pytest>=8.0
+pytest-cov>=7.0
+pytest-mock>=3.12
+
+# 飞书机器人 API 服务（可选）
+fastapi>=0.115
+uvicorn[standard]>=0.34
