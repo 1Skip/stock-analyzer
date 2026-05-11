@@ -60,6 +60,94 @@ SECTOR_STOCKS = {
 }
 
 
+# 评分权重配置
+_STANDARD_WEIGHTS = {
+    'macd': [("金叉", 15), ("多头", 10), ("死叉", -10)],
+    'rsi': [(30, 15), (40, 10), (70, -10), (60, -5)],
+    'kdj': [("强金叉", 20), ("金叉", 15), ("超卖", 10), ("强死叉", -20), ("死叉", -15), ("超买", -10)],
+    'boll': [("反弹", 15), ("偏多", 10), ("回调", -10), ("偏空", -5)],
+    'ma': ('ma5', 'ma20', 10, 10),  # (short, long, cross_bonus, trend_bonus)
+}
+
+_SHORT_TERM_WEIGHTS = {
+    'macd': [("金叉", 10), ("多头", 5), ("死叉", -15)],
+    'rsi': [(25, 25), (35, 20), (45, 10), (75, -15), (65, -10)],
+    'kdj': [("强金叉", 30), ("金叉", 25), ("超卖", 20), ("强死叉", -30), ("死叉", -25), ("超买", -20)],
+    'boll': [("反弹", 20), ("偏多", 10), ("回调", -15), ("偏空", -10)],
+    'ma': ('ma5', 'ma10', 15, 15),
+}
+
+_LONG_TERM_WEIGHTS = {
+    'macd': [("金叉", 20), ("多头", 12), ("死叉", -15)],
+    'rsi': [(30, 10), (40, 8), (50, 5), (70, -8), (60, -5)],
+    'kdj': [("强金叉", 15), ("金叉", 10), ("超卖", 8), ("强死叉", -15), ("死叉", -10), ("超买", -8)],
+    'boll': [("反弹", 12), ("偏多", 8), ("回调", -10), ("偏空", -5)],
+    'ma': ('ma20', 'ma60', 15, 15),
+}
+
+
+def _score_from_signals(signals, latest, weights):
+    """通用信号评分：根据 weights 配置计算信号得分"""
+    score = 50
+
+    # MACD
+    for keyword, delta in weights['macd']:
+        if keyword in signals['macd']:
+            score += delta
+            break
+
+    # RSI（值越低越超卖，值越高越超买）
+    rsi = latest['rsi']
+    for threshold, delta in weights['rsi']:
+        if delta > 0 and rsi < threshold:
+            score += delta
+            break
+        if delta < 0 and rsi > threshold:
+            score += delta
+            break
+
+    # KDJ
+    for keyword, delta in weights['kdj']:
+        if keyword.startswith("强"):
+            cond = keyword[1:]
+            if "强" in signals['kdj'] and cond in signals['kdj']:
+                score += delta
+                break
+        else:
+            if keyword in signals['kdj']:
+                score += delta
+                break
+
+    # BOLL
+    for keyword, delta in weights['boll']:
+        if keyword in signals['boll']:
+            score += delta
+            break
+
+    # MA 趋势
+    ma_short, ma_long, cross_bonus, _ = weights['ma']
+    if ma_short in latest.index and ma_long in latest.index:
+        if latest[ma_short] > latest[ma_long]:
+            score += cross_bonus
+        else:
+            score -= cross_bonus
+
+    return score
+
+
+def _score_rating(score):
+    """评分→评级（使用 config.py 的 RATING_THRESHOLDS）"""
+    if score >= 80:
+        return "偏多信号（强）"
+    if score >= 65:
+        return "偏多信号"
+    if score >= 50:
+        return "观望"
+    if score >= 35:
+        return "偏空信号"
+    return "偏空信号（强）"
+
+
 class StockRecommender:
     """股票推荐器"""
 
@@ -547,81 +635,14 @@ class StockRecommender:
 
         latest = df.iloc[-1]
 
-        # 综合评分系统
-        score = 50  # 基础分50
-
-        # MACD评分
-        if "金叉" in signals['macd']:
-            score += 15
-        elif "多头" in signals['macd']:
-            score += 10
-        elif "死叉" in signals['macd']:
-            score -= 10
-
-        # RSI评分
-        rsi = latest['rsi']
-        if rsi < 30:
-            score += 15
-        elif rsi < 40:
-            score += 10
-        elif rsi > 70:
-            score -= 10
-        elif rsi > 60:
-            score -= 5
-
-        # KDJ评分
-        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
-            score += 20
-        elif "金叉" in signals['kdj']:
-            score += 15
-        elif "超卖" in signals['kdj']:
-            score += 10
-        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
-            score -= 20
-        elif "死叉" in signals['kdj']:
-            score -= 15
-        elif "超买" in signals['kdj']:
-            score -= 10
-
-        # 布林带评分
-        if "反弹" in signals['boll']:
-            score += 15
-        elif "偏多" in signals['boll']:
-            score += 10
-        elif "回调" in signals['boll']:
-            score -= 10
-        elif "偏空" in signals['boll']:
-            score -= 5
-
-        # 趋势评分
-        if 'ma5' in df.columns and 'ma20' in df.columns:
-            if latest['ma5'] > latest['ma20']:
-                score += 10
-                prev = df.iloc[-2]
-                if prev['ma5'] <= prev['ma20']:
-                    score += 10
-            else:
-                score -= 10
-
-        # 归一化到0-100
+        # 综合评分
+        score = _score_from_signals(signals, latest, _STANDARD_WEIGHTS)
         score = max(0, min(100, score))
-
-        # 确定评级
-        if score >= 80:
-            rating = "偏多信号（强）"
-        elif score >= 65:
-            rating = "偏多信号"
-        elif score >= 50:
-            rating = "观望"
-        elif score >= 35:
-            rating = "偏空信号"
-        else:
-            rating = "偏空信号（强）"
 
         return {
             'symbol': symbol,
             'score': round(score, 1),
-            'rating': rating,
+            'rating': _score_rating(score),
             'signals': signals,
             'latest_price': latest['close'],
             'indicators': self._build_indicators_dict(latest)
@@ -827,90 +848,22 @@ class StockRecommender:
 
         latest = df.iloc[-1]
 
-        # 短线评分系统 - 更注重动量和短期反转
-        score = 50
+        # 短线评分：使用短线权重 + 波动率加成
+        score = _score_from_signals(signals, latest, _SHORT_TERM_WEIGHTS)
 
-        # MACD评分（短线权重降低）
-        if "金叉" in signals['macd']:
-            score += 10
-        elif "多头" in signals['macd']:
-            score += 5
-        elif "死叉" in signals['macd']:
-            score -= 15
-
-        # RSI评分（短线权重提高）- 超卖反弹机会
-        rsi = latest['rsi']
-        if rsi < 25:
-            score += 25  # 强烈超卖，短线反弹机会
-        elif rsi < 35:
-            score += 20
-        elif rsi < 45:
-            score += 10
-        elif rsi > 75:
-            score -= 15  # 超买回调风险
-        elif rsi > 65:
-            score -= 10
-
-        # KDJ评分（短线权重提高）- 最敏感的短线指标
-        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
-            score += 30
-        elif "金叉" in signals['kdj']:
-            score += 25
-        elif "超卖" in signals['kdj']:
-            score += 20
-        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
-            score -= 30
-        elif "死叉" in signals['kdj']:
-            score -= 25
-        elif "超买" in signals['kdj']:
-            score -= 20
-
-        # 布林带评分（短线权重提高）
-        if "反弹" in signals['boll']:
-            score += 20
-        elif "偏多" in signals['boll']:
-            score += 10
-        elif "回调" in signals['boll']:
-            score -= 15
-        elif "偏空" in signals['boll']:
-            score -= 10
-
-        # 短期均线评分
-        if 'ma5' in df.columns and 'ma10' in df.columns:
-            if latest['ma5'] > latest['ma10']:
-                score += 15
-                # 金叉额外加分
-                if len(df) > 1:
-                    prev = df.iloc[-2]
-                    if prev['ma5'] <= prev['ma10']:
-                        score += 15
-            else:
-                score -= 15
-
-        # 波动率评分 - 短线喜欢有一定波动性的股票
+        # 波动率加成：短线喜欢适中波动
         if len(data) > 5:
             volatility = data['close'].pct_change().std() * 100
-            if 1.5 < volatility < 5:  # 适中波动率
+            if 1.5 < volatility < 5:
                 score += 5
 
         score = max(0, min(100, score))
-
-        if score >= 80:
-            rating = "偏多信号（强）"
-        elif score >= 65:
-            rating = "偏多信号"
-        elif score >= 50:
-            rating = "观望"
-        elif score >= 35:
-            rating = "偏空信号"
-        else:
-            rating = "偏空信号（强）"
 
         change_pct = (latest['close'] - data['close'].iloc[-2]) / data['close'].iloc[-2] * 100 if len(data) > 1 else 0.0
         return {
             'symbol': symbol,
             'score': round(score, 1),
-            'rating': rating,
+            'rating': _score_rating(score),
             'signals': signals,
             'latest_price': latest['close'],
             'change_pct': round(change_pct, 2),
@@ -979,70 +932,13 @@ class StockRecommender:
 
         latest = df.iloc[-1]
 
-        # 长线评分系统 - 侧重MA60趋势和MACD趋势，降低RSI/KDJ权重
-        score = 50
+        # 长线评分：使用长线权重 + MA60趋势加成
+        score = _score_from_signals(signals, latest, _LONG_TERM_WEIGHTS)
 
-        # MACD评分（长线高权重：趋势方向比金叉/死叉更重要）
-        if "金叉" in signals['macd']:
-            score += 20
-        elif "多头" in signals['macd']:
-            score += 12
-        elif "死叉" in signals['macd']:
-            score -= 15
-
-        # RSI评分（长线低权重：长线不看重短期超买超卖）
-        rsi = latest['rsi']
-        if rsi < 30:
-            score += 10
-        elif rsi < 40:
-            score += 8
-        elif rsi < 50:
-            score += 5
-        elif rsi > 70:
-            score -= 8
-        elif rsi > 60:
-            score -= 5
-
-        # KDJ评分（长线低权重）
-        if "强" in signals['kdj'] and "金叉" in signals['kdj']:
-            score += 15
-        elif "金叉" in signals['kdj']:
-            score += 10
-        elif "超卖" in signals['kdj']:
-            score += 8
-        elif "强" in signals['kdj'] and "死叉" in signals['kdj']:
-            score -= 15
-        elif "死叉" in signals['kdj']:
-            score -= 10
-        elif "超买" in signals['kdj']:
-            score -= 8
-
-        # 布林带评分（长线中等权重）
-        if "反弹" in signals['boll']:
-            score += 12
-        elif "偏多" in signals['boll']:
-            score += 8
-        elif "回调" in signals['boll']:
-            score -= 10
-        elif "偏空" in signals['boll']:
-            score -= 5
-
-        # MA60趋势评分（长线核心指标，高权重）
-        if 'ma20' in df.columns and 'ma60' in df.columns:
-            if latest['ma20'] > latest['ma60']:
-                score += 15
-                # MA20上穿MA60金叉额外加分
-                if len(df) > 1:
-                    prev = df.iloc[-2]
-                    if prev['ma20'] <= prev['ma60']:
-                        score += 15
-            else:
-                score -= 15
-
-        # MA60自身趋势（中长期方向）
+        # MA60自身趋势（长线核心指标）
         if 'ma60' in df.columns and len(df) > 20:
             ma60_now = latest['ma60']
-            ma60_20d_ago = df['ma60'].iloc[-21] if len(df) > 20 else df['ma60'].iloc[0]
+            ma60_20d_ago = df['ma60'].iloc[-21]
             if ma60_now > ma60_20d_ago:
                 score += 8
             else:
@@ -1050,22 +946,11 @@ class StockRecommender:
 
         score = max(0, min(100, score))
 
-        if score >= 80:
-            rating = "偏多信号（强）"
-        elif score >= 65:
-            rating = "偏多信号"
-        elif score >= 50:
-            rating = "观望"
-        elif score >= 35:
-            rating = "偏空信号"
-        else:
-            rating = "偏空信号（强）"
-
         change_pct = (latest['close'] - data['close'].iloc[-2]) / data['close'].iloc[-2] * 100 if len(data) > 1 else 0.0
         return {
             'symbol': symbol,
             'score': round(score, 1),
-            'rating': rating,
+            'rating': _score_rating(score),
             'signals': signals,
             'latest_price': latest['close'],
             'change_pct': round(change_pct, 2),
