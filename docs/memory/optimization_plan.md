@@ -6,23 +6,16 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 ---
 ## 最高优先级
 
-### 1. 修测试隔离问题
+### 1. ~~修测试隔离问题~~ ✅ 已完成 (commit 6c41cce)
 - 现象：`pytest -q -m "not network"` → 494 passed / 20 failed，单跑 test_stock_recommendation.py 80 passed
 - 根因：test_data_fetcher.py 做了 `importlib.reload(data_fetcher)`，导致 stock_recommendation.py 持有的 `StockDataFetcher` 是旧类引用，monkeypatch patch 的是新类
-- 修复方案：
-  - 方案A：依赖注入 `fetcher_factory`（改动大）
-  - 方案B：测试统一 patch `stock_recommendation.StockDataFetcher`（改动小）
-  - 加"默认禁止真实网络"测试夹具
-- **Why:** 20个失败全是跨文件测试顺序问题，非本次重构引入
+- 修复：移除 `importlib.reload`，改为直接 new instance 测试 env var
+- 结果：514 passed, 0 failed
 
-### 2. 修离线缓存写入
+### 2. ~~修离线缓存写入~~ ✅ 已完成 (commit 6c41cce)
 - 现象：`.stock_cache.json` 已是坏 JSON，解析报 `Extra data`
 - 根因：data_fetcher.py 多线程下直接读写同一个文件，无锁保护
-- 修复方案：
-  - 加类级文件锁
-  - 写临时文件后 `os.replace` 原子替换
-  - 保存前遇到 `JSONDecodeError` 自动重建缓存
-- **Why:** 直接减少"数据源失败后兜底也失败"的问题
+- 修复：加 `_cache_lock` + 原子写入 `os.replace` + JSONDecodeError 自动重建
 
 ### 3. 收敛 unsafe_allow_html
 - app.py 955行、1794行、1890行有外部股票名/自选股名称进入 HTML 但未 escape
