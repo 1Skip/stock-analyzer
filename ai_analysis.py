@@ -76,15 +76,18 @@ def call_ai_analysis(snapshot, model, api_key, base_url, temperature=0.2):
     """调用 LLM 分析指标快照，返回解析后的 dict"""
     import litellm
 
-    if base_url:
-        os.environ["OPENAI_API_BASE"] = base_url
-
     prompt = _build_prompt(snapshot)
     snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
 
-    response = litellm.completion(
+    completion_kwargs = dict(
         model=model,
         api_key=api_key,
+    )
+    if base_url:
+        completion_kwargs['api_base'] = base_url
+
+    response = litellm.completion(
+        **completion_kwargs,
         messages=[
             {
                 "role": "system",
@@ -238,17 +241,19 @@ _DECISION_PROMPT = """你是一个投资决策顾问。你将收到技术解读�
 def _call_agent(system_prompt, snapshot, config, api_key, base_url):
     """调用单个 Agent，返回 dict 结果"""
     import litellm
-    import os
-
-    if base_url:
-        os.environ["OPENAI_API_BASE"] = base_url
 
     snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
 
+    completion_kwargs = dict(
+        model=config.model,
+        api_key=api_key,
+    )
+    if base_url:
+        completion_kwargs['api_base'] = base_url
+
     try:
         response = litellm.completion(
-            model=config.model,
-            api_key=api_key,
+            **completion_kwargs,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"请分析以下数据：\n\n```json\n{snapshot_json}\n```"},
