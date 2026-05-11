@@ -23,10 +23,10 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 
 ## 下一批优化
 
-### 4. 拆大文件
-- app.py ~1862行、data_fetcher.py ~1168行、stock_recommendation.py ~980行
-- 建议先拆 app.py：pages/analyze.py、pages/hot.py、pages/recommend.py、components/charts.py、styles.py
-- 先移动不改逻辑，风险最低
+### 4. ~~拆大文件~~ ✅ 已完成 (commit 31722b3)
+- app.py 2173行 → 267行 + 8个模块（ui/ 目录）
+- ui/cached_data.py(43) / ui/charts.py(285) / ui/ai_analysis_ui.py(237) / ui/sidebar.py(299) / ui/analyze_page.py(553) / ui/hot_stocks_page.py(186) / ui/recommend_page.py(156) / ui/compare_page.py(134)
+- 通过 re-export 兼容测试，514 测试全部通过
 
 ### 5. ~~合并评分逻辑~~ ✅ 已完成 (commit c62877b)
 - 新增 _STANDARD_WEIGHTS / _SHORT_TERM_WEIGHTS / _LONG_TERM_WEIGHTS 三组权重配置
