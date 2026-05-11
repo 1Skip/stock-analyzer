@@ -37,10 +37,10 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 - 移除 os.environ["OPENAI_API_BASE"] 全局修改
 - 改为 litellm.completion(api_base=base_url) 参数传递
 
-### 7. 统一依赖和 CI
-- requirements.txt 固定老版本，实际环境 pandas 3.0.2 / numpy 2.4.4 / streamlit 1.57.0
-- GitHub workflow 用 Python 3.11，本机 py 是 3.14
-- 建议明确支持版本，加测试 workflow
+### 7. ~~统一依赖和 CI~~ ✅ 已完成 (commit 51464e2)
+- requirements.txt 版本下限对齐实际环境（pandas>=2.2, numpy>=2.1, streamlit>=1.40, plotly>=5.24）
+- 新增 test.yml: push/PR 自动跑 pytest，Python 3.11/3.12 矩阵
+- devcontainer Python 3.11 → 3.12
 
 ## 两个配置小坑
 
