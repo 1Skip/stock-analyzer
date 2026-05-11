@@ -38,6 +38,9 @@ class StockDataFetcher:
     _request_locks = {}
     _lock_mutex = Lock()
 
+    # 离线缓存文件锁，防止多线程并发写坏
+    _cache_lock = Lock()
+
     # 数据源健康状态缓存
     _health_status = {
         'akshare_em': {'healthy': True, 'last_check': None, 'fail_count': 0},
@@ -188,42 +191,57 @@ class StockDataFetcher:
         return None
 
     def _save_offline_cache(self, symbol, data):
-        """保存离线缓存数据"""
-        try:
-            cache_data = {}
-            if os.path.exists(self._offline_cache_file):
-                with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
+        """保存离线缓存数据（线程安全 + 原子写入）"""
+        with self._cache_lock:
+            try:
+                cache_data = {}
+                if os.path.exists(self._offline_cache_file):
+                    try:
+                        with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                    except json.JSONDecodeError:
+                        # 缓存文件已损坏，重建
+                        cache_data = {}
 
-            # 只保存最近20个股票
-            if len(cache_data) >= 20:
-                # 删除最早的条目
-                oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k].get('timestamp', 0))
-                del cache_data[oldest_key]
+                # 只保存最近20个股票
+                if len(cache_data) >= 20:
+                    oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k].get('timestamp', 0))
+                    del cache_data[oldest_key]
 
-            cache_data[symbol] = {
-                'timestamp': datetime.now().isoformat(),
-                'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data
-            }
+                cache_data[symbol] = {
+                    'timestamp': datetime.now().isoformat(),
+                    'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data
+                }
 
-            with open(self._offline_cache_file, 'w', encoding='utf-8') as f:
-                json.dump(cache_data, f, default=str)
-        except Exception as e:
-            print(f"保存离线缓存失败: {str(e)}")
+                # 原子写入：先写临时文件，再 os.replace 替换
+                tmp_file = self._offline_cache_file + '.tmp'
+                with open(tmp_file, 'w', encoding='utf-8') as f:
+                    json.dump(cache_data, f, default=str)
+                os.replace(tmp_file, self._offline_cache_file)
+            except Exception as e:
+                print(f"保存离线缓存失败: {str(e)}")
+                # 清理可能残留的临时文件
+                try:
+                    tmp_file = self._offline_cache_file + '.tmp'
+                    if os.path.exists(tmp_file):
+                        os.remove(tmp_file)
+                except Exception:
+                    pass
 
     def _load_offline_cache(self, symbol, max_age_hours=24):
-        """加载离线缓存数据"""
+        """加载离线缓存数据（线程安全）"""
         try:
             if not os.path.exists(self._offline_cache_file):
                 return None
 
-            try:
-                with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-            except json.JSONDecodeError:
-                # 缓存文件损坏，删除后重建
-                os.remove(self._offline_cache_file)
-                return None
+            with self._cache_lock:
+                try:
+                    with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                except json.JSONDecodeError:
+                    # 缓存文件损坏，删除后重建
+                    os.remove(self._offline_cache_file)
+                    return None
 
             if symbol not in cache_data:
                 return None

@@ -108,10 +108,9 @@ class TestInitAndConfig:
 
     def test_env_var_sets_preferred_source(self, monkeypatch):
         monkeypatch.setenv('STOCK_DATA_SOURCE', 'sina')
-        import importlib
-        import data_fetcher
-        importlib.reload(data_fetcher)
-        fetcher = data_fetcher.StockDataFetcher()
+        # 不用 importlib.reload（会替换类对象，导致其他模块的引用失效）
+        from data_fetcher import StockDataFetcher
+        fetcher = StockDataFetcher()
         assert fetcher.preferred_source == 'sina'
 
 
