@@ -952,7 +952,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     # ① 标题行
     col_title, col_watchlist = st.columns([3, 1])
     with col_title:
-        st.markdown(f'<div style="font-size:1.25rem;font-weight:600;margin-bottom:8px;">{symbol} {stock_name}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div style="font-size:1.25rem;font-weight:600;margin-bottom:8px;">{html.escape(symbol)} {html.escape(stock_name)}</div>', unsafe_allow_html=True)
     with col_watchlist:
         if is_in_watchlist(symbol, market):
             if st.button("移除自选", key="remove_watchlist"):
@@ -1717,7 +1717,7 @@ def display_market_temperature():
         rows.append(
             f'<div style="display:flex;justify-content:space-between;align-items:center;'
             f'padding:3px 0;font-size:0.92rem">'
-            f'<span style="opacity:0.85">{idx["name"]}</span>'
+            f'<span style="opacity:0.85">{html.escape(str(idx["name"]))}</span>'
             f'<span><b>{idx["price"]:.2f}</b> '
             f'<span style="color:{color}">{direction} {pct:+.2f}%</span></span>'
             f'</div>'
@@ -1791,7 +1791,7 @@ def display_watchlist_sidebar():
                 # 第一行：名称 + 价格 + 删除按钮
                 col_title, col_price, col_del = st.columns([2.5, 2, 0.8])
                 with col_title:
-                    st.markdown(f'<span style="font-weight:600">{symbol}</span> · {name[:6]}',
+                    st.markdown(f'<span style="font-weight:600">{html.escape(symbol)}</span> · {html.escape(name[:6])}',
                                unsafe_allow_html=True)
                 with col_price:
                     if item['price'] is not None:
@@ -1887,7 +1887,7 @@ def display_watchlist_mini_panel(summaries):
         change_color = "#ff3b30" if change_pct >= 0 else "#34c759"
         arrow_sign = "+" if change_pct >= 0 else ""
         st.markdown(
-            f'<span style="font-weight:600">{symbol}</span> · {name[:6]}'
+            f'<span style="font-weight:600">{html.escape(symbol)}</span> · {html.escape(name[:6])}'
             f'&nbsp;&nbsp;<span style="color:{change_color};font-weight:600">¥{price:.2f} {arrow_sign}{change_pct:.2f}%</span>',
             unsafe_allow_html=True
         )
