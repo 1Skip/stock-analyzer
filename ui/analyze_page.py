@@ -329,24 +329,45 @@ def analyze_stock_page():
     def on_period_change():
         st.session_state.analyze_period = st.session_state.analyze_period_select
 
-    col1, col2, col3 = st.columns(3)
+    # ================================================================
+    # 搜索区域 — 主搜索框 + 辅助选项
+    # ================================================================
 
-    with col1:
-        symbol = st.text_input("股票代码",
-                               value=st.session_state.analyze_symbol,
-                               help="A股如: 000001, 600519 | 美股如: AAPL, TSLA",
-                               key="analyze_symbol_input",
-                               on_change=on_symbol_change)
+    # 第1行：搜索框 | 开始分析（核心操作，视觉焦点）
+    with st.form("search_form"):
+        col_input, col_btn = st.columns([5, 1])
+        with col_input:
+            st.text_input(
+                "股票代码或名称",
+                value=st.session_state.analyze_symbol,
+                placeholder="000001 或 平安银行 · AAPL · 00700",
+                label_visibility="collapsed",
+                key="analyze_symbol_input",
+            )
+        with col_btn:
+            form_submitted = st.form_submit_button(
+                "开始分析", type="primary", use_container_width=True
+            )
 
-    with col2:
+    # 表单提交后同步输入框值到 analyze_symbol
+    if form_submitted:
+        st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
+
+    # 第2行：市场 | 周期 | 配色 | 刷新 — 总宽6份，对齐上行 input(5)+btn(1)
+    col_mkt, col_period, col_pref, col_refresh = st.columns([2, 2, 1, 1])
+
+    with col_mkt:
         market_index = ["CN", "US", "HK"].index(st.session_state.analyze_market)
-        market = st.selectbox("市场", options=["CN", "US", "HK"],
-                             index=market_index,
-                             format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
-                             key="analyze_market_select",
-                             on_change=on_market_change)
+        market = st.selectbox(
+            "市场",
+            options=["CN", "US", "HK"],
+            index=market_index,
+            format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
+            key="analyze_market_select",
+            on_change=on_market_change,
+        )
 
-    with col3:
+    with col_period:
         period_options = ["1wk", "1mo", "3mo", "6mo", "1y", "2y"]
         period_labels = {
             "1wk": "1周 · 短线异动",
@@ -357,41 +378,65 @@ def analyze_stock_page():
             "2y": "2年 · 历史锚点",
         }
         period_index = period_options.index(st.session_state.analyze_period)
-        period = st.selectbox("时间周期", options=period_options,
-                             index=period_index,
-                             format_func=lambda x: period_labels[x],
-                             key="analyze_period_select",
-                             on_change=on_period_change)
+        period = st.selectbox(
+            "周期",
+            options=period_options,
+            index=period_index,
+            format_func=lambda x: period_labels[x],
+            key="analyze_period_select",
+            on_change=on_period_change,
+        )
+
+    with col_pref:
+        if "color_scheme" not in st.session_state:
+            st.session_state.color_scheme = DEFAULT_COLOR_SCHEME.get(
+                st.session_state.analyze_market, "red_up"
+            )
+
+        def on_color_scheme_change():
+            st.session_state.color_scheme = st.session_state.color_scheme_select
+
+        scheme_options = list(COLOR_SCHEMES.keys())
+        scheme_labels = {k: v["label"] for k, v in COLOR_SCHEMES.items()}
+        scheme_index = scheme_options.index(st.session_state.color_scheme)
+        st.selectbox(
+            "配色",
+            options=scheme_options,
+            index=scheme_index,
+            format_func=lambda x: scheme_labels[x],
+            key="color_scheme_select",
+            on_change=on_color_scheme_change,
+        )
+
+    with col_refresh:
+        # 占位高度 = selectbox 标签高度，让按钮与下拉框对齐
+        st.markdown(
+            '<span style="visibility:hidden;font-size:10px">.</span>',
+            unsafe_allow_html=True,
+        )
+        if st.button("刷新缓存", type="secondary", use_container_width=True):
+            get_cached_stock_data.clear()
+            get_cached_realtime_quote.clear()
+            get_cached_stock_info.clear()
+            st.success("已清除缓存，请重新分析")
 
     symbol = st.session_state.analyze_symbol
     market = st.session_state.analyze_market
     period = st.session_state.analyze_period
 
-    if 'color_scheme' not in st.session_state:
-        st.session_state.color_scheme = DEFAULT_COLOR_SCHEME.get(market, 'red_up')
-
-    def on_color_scheme_change():
-        st.session_state.color_scheme = st.session_state.color_scheme_select
-
-    scheme_options = list(COLOR_SCHEMES.keys())
-    scheme_labels = {k: v['label'] for k, v in COLOR_SCHEMES.items()}
-    scheme_index = scheme_options.index(st.session_state.color_scheme)
-    st.selectbox("配色方案", options=scheme_options,
-                 index=scheme_index, format_func=lambda x: scheme_labels[x],
-                 key="color_scheme_select", on_change=on_color_scheme_change,
-                 help="红涨绿跌(A股传统) | 绿涨红跌(国际惯例) | 蓝涨橙跌(色盲友好)")
-
-    col_analyze, col_clear = st.columns([4, 1])
-    with col_clear:
-        if st.button("刷新数据", type="secondary"):
-            get_cached_stock_data.clear()
-            get_cached_realtime_quote.clear()
-            get_cached_stock_info.clear()
-            st.success("已清除缓存，请重新分析")
-    with col_analyze:
-        analyze_clicked = st.button("开始分析", type="primary", use_container_width=True) or st.session_state.pop('trigger_analysis', False)
+    analyze_clicked = form_submitted or st.session_state.pop('trigger_analysis', False)
 
     if analyze_clicked:
+        # 名称→代码解析（A股支持输入中文名称）
+        resolved_name = None
+        if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
+            result = fetcher.resolve_stock_input(symbol, market)
+            if result:
+                resolved_name = result[1]
+                symbol = result[0]
+                st.session_state.analyze_symbol = symbol
+                st.caption(f"已识别: {resolved_name} ({symbol})")
+
         is_valid, err_msg = _validate_symbol(symbol, market)
         if not is_valid:
             st.error(f"输入的股票代码格式有误，{err_msg}")
@@ -472,9 +517,9 @@ def analyze_stock_page():
                 data = pd.concat([data, realtime_row])
         progress_bar.progress(75)
 
-        stock_name = symbol
+        stock_name = resolved_name or symbol
         if isinstance(info, dict):
-            stock_name = info.get('shortName') or info.get('longName') or symbol
+            stock_name = info.get('shortName') or info.get('longName') or stock_name
         if stock_name == symbol and market == "CN":
             status_text.text("正在获取股票名称...")
             try:

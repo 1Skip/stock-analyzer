@@ -727,6 +727,85 @@ class StockDataFetcher:
             pass
         return symbol
 
+    def resolve_stock_input(self, text, market="CN"):
+        """解析用户输入（股票代码或名称），返回 (code, name) 或 None
+
+        支持：
+        - 6位代码 → 直接返回
+        - 中文名称（精确/模糊匹配）→ 返回对应代码
+        """
+        text = text.strip()
+        if not text:
+            return None
+
+        # 已经是代码
+        if market == "CN" and text.isdigit() and len(text) == 6:
+            name = CN_STOCK_NAMES_EXTENDED.get(text, text)
+            return (text, name)
+
+        # 非CN市场不支持名称搜索
+        if market != "CN":
+            return None
+
+        # 含中文字符 → 按名称搜索
+        if not any('一' <= c <= '鿿' for c in text):
+            return None
+
+        # 快速路径：静态映射表反查
+        name_to_code = {v: k for k, v in CN_STOCK_NAMES_EXTENDED.items()}
+
+        # 精确匹配
+        if text in name_to_code:
+            code = name_to_code[text]
+            return (code, text)
+
+        # 前缀匹配
+        prefix_matches = [(name, code) for name, code in name_to_code.items() if name.startswith(text)]
+        if len(prefix_matches) == 1:
+            return (prefix_matches[0][1], prefix_matches[0][0])
+
+        # 包含匹配
+        contains_matches = [(name, code) for name, code in name_to_code.items() if text in name]
+        if len(contains_matches) == 1:
+            return (contains_matches[0][1], contains_matches[0][0])
+
+        # 多个匹配时，如果有前缀匹配优先返回前缀匹配的第一个
+        if prefix_matches:
+            return (prefix_matches[0][1], prefix_matches[0][0])
+        if contains_matches:
+            return (contains_matches[0][1], contains_matches[0][0])
+
+        # 全量快照搜索（覆盖5000+只股票）
+        spot_df = self._get_spot_snapshot()
+        if spot_df is not None:
+            # 精确匹配
+            exact = spot_df[spot_df['名称'] == text]
+            if not exact.empty:
+                row = exact.iloc[0]
+                return (row['代码'], row['名称'])
+
+            # 前缀匹配
+            prefix_spot = spot_df[spot_df['名称'].str.startswith(text, na=False)]
+            if len(prefix_spot) == 1:
+                row = prefix_spot.iloc[0]
+                return (row['代码'], row['名称'])
+
+            # 包含匹配
+            contains_spot = spot_df[spot_df['名称'].str.contains(text, na=False)]
+            if len(contains_spot) == 1:
+                row = contains_spot.iloc[0]
+                return (row['代码'], row['名称'])
+
+            # 多个匹配返回第一个
+            if not prefix_spot.empty:
+                row = prefix_spot.iloc[0]
+                return (row['代码'], row['名称'])
+            if not contains_spot.empty:
+                row = contains_spot.iloc[0]
+                return (row['代码'], row['名称'])
+
+        return None
+
     def get_realtime_quote(self, symbol, market="US"):
         """获取实时行情 - A股优先新浪HTTP（~200ms），AKShare快照做 fallback"""
         try:

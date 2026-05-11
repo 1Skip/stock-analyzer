@@ -183,6 +183,30 @@ st.markdown("""
         border-radius: 10px !important;
     }
 
+    /* ===== 搜索区域 ===== */
+    [data-testid="stForm"] {
+        border: none !important;
+        padding: 0 !important;
+        margin-bottom: var(--space-8) !important;
+    }
+
+    /* 搜索输入框增大字号 */
+    [data-testid="stForm"] [data-testid="stTextInput"] input {
+        font-size: var(--font-section) !important;
+        padding: 0.7rem 0.9rem !important;
+        border: 1px solid rgba(128,128,128,0.2) !important;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    [data-testid="stForm"] [data-testid="stTextInput"] input:focus {
+        border-color: var(--color-primary) !important;
+        box-shadow: 0 0 0 3px rgba(0,113,227,0.15) !important;
+    }
+
+    /* 紧凑型 selectbox（无标签模式） */
+    .compact-select [data-baseweb="select"] {
+        font-size: var(--font-caption) !important;
+    }
+
     /* ===== Divider ===== */
     hr {
         opacity: 0.2;
