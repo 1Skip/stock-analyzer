@@ -44,7 +44,7 @@ originSessionId: 35a65abf-4e04-45e9-9335-f14881646c5d
 
 ## 两个配置小坑
 
-1. **MARKET_INDEX_ENABLED**：注释写"默认关闭"，config.py 211行默认是 `"true"` — 注释和代码矛盾
-2. **API_AUTH_KEY**：匿名路径允许 `/webhook`，实际飞书路由是 `/webhook/feishu`，设置 API_AUTH_KEY 后可能挡住飞书回调
+1. **~~MARKET_INDEX_ENABLED~~** ✅ 已完成 (commit 5ae376b)：注释改为"默认开启"，与实际默认值 `"true"` 一致
+2. **~~API_AUTH_KEY~~** ✅ 已完成 (commit 5ae376b)：鉴权白名单添加 `/webhook/feishu`，飞书回调不再被拦
 
 **How to apply:** 先修 #1 测试隔离 + #2 缓存写坏，收益最大。其余按优先级依次推进。
