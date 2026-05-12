@@ -27,6 +27,7 @@
 - **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退；中文名称搜索使用全量 A 股名称索引（5515+ 只，24h 本地缓存）
 - **港股** — 新浪财经 → Yahoo Finance
 - **美股** — 新浪财经 → Yahoo Finance
+- **基础资料/估值** — A股接入分层数据服务，AKShare 个股资料 + 腾讯行情估值补充，展示行业、上市日期、市值、PE/PB、换手率
 
 ### 其他功能
 - **热门股票** — 涨幅榜/跌幅榜/成交量榜 + 行业板块排行 + 概念板块排行
@@ -87,6 +88,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 - `RUNTIME_CACHE_DIR`：运行缓存目录，默认 `.cache/`，用于离线行情缓存和主板股票池缓存。
 - `API_AUTH_KEY`：API 鉴权密钥；如果 API 服务不只监听本地地址，建议务必设置。
+- `CACHE_TTL_FUNDAMENTALS`：A股基础资料/估值缓存时间，默认 3600 秒。
 - `CACHE_TTL_WATCHLIST_SUMMARY` / `CACHE_TTL_WATCHLIST_MINI`：自选股侧边栏缓存时间，默认 300 秒。
 - `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
 
@@ -105,6 +107,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
+| `data/` | 新分层数据服务（providers/services/cache/health/models），逐步承接行情、基础资料、研报、信号、新闻、公告等接口 |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
@@ -120,7 +123,27 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `watchlist.py` | 自选股管理 |
 | `tests/` | 测试（17 文件，533 测试） |
 
+### 分层数据服务
+
+项目已开始按 `a-stock-data` 的接口分层思路拆分数据层，但不会直接照搬外部仓库实现：
+
+- `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料 + 腾讯行情估值补充。
+- `data/services/`：业务接口层，目前提供 `FundamentalDataService.get_stock_profile()`。
+- `data/cache.py`：统一 JSON 文件缓存，默认落到 `.cache/`。
+- `data/health.py`：数据源健康状态登记，后续用于多源 fallback。
+- `data/models.py`：标准数据模型，当前包含 `StockProfile`。
+
+当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。
+
 ## 指标说明
+
+### 新股/短历史数据
+
+如果股票上市时间较短（例如新股/次新股），数据源只能返回上市后的交易日数据。此时页面会显示说明性提示，而不是错误告警：
+
+- 长周期指标（如 `MA20` / `MA60` / `RSI24` / `BOLL`）可能暂不完整。
+- 建议优先参考分时图、价格走势和短线指标。
+- 等交易日数据积累后，长周期指标会自动恢复完整计算。
 
 ### MACD
 - **金叉**：MACD 线上穿信号线，买入信号

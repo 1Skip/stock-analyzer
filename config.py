@@ -48,6 +48,7 @@ SPOT_CACHE_TTL_SECONDS = 60  # 全市场快照缓存时间
 CACHE_TTL_REALTIME = 30       # 实时行情（30秒，减少全市场快照下载）
 CACHE_TTL_STOCK_DATA = 600   # 历史K线数据（10分钟，减少重复请求）
 CACHE_TTL_STOCK_INFO = 300    # 股票基本信息
+CACHE_TTL_FUNDAMENTALS = 3600  # 个股基础资料/估值（1小时）
 CACHE_TTL_INTRADAY = 60       # 分时图数据（1分钟）
 CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算

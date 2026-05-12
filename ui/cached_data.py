@@ -3,10 +3,18 @@ import logging
 
 import streamlit as st
 from data_fetcher import StockDataFetcher
-from config import CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO, CACHE_TTL_INTRADAY
+from config import (
+    CACHE_TTL_FUNDAMENTALS,
+    CACHE_TTL_INTRADAY,
+    CACHE_TTL_REALTIME,
+    CACHE_TTL_STOCK_DATA,
+    CACHE_TTL_STOCK_INFO,
+)
+from data.services.fundamental_service import FundamentalDataService
 
 
 fetcher = StockDataFetcher()
+fundamental_service = FundamentalDataService()
 logger = logging.getLogger(__name__)
 STOCK_INPUT_CACHE_VERSION = "stock-input-v3-full-a-share-name-index"
 
@@ -39,6 +47,16 @@ def get_cached_stock_info(symbol, market):
     except Exception:
         logger.warning("缓存层获取股票信息失败: symbol=%s market=%s", symbol, market, exc_info=True)
         return {}
+
+
+@st.cache_data(ttl=CACHE_TTL_FUNDAMENTALS, max_entries=256, show_spinner=False)
+def get_cached_stock_profile(symbol, market):
+    """缓存分层数据服务返回的个股基础资料。"""
+    try:
+        return fundamental_service.get_stock_profile(symbol, market)
+    except Exception:
+        logger.warning("缓存层获取个股基础资料失败: symbol=%s market=%s", symbol, market, exc_info=True)
+        return None
 
 
 @st.cache_data(ttl=CACHE_TTL_REALTIME, max_entries=64, show_spinner=False)

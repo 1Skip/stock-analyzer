@@ -15,6 +15,7 @@ from ui.cached_data import (
     fetcher,
     get_cached_stock_data, get_cached_stock_info,
     get_cached_realtime_quote, get_cached_intraday_data,
+    get_cached_stock_profile,
     resolve_cached_stock_input,
 )
 from ui.charts import (
@@ -47,6 +48,78 @@ def _format_val(row, col, precision):
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return '--'
     return f'{float(val):.{precision}f}'
+
+
+def _format_large_number(value):
+    """把股本/市值格式化为中文单位。"""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "--"
+    value = float(value)
+    abs_value = abs(value)
+    if abs_value >= 1e8:
+        return f"{value / 1e8:.2f}亿"
+    if abs_value >= 1e4:
+        return f"{value / 1e4:.2f}万"
+    return f"{value:.2f}"
+
+
+def _format_optional_number(value, suffix="", precision=2):
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return "--"
+    return f"{float(value):.{precision}f}{suffix}"
+
+
+def _build_short_history_notice(symbol, stock_name, data_len, period):
+    """生成短历史数据提示。"""
+    if data_len >= 30:
+        return None
+
+    display_name = stock_name if stock_name and stock_name != symbol else symbol
+    if data_len < 20:
+        return (
+            f"{symbol} {display_name} 可用历史数据较少（仅{data_len}个交易日），"
+            "可能是新股/次新股或数据源只返回上市后行情。长周期指标（如 MA20/MA60、RSI24、BOLL）"
+            "暂不完整，建议优先参考分时图、价格走势和短线指标。"
+        )
+
+    return (
+        f"{symbol} {display_name} 历史数据偏少（{data_len}个交易日），"
+        f"当前选择「{period}」周期时，部分长周期指标可能不完整。"
+    )
+
+
+def _render_stock_profile(profile):
+    """渲染基础资料/估值卡片。"""
+    if not profile:
+        return
+
+    with st.expander("基础资料 / 估值", expanded=False):
+        col_industry, col_listing, col_market_cap, col_float_cap = st.columns(4)
+        with col_industry:
+            st.metric("行业", profile.get("industry") or "--")
+        with col_listing:
+            st.metric("上市日期", profile.get("listing_date") or "--")
+        with col_market_cap:
+            st.metric("总市值", _format_large_number(profile.get("market_cap")))
+        with col_float_cap:
+            st.metric("流通市值", _format_large_number(profile.get("float_market_cap")))
+
+        col_total, col_float, col_pe, col_pb = st.columns(4)
+        with col_total:
+            st.metric("总股本", _format_large_number(profile.get("total_shares")))
+        with col_float:
+            st.metric("流通股", _format_large_number(profile.get("float_shares")))
+        with col_pe:
+            st.metric("PE(TTM)", _format_optional_number(profile.get("pe_ttm")))
+        with col_pb:
+            st.metric("PB", _format_optional_number(profile.get("pb")))
+
+        turnover_rate = profile.get("turnover_rate")
+        if turnover_rate is not None:
+            st.caption(f"换手率：{_format_optional_number(turnover_rate, '%')}")
+
+        if profile.get("source") or profile.get("updated_at"):
+            st.caption(f"来源：{profile.get('source') or '未知'} · 更新：{profile.get('updated_at') or '--'}")
 
 
 def display_signals(signals):
@@ -172,7 +245,7 @@ def _display_indicator_values(data):
         )
 
 
-def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None):
+def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
@@ -245,6 +318,8 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
             st.metric("今开", f"{quote['open']:.2f}")
 
     st.write("")
+
+    _render_stock_profile(profile)
 
     # ③ 分时图（仅A股）
     if market == "CN":
@@ -457,8 +532,9 @@ def analyze_stock_page():
         data = None
         quote = None
         intraday_data = None
+        profile = None
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
         futures = {}
         try:
             futures = {
@@ -468,6 +544,7 @@ def analyze_stock_page():
             }
             if market == "CN":
                 futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
 
             try:
                 data = futures['data'].result(timeout=20)
@@ -494,6 +571,12 @@ def analyze_stock_page():
                     intraday_data = futures['intraday'].result(timeout=0.2)
             except Exception:
                 intraday_data = None
+
+            try:
+                if 'profile' in futures:
+                    profile = futures['profile'].result(timeout=0.2)
+            except Exception:
+                profile = None
         finally:
             for future in futures.values():
                 if not future.done():
@@ -517,9 +600,6 @@ def analyze_stock_page():
             st.caption(f"🟡 备选数据源 · {data_source}")
         else:
             st.caption(f"数据源 · {data_source}")
-
-        if len(data) < 30:
-            st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
         status_text.text("正在合并实时行情...")
 
@@ -553,6 +633,10 @@ def analyze_stock_page():
             stock_name = symbol
         progress_bar.progress(78)
 
+        short_history_notice = _build_short_history_notice(symbol, stock_name, len(data), period)
+        if short_history_notice:
+            st.info(short_history_notice)
+
         progress_bar.progress(82)
 
         status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
@@ -573,12 +657,13 @@ def analyze_stock_page():
         st.session_state.analyzed_signals = signals
         st.session_state.analyzed_quote = quote
         st.session_state.analyzed_stock_name = stock_name
+        st.session_state.analyzed_profile = profile
 
         period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
         cutoff = data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
         display_data = data[data.index >= cutoff] if len(data[data.index >= cutoff]) >= 10 else data
 
-        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data)
+        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data, profile=profile)
 
         progress_bar.empty()
         status_text.empty()
@@ -597,7 +682,8 @@ def analyze_stock_page():
                 symbol,
                 st.session_state.get("analyzed_stock_name", ""),
                 market,
-                period
+                period,
+                profile=st.session_state.get("analyzed_profile"),
             )
 
     # 锚点滚动

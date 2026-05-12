@@ -60,6 +60,36 @@ type: project
 - README 更新全量名称搜索、缓存配置、测试数量。
 - CLAUDE.md 更新架构约定、常见问题、测试数量。
 
+### 6. 数据层按 `a-stock-data` 思路分层
+
+**背景**：用户希望把 `simonlin1212/a-stock-data` 的架构思路用到本项目里，并且不要再出现“报一只股票补一只”的零散修复。
+
+**落地**：
+- 新增 `data/` 包，按 provider / service / cache / health / model 分层。
+- `data/providers/akshare_provider.py` 封装 AKShare 个股基础资料接口，并用腾讯行情补充 PE/PB/换手率。
+- `data/services/fundamental_service.py` 提供 `get_stock_profile(symbol, market)` 业务接口。
+- `data/cache.py` 统一 JSON 文件缓存，基础资料缓存到 `.cache/fundamentals.json`。
+- `data/models.py` 新增 `StockProfile` 标准模型，避免 UI 直接依赖原始接口字段。
+- `ui/cached_data.py` 新增 `get_cached_stock_profile()`，`ui/analyze_page.py` 并行获取基础资料，避免阻塞 K线主流程。
+- 个股分析页新增“基础资料 / 估值”折叠区，展示行业、上市日期、市值、股本、PE/PB、换手率。
+
+**验证**：
+- `tests/test_data_services.py` 覆盖 provider 标准化、腾讯估值补充、健康状态、service 缓存。
+- 聚焦测试：`22 passed`。
+
+### 7. 新股短历史提示文案优化
+
+**问题**：新股/次新股（如 `301513 尚水智能`）上市时间短，实际只有十几个交易日数据，但页面显示“数据不足，部分指标可能无法计算”，用户容易误以为搜索或行情接口出错。
+
+**修复**：
+- `ui/analyze_page.py` 新增 `_build_short_history_notice()`，把短历史情况解释为新股/次新股或数据源只返回上市后行情。
+- 将原 `st.warning()` 改为 `st.info()`，并提示长周期指标（MA20/MA60、RSI24、BOLL）暂不完整，建议优先参考分时图、价格走势和短线指标。
+- 提示挪到股票名称解析之后，文案显示 `代码 + 名称`，不再像异常告警。
+
+**验证**：
+- `tests/test_ui_utils.py` 新增短历史提示测试。
+- 聚焦测试：`20 passed`。
+
 ## 测试结果
 
 - `py_compile` 通过。

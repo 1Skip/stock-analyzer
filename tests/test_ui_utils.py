@@ -3,7 +3,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from chart_utils import classify_signal
-from ui.analyze_page import _validate_symbol, _format_val
+from ui.analyze_page import _validate_symbol, _format_val, _build_short_history_notice
 
 
 class TestClassifySignal:
@@ -89,3 +89,24 @@ class TestFormatVal:
         row = {"rsi": 65.4321}
         assert _format_val(row, "rsi", 1) == "65.4"
         assert _format_val(row, "rsi", 3) == "65.432"
+
+
+class TestShortHistoryNotice:
+
+    def test_no_notice_when_history_enough(self):
+        assert _build_short_history_notice("000001", "平安银行", 30, "1y") is None
+
+    def test_new_stock_friendly_notice(self):
+        notice = _build_short_history_notice("301513", "尚水智能", 15, "1y")
+
+        assert "新股/次新股" in notice
+        assert "15个交易日" in notice
+        assert "长周期指标" in notice
+        assert "分时图" in notice
+
+    def test_short_history_notice_uses_period(self):
+        notice = _build_short_history_notice("000001", "平安银行", 25, "6mo")
+
+        assert "历史数据偏少" in notice
+        assert "25个交易日" in notice
+        assert "6mo" in notice
