@@ -63,6 +63,7 @@
 - **基础资料/估值**：A股个股分析页并行调用 `get_cached_stock_profile()`，AKShare 获取股票简称/行业/上市日期/股本/市值，腾讯行情补 PE/PB/换手率，辅助数据最多短暂等待，不阻塞 K线主流程
 - **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；失败返回空结构，不影响主图表和技术指标
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 日报，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
+- **日报定时推送**：`scheduler.py` 默认在定时任务中生成日报；`DAILY_REPORT_ENABLED` 控制是否生成，`DAILY_REPORT_PUSH_ENABLED` 控制是否推送完整 Markdown，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后定时推送被推荐股全市场扫描拖慢
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
@@ -197,6 +198,9 @@ python main.py --daily-report
 
 # 快速验证日报结构（跳过推荐股扫描）
 python main.py --daily-report --no-report-recommendations --report-dir reports/history
+
+# 启动定时分析 + 摘要推送 + 每日 Markdown 日报推送
+python main.py --schedule
 
 # 启动 Web
 streamlit run app.py

@@ -60,6 +60,12 @@ CACHE_TTL_WATCHLIST_MINI = 300     # 自选股 mini 面板（5分钟）
 SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "false").lower() == "true"
 SECTOR_PUSH_TOP_N = int(os.getenv("SECTOR_PUSH_TOP_N", "3"))
 
+# 每日报告配置
+DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
+DAILY_REPORT_PUSH_ENABLED = os.getenv("DAILY_REPORT_PUSH_ENABLED", "true").lower() == "true"
+DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false").lower() == "true"
+DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
+
 # ============================================================
 # 配色方案
 # ============================================================

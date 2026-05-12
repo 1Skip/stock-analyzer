@@ -80,6 +80,9 @@ python main.py --recommend
 python main.py --daily-report
 python main.py --daily-report --report-dir reports/history
 python main.py --daily-report --no-report-recommendations
+
+# 启动定时分析和推送
+python main.py --schedule
 ```
 
 `--daily-report` 会生成 `reports/history/YYYY-MM-DD.md` 和 `reports/history/latest.md`。如果网络较慢或只想快速验证报告结构，可加 `--no-report-recommendations` 跳过推荐股扫描。
@@ -99,6 +102,12 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `CACHE_TTL_FUNDAMENTALS`：A股基础资料/估值缓存时间，默认 3600 秒。
 - `CACHE_TTL_WATCHLIST_SUMMARY` / `CACHE_TTL_WATCHLIST_MINI`：自选股侧边栏缓存时间，默认 300 秒。
 - `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
+- `SCHEDULE_TIME`：定时任务执行时间，默认 `15:30`。
+- `NOTIFY_CHANNELS`：推送渠道，逗号分隔，可选 `wechat`, `feishu`。
+- `DAILY_REPORT_ENABLED`：定时任务是否生成每日报告，默认 `true`。
+- `DAILY_REPORT_PUSH_ENABLED`：定时任务是否推送完整 Markdown 日报，默认 `true`。
+- `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描推荐股，默认 `false`，避免定时推送过慢。
+- `DAILY_REPORT_DIR`：日报输出目录，默认 `reports/history`。
 
 ## 项目结构
 
@@ -155,6 +164,8 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - 今日推荐：默认取短线推荐前 5，只在 CLI 生成报告时执行。
 - 扩展摘要：对自选股中的 A 股补充财务、资金和新闻摘要。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
+
+定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会先推送原有选股摘要，再生成并推送完整 Markdown 日报。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
 ## 指标说明
 

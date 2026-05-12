@@ -1,4 +1,4 @@
-- [Bug fixes & context 2026-05-13](bug_fixes_and_context_2026-05-13.md) — 5/13更新：对比 daily_stock_analysis 后新增每日 Markdown 分析报告，CLI 支持导出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`
+- [Bug fixes & context 2026-05-13](bug_fixes_and_context_2026-05-13.md) — 5/13更新：对比 daily_stock_analysis 后新增每日 Markdown 分析报告，CLI 和定时任务支持生成/推送 `reports/history/YYYY-MM-DD.md` 和 `latest.md`
 - [Bug fixes & context 2026-05-12](bug_fixes_and_context_2026-05-12.md) — 5/12修复：全量A股名称索引、搜索性能优化、运行缓存迁移、API安全提示，533 tests pass
 - [Project state 2026-05-10](project_state.md) — P0代码质量修复完成，P1/P2优化待做，514测试通过
 - [Optimization plan 2026-05-10](optimization_plan.md) — 测试隔离+缓存写坏+XSS+大文件拆分+评分合并+AI线程安全+依赖CI+两个配置坑
