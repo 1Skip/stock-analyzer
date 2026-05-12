@@ -1,7 +1,7 @@
 """缓存数据获取层 — Streamlit @st.cache_data 封装"""
 import streamlit as st
 from data_fetcher import StockDataFetcher
-from config import CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO
+from config import CACHE_TTL_REALTIME, CACHE_TTL_STOCK_DATA, CACHE_TTL_STOCK_INFO, CACHE_TTL_INTRADAY
 
 
 fetcher = StockDataFetcher()
@@ -34,7 +34,7 @@ def get_cached_realtime_quote(symbol, market):
         return None
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_INTRADAY, show_spinner=False)
 def get_cached_intraday_data(symbol, market):
     """缓存分时数据 — 60秒缓存，仅A股"""
     try:

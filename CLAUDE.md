@@ -14,12 +14,15 @@
 
 | 文件 | 职责 | 备注 |
 |------|------|------|
-| `app.py` | Streamlit Web 入口 | ~267行，页面配置 + CSS + 路由 + re-export（兼容测试） |
+| `app.py` | Streamlit Web 入口 | ~100行，页面配置 + CSS注入（2行）+ 路由 + re-export（兼容测试） |
+| `stock_names.py` | 股票名称静态映射表 | ~200只A股 + 热门美股列表，data_fetcher 导入使用 |
+| `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置、classify_signal，供 Web 和 CLI 共用 |
+| `ui/styles.py` | CSS 样式定义 | ~207行，Apple × Tesla 设计体系，app.py 导入注入 |
 | `ui/cached_data.py` | 缓存数据层 | fetcher 实例 + 4个 @st.cache_data 函数 |
 | `ui/charts.py` | 图表函数 | K线/RSI/KDJ/BOLL/分时图，Plotly 实现 |
 | `ui/ai_analysis_ui.py` | AI 分析 UI | API 配置表单 + 单Agent/多Agent 结果渲染 |
 | `ui/sidebar.py` | 侧边栏组件 | 大盘温度、自选股列表、mini 分析面板、数据源选择 |
-| `ui/analyze_page.py` | 个股分析页面 | 输入表单 + 数据获取 + 信号/指标卡片 + 图表渲染 |
+| `ui/analyze_page.py` | 个股分析页面 | 输入表单 + 股票名称搜索 + Enter键搜索 + 信号/指标卡片 + 图表渲染 |
 | `ui/hot_stocks_page.py` | 热门板块页面 | 行业/概念排行 + 涨跌幅榜 |
 | `ui/recommend_page.py` | 智能推荐页面 | 短线/长线龙头股推荐 |
 | `ui/compare_page.py` | 股票对比页面 | 多股票指标对比 + 标准化走势 |
@@ -38,7 +41,7 @@
 | `backtest_adapter.py` | 回测适配 | 连接信号体系与回测引擎 |
 | `backtest_ui.py` | 回测 UI | Streamlit 回测页面 |
 | `api_server.py` | FastAPI 服务 | 飞书机器人回调 + 股票查询 API（可选，`FEISHU_BOT_ENABLED` 控制） |
-| `tests/` | 测试（18文件，514测试） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
+| `tests/` | 测试（19文件，531测试） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
 | `pytest.ini` | pytest 配置 | testpaths=tests, 注册 slow/network 标记, --tb=short |
 | `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare / fastapi / uvicorn（飞书机器人可选） |
 | `.devcontainer/devcontainer.json` | Dev Container | Python 3.11，自动安装依赖并启动 Streamlit |

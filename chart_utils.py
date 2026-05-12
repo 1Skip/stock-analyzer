@@ -32,3 +32,13 @@ def get_volume_colors(df, up_color, down_color):
 def get_macd_hist_colors(hist_data, up_color, down_color):
     """返回MACD柱状图的颜色列表：>=0用up_color，<0用down_color"""
     return [up_color if v >= 0 else down_color for v in hist_data]
+
+
+def classify_signal(text):
+    """信号分类：返回 'buy' / 'sell' / 'neutral'"""
+    s = str(text)
+    if "金叉" in s or "超卖" in s or "反弹" in s or "偏多" in s:
+        return "buy"
+    if "死叉" in s or "超买" in s or "回调" in s or "偏空" in s:
+        return "sell"
+    return "neutral"

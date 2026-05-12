@@ -4,6 +4,7 @@ import concurrent.futures
 import streamlit as st
 import pandas as pd
 import numpy as np
+from chart_utils import classify_signal
 from config import (
     RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD,
     DEFAULT_COLOR_SCHEME, COLOR_SCHEMES, AI_ENABLED,
@@ -20,16 +21,6 @@ from ui.charts import (
     plot_boll_chart, plot_intraday_chart,
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
-
-
-def _classify_signal(text):
-    """信号分类：返回 'buy' / 'sell' / 'neutral'"""
-    s = str(text)
-    if "金叉" in s or "超卖" in s or "反弹" in s or "偏多" in s:
-        return "buy"
-    if "死叉" in s or "超买" in s or "回调" in s or "偏空" in s:
-        return "sell"
-    return "neutral"
 
 
 def _validate_symbol(sym, mkt):
@@ -66,7 +57,7 @@ def display_signals(signals):
     badges_html = ""
     for key, label in [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]:
         text = signals.get(label, '--')
-        cls = _classify_signal(text)
+        cls = classify_signal(text)
         badges_html += f'<span class="signal-badge {cls}" style="font-size:1rem">{key} · {html.escape(text)}</span>'
 
     st.markdown(f'<div style="margin:12px 0;font-size:1.05rem">{badges_html}</div>', unsafe_allow_html=True)

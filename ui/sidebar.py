@@ -7,17 +7,8 @@ from watchlist import (
     add_to_watchlist, remove_from_watchlist,
     get_watchlist, is_in_watchlist, get_watchlist_summary,
 )
+from chart_utils import classify_signal
 from ui.cached_data import fetcher
-
-
-def _classify_signal(text):
-    """信号分类：返回 'buy' / 'sell' / 'neutral'"""
-    s = str(text)
-    if "金叉" in s or "超卖" in s or "反弹" in s or "偏多" in s:
-        return "buy"
-    if "死叉" in s or "超买" in s or "回调" in s or "偏空" in s:
-        return "sell"
-    return "neutral"
 
 
 def display_market_temperature():
@@ -133,7 +124,7 @@ def display_watchlist_sidebar():
                     signal_text = item.get('signal_summary', '--')
                     hint_text = item.get('entry_hint', '--')
 
-                    cls = _classify_signal(signal_text)
+                    cls = classify_signal(signal_text)
 
                     st.markdown(
                         f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span> '
@@ -207,7 +198,7 @@ def display_watchlist_mini_panel(summaries):
 
         st.divider()
 
-        cls = _classify_signal(signal_text)
+        cls = classify_signal(signal_text)
 
         st.markdown(
             f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span>',

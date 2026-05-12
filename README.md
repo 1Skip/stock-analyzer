@@ -20,9 +20,8 @@
 
 ### 通知推送
 - 企业微信机器人 Webhook
-- Telegram Bot
-- Bark（iOS 推送）
-- 默认关闭，通过环境变量 `NOTIFY_CHANNELS` 开启
+- 飞书机器人 Webhook
+- 默认关闭，通过环境变量 `NOTIFY_CHANNELS` 开启（可选值：`wechat`, `feishu`）
 
 ### 市场支持
 - **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退
