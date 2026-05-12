@@ -44,10 +44,19 @@ type: project
 - `DAILY_REPORT_DIR` 控制日报输出目录，默认 `reports/history`。
 - 定时任务保留原有选股摘要推送，日报生成失败不会阻断原有推送。
 
-### 6. 测试覆盖
+### 6. 五项借鉴点继续落地
+
+- 研报层：`AkShareInfoProvider` 新增东财个股研报列表/PDF 链接、同花顺一致预期 EPS。
+- 风险事件层：新增龙虎榜统计、限售解禁、近 30 日个股公告。
+- 板块归因层：新增行业/概念归属、板块涨跌幅和简单题材原因。
+- 日报质量：报告标题升级为“每日股票决策仪表盘”，新增核心结论、决策评分、买卖点、风险警报、操作检查清单。
+- GitHub Actions：`.github/workflows/daily_analysis.yml` 启用工作日北京时间 15:30 定时运行，并上传日报 Markdown 产物。
+
+### 7. 测试覆盖
 
 - 新增 `tests/test_daily_report.py`，覆盖 Markdown 渲染、报告导出、依赖注入和跳过推荐股扫描。
 - 扩展 `tests/test_scheduler.py`，覆盖日报生成并推送、只生成不推送、关闭日报、日报失败不影响主推送。
+- 扩展 `tests/test_data_services.py`，覆盖研报、风险事件、板块归因标准化，以及扩展信息 v2 缓存键。
 
 ## 使用方式
 

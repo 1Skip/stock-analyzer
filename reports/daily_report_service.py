@@ -106,12 +106,35 @@ class DailyReportService:
 
     def render_markdown(self, data: dict[str, Any]) -> str:
         lines = [
-            f"# 每日股票分析报告 — {data['date']}",
+            f"# 每日股票决策仪表盘 — {data['date']}",
             "",
             f"> 生成时间：{data['generated_at']}",
             "",
-            "## 大盘温度",
+            "## 核心结论",
         ]
+        watchlist = data.get("watchlist") or []
+        recommendations = data.get("recommendations") or []
+        extended_items = data.get("extended_info") or []
+        top_watch = self._top_watch_item(watchlist)
+        if top_watch:
+            lines.append(
+                f"- 自选股重点：`{top_watch.get('symbol')}` {top_watch.get('name', '')}，"
+                f"信号 {top_watch.get('signal_summary', '--')}，入场提示：{top_watch.get('entry_hint', '--')}"
+            )
+        elif recommendations:
+            item = recommendations[0]
+            lines.append(
+                f"- 推荐池重点：`{item.get('symbol')}` {item.get('name', '')}，"
+                f"评分 {item.get('score', '--')}，建议 {item.get('rating', '--')}"
+            )
+        else:
+            lines.append("- 今日暂无明确高优先级标的，保持观察。")
+        lines.append(f"- 风险事件覆盖：{sum(1 for item in extended_items if self._risk_count(item.get('info') or {}) > 0)} 只标的存在公告/龙虎榜/解禁等事件记录。")
+
+        lines.extend([
+            "",
+            "## 大盘温度",
+        ])
         indices = data.get("market_indices") or []
         if indices:
             for item in indices:
@@ -122,23 +145,22 @@ class DailyReportService:
         else:
             lines.append("- 暂无大盘指数数据")
 
-        lines.extend(["", "## 自选股摘要"])
-        watchlist = data.get("watchlist") or []
+        lines.extend(["", "## 自选股决策面板"])
         if watchlist:
             for item in watchlist:
                 if item.get("error"):
                     lines.append(f"- `{item['symbol']}` {item.get('name', '')}：⚠ {item['error']}")
                     continue
+                score = self._decision_score(item)
                 lines.append(
-                    f"- `{item['symbol']}` {item.get('name', '')}：{self._fmt_number(item.get('price'))} "
-                    f"({self._fmt_pct(item.get('change_pct'))})；"
-                    f"信号：{item.get('signal_summary', '--')}；入场：{item.get('entry_hint', '--')}"
+                    f"- `{item['symbol']}` {item.get('name', '')}：决策评分 {score}；"
+                    f"现价 {self._fmt_number(item.get('price'))} ({self._fmt_pct(item.get('change_pct'))})；"
+                    f"信号 {item.get('signal_summary', '--')}；买卖点：{item.get('entry_hint', '--')}"
                 )
         else:
             lines.append("- 暂无自选股")
 
-        lines.extend(["", "## 今日推荐"])
-        recommendations = data.get("recommendations") or []
+        lines.extend(["", "## 推荐池"])
         if recommendations:
             for index, item in enumerate(recommendations, 1):
                 lines.append(
@@ -148,14 +170,16 @@ class DailyReportService:
         else:
             lines.append("- 暂无推荐结果")
 
-        lines.extend(["", "## 财务 / 资金 / 新闻摘要"])
-        extended_items = data.get("extended_info") or []
+        lines.extend(["", "## 研报 / 风险 / 板块归因"])
         if extended_items:
             for item in extended_items:
                 info = item.get("info") or {}
                 financial = info.get("financial") or {}
                 fund_flow = info.get("fund_flow") or {}
                 news = info.get("news") or []
+                research = info.get("research") or {}
+                risk_events = info.get("risk_events") or {}
+                sector_attribution = info.get("sector_attribution") or {}
                 lines.append(f"### `{item['symbol']}` {item.get('name', '')}")
                 metrics = financial.get("metrics") or {}
                 if metrics:
@@ -170,6 +194,33 @@ class DailyReportService:
                         f"{self._fmt_money(fund_flow.get('main_net_inflow'))}，"
                         f"近5日 {self._fmt_money(fund_flow.get('five_day_main_net_inflow'))}"
                     )
+                if research.get("eps_consensus"):
+                    eps = research["eps_consensus"].get("values") or {}
+                    if eps:
+                        lines.append(f"- 一致预期 EPS：{self._fmt_key_values(eps)}")
+                for report in (research.get("reports") or [])[:2]:
+                    label = f"{report.get('date', '')} {report.get('org', '')}".strip()
+                    title = report.get("title", "")
+                    pdf_url = report.get("pdf_url", "")
+                    if pdf_url:
+                        lines.append(f"- 研报：{label} [{title}]({pdf_url})")
+                    else:
+                        lines.append(f"- 研报：{label} {title}".strip())
+                industry = sector_attribution.get("industry") or {}
+                concepts = sector_attribution.get("concepts") or []
+                if industry:
+                    lines.append(
+                        f"- 行业归因：{industry.get('name')} "
+                        f"({self._fmt_pct(industry.get('change_pct'))})；{industry.get('reason', '')}"
+                    )
+                if concepts:
+                    concept_text = "、".join(
+                        f"{c.get('name')}({self._fmt_pct(c.get('change_pct'))})" for c in concepts[:5]
+                    )
+                    lines.append(f"- 概念归因：{concept_text}")
+                risk_lines = self._risk_lines(risk_events)
+                for risk_line in risk_lines:
+                    lines.append(f"- 风险警报：{risk_line}")
                 if news:
                     for news_item in news[:3]:
                         title = news_item.get("title", "")
@@ -178,10 +229,15 @@ class DailyReportService:
                             lines.append(f"- 新闻：[{title}]({url})")
                         else:
                             lines.append(f"- 新闻：{title}")
-                if not metrics and not fund_flow and not news:
+                if not metrics and not fund_flow and not news and not research and not risk_lines and not industry and not concepts:
                     lines.append("- 暂无扩展信息")
         else:
             lines.append("- 暂无扩展信息")
+
+        lines.extend(["", "## 操作检查清单"])
+        checklist = self._operation_checklist(watchlist, extended_items)
+        for item in checklist:
+            lines.append(f"- {item}")
 
         lines.extend([
             "",
@@ -191,6 +247,85 @@ class DailyReportService:
             "",
         ])
         return "\n".join(lines)
+
+    @staticmethod
+    def _top_watch_item(watchlist: list[dict[str, Any]]) -> dict[str, Any] | None:
+        valid = [item for item in watchlist if not item.get("error")]
+        if not valid:
+            return None
+        return max(valid, key=lambda item: DailyReportService._decision_score(item))
+
+    @staticmethod
+    def _decision_score(item: dict[str, Any]) -> int:
+        score = 50
+        signal = str(item.get("signal_summary") or item.get("rating") or "")
+        change_pct = item.get("change_pct")
+        if "偏多" in signal:
+            score += 20
+        if "强" in signal:
+            score += 10
+        if "偏空" in signal:
+            score -= 20
+        try:
+            change_value = float(change_pct or 0)
+            if change_value > 3:
+                score += 8
+            elif change_value < -3:
+                score -= 8
+        except Exception:
+            pass
+        return max(0, min(100, score))
+
+    @staticmethod
+    def _risk_count(info: dict[str, Any]) -> int:
+        risk_events = info.get("risk_events") or {}
+        count = 0
+        if risk_events.get("lhb"):
+            count += 1
+        count += len(risk_events.get("restricted_release") or [])
+        count += len(risk_events.get("announcements") or [])
+        return count
+
+    def _risk_lines(self, risk_events: dict[str, Any]) -> list[str]:
+        lines = []
+        lhb = risk_events.get("lhb") or {}
+        if lhb:
+            lines.append(
+                f"龙虎榜 {lhb.get('period', '--')} 上榜 {self._fmt_number(lhb.get('times'))} 次，"
+                f"净买额 {self._fmt_money(lhb.get('net_amount'))}"
+            )
+        for item in (risk_events.get("restricted_release") or [])[:2]:
+            lines.append(
+                f"限售解禁 {item.get('date', '--')}，数量 {self._fmt_number(item.get('shares'))}，"
+                f"市值 {self._fmt_money(item.get('market_value'))}"
+            )
+        for item in (risk_events.get("announcements") or [])[:3]:
+            title = item.get("title", "")
+            if self._is_risk_announcement(title, item.get("type", "")):
+                lines.append(f"公告关注：{title}")
+        return lines
+
+    @staticmethod
+    def _is_risk_announcement(title: str, category: str = "") -> bool:
+        text = f"{title}{category}"
+        keywords = ["风险", "减持", "质押", "诉讼", "处罚", "问询", "退市", "停牌", "亏损", "业绩预告"]
+        return any(keyword in text for keyword in keywords)
+
+    def _operation_checklist(self, watchlist: list[dict[str, Any]], extended_items: list[dict[str, Any]]) -> list[str]:
+        checklist = [
+            "先确认大盘温度和所属板块是否同向，避免逆势追高。",
+            "若出现偏多信号，优先等待回踩支撑或放量确认，不用一次性满仓。",
+            "若出现偏空信号或风险公告，先降仓位或暂停新增。",
+        ]
+        if any(self._risk_count(item.get("info") or {}) > 0 for item in extended_items):
+            checklist.append("存在龙虎榜/解禁/公告事件的标的，盘前先阅读原始公告和成交明细。")
+        if not watchlist:
+            checklist.append("暂无自选股时，先维护 watchlist.json，再让日报聚焦固定股票池。")
+        return checklist
+
+    @staticmethod
+    def _fmt_key_values(values: dict[str, Any]) -> str:
+        return "；".join(f"{key}={value}" for key, value in list(values.items())[:4])
 
     @staticmethod
     def _fmt_number(value) -> str:

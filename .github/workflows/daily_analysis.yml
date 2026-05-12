@@ -1,9 +1,10 @@
 name: 每日股票分析
 
 on:
-  # schedule:  # 已关闭定时触发
-  #   - cron: "30 7 * * 1-5"
-  workflow_dispatch:  # 仅手动触发
+  schedule:
+    # 北京时间 15:30，GitHub Actions 使用 UTC
+    - cron: "30 7 * * 1-5"
+  workflow_dispatch:
 
 jobs:
   analyze:
@@ -17,14 +18,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: 安装依赖
         run: pip install -r requirements.txt
 
-      - name: 运行分析并推送通知
+      - name: 运行定时分析并推送日报
         env:
           NOTIFY_CHANNELS: ${{ secrets.NOTIFY_CHANNELS }}
           WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          DAILY_REPORT_ENABLED: "true"
+          DAILY_REPORT_PUSH_ENABLED: "true"
+          DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "false"
+          DAILY_REPORT_DIR: reports/history
         run: python main.py --notify
+
+      - name: 上传日报产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daily-stock-report
+          path: reports/history/*.md
+          if-no-files-found: ignore

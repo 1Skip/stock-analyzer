@@ -40,16 +40,48 @@ class TestDailyReportService:
                         "five_day_main_net_inflow": 5000000,
                     },
                     "news": [{"title": "测试新闻", "url": "https://example.com"}],
+                    "research": {
+                        "eps_consensus": {"values": {"2026预测EPS": 1.23}},
+                        "reports": [{
+                            "title": "测试研报",
+                            "date": "2026-05-13",
+                            "org": "测试证券",
+                            "rating": "买入",
+                            "pdf_url": "https://example.com/report.pdf",
+                        }],
+                    },
+                    "risk_events": {
+                        "lhb": {"period": "近一月", "times": 2, "net_amount": 10000000},
+                        "restricted_release": [{
+                            "date": "2026-06-01",
+                            "shares": 1000000,
+                            "market_value": 50000000,
+                        }],
+                        "announcements": [{
+                            "title": "股东减持风险提示公告",
+                            "type": "风险提示",
+                        }],
+                    },
+                    "sector_attribution": {
+                        "industry": {"name": "银行", "change_pct": 1.2, "reason": "息差改善"},
+                        "concepts": [{"name": "机器人概念", "change_pct": 2.5}],
+                    },
                 },
             }],
         })
 
-        assert "# 每日股票分析报告" in content
+        assert "# 每日股票决策仪表盘" in content
+        assert "## 核心结论" in content
         assert "## 大盘温度" in content
-        assert "## 自选股摘要" in content
-        assert "## 今日推荐" in content
-        assert "## 财务 / 资金 / 新闻摘要" in content
+        assert "## 自选股决策面板" in content
+        assert "## 推荐池" in content
+        assert "## 研报 / 风险 / 板块归因" in content
+        assert "## 操作检查清单" in content
         assert "测试新闻" in content
+        assert "测试研报" in content
+        assert "龙虎榜" in content
+        assert "限售解禁" in content
+        assert "机器人概念" in content
 
     def test_save_markdown_report_writes_dated_and_latest(self, tmp_path):
         paths = save_markdown_report("# 测试", "2026-05-13", output_dir=tmp_path)
@@ -86,3 +118,16 @@ class TestDailyReportService:
         assert data["watchlist"][0]["symbol"] == "000001"
         assert data["extended_info"][0]["symbol"] == "000001"
         assert data["recommendations"] == []
+
+    def test_decision_score_and_risk_lines(self):
+        service = DailyReportService(quote_service=object(), info_service=object(), recommender=object())
+
+        assert service._decision_score({"signal_summary": "偏多信号（强）", "change_pct": 4}) == 88
+        assert service._decision_score({"signal_summary": "偏空信号", "change_pct": -4}) == 22
+        risk_lines = service._risk_lines({
+            "lhb": {"period": "近一月", "times": 1, "net_amount": -1000000},
+            "announcements": [{"title": "减持风险提示公告", "type": "风险提示"}],
+        })
+
+        assert any("龙虎榜" in line for line in risk_lines)
+        assert any("公告关注" in line for line in risk_lines)

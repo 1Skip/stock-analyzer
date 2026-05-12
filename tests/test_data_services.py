@@ -275,11 +275,79 @@ class TestStockInfoService:
         assert first == second
         assert calls["count"] == 1
 
+    def test_extended_info_uses_v2_cache_key(self, tmp_path):
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol):
+                return {"symbol": symbol, "research": {"reports": []}}
+
+        cache = JsonFileCache("stock_info_test_v2", ttl_seconds=3600, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+
+        result = service.get_stock_extended_info("000001", "CN")
+
+        assert result["research"]["reports"] == []
+        assert cache.get("CN:000001:extended") is None
+        assert cache.get("CN:000001:extended:v2") == result
+
     def test_info_service_ignores_non_cn_market(self, tmp_path):
         cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)
         service = StockInfoService(provider=object(), cache=cache)
 
         assert service.get_stock_extended_info("AAPL", "US") is None
+
+    def test_normalize_research_reports(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([{
+            "报告名称": "银行业深度报告",
+            "报告日期": "2026-05-13",
+            "机构名称": "测试证券",
+            "评级": "买入",
+            "PDF链接": "https://example.com/report.pdf",
+        }])
+
+        result = provider._normalize_research_reports(df)
+
+        assert result[0]["title"] == "银行业深度报告"
+        assert result[0]["pdf_url"] == "https://example.com/report.pdf"
+
+    def test_normalize_risk_events(self):
+        provider = AkShareInfoProvider()
+        lhb_df = pd.DataFrame([{
+            "代码": "000001",
+            "上榜次数": 2,
+            "净买额": 12000000,
+            "上榜原因": "日涨幅偏离值达7%",
+        }])
+        release_df = pd.DataFrame([{
+            "解禁日期": "2026-06-01",
+            "解禁数量": 1000000,
+            "实际解禁市值": 50000000,
+            "占总股本比例": 1.2,
+            "解禁类型": "首发限售",
+        }])
+        notice_df = pd.DataFrame([{
+            "公告标题": "关于股东减持的风险提示公告",
+            "公告日期": "2026-05-13",
+            "公告类型": "风险提示",
+            "公告链接": "https://example.com/notice",
+        }])
+
+        lhb = provider._normalize_lhb_summary("000001", lhb_df)
+        release = provider._normalize_restricted_release(release_df)
+        notices = provider._normalize_announcements(notice_df)
+
+        assert lhb["times"] == 2
+        assert release[0]["type"] == "首发限售"
+        assert notices[0]["title"] == "关于股东减持的风险提示公告"
+
+    def test_sector_attribution_helpers(self):
+        provider = AkShareInfoProvider()
+        row = pd.Series({"板块名称": "机器人概念", "涨跌幅": 2.5, "领涨股票": "测试股"})
+
+        sector = provider._sector_row(row, "机器人概念")
+
+        assert sector["change_pct"] == 2.5
+        assert "机器人" in sector["reason"]
 
 
 class TestRuntimeHelpers:

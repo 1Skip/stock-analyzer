@@ -36,7 +36,7 @@
 - **回测引擎** — 信号→交易模拟，含止损/止盈/中性区间
 - **大盘温度** — 上证/深证/沪深300/北证50 实时跟踪
 - **自选股** — 持久化管理，支持 A股/港股/美股，侧边栏 mini 分析面板
-- **每日分析报告** — CLI 一键导出 Markdown 日报，汇总大盘、自选股、推荐股、财务/资金/新闻摘要
+- **每日决策仪表盘** — CLI/定时导出 Markdown 日报，汇总大盘、自选股、推荐股、研报、公告、龙虎榜、解禁、板块归因和操作检查清单
 - **定时调度** — 收盘后自动分析+推送（默认关闭）
 - **飞书机器人** — 对话式股票查询（默认关闭）
 - **三种配色** — A股传统（红涨绿跌）/ 国际惯例（绿涨红跌）/ 色盲友好（蓝涨橙跌）
@@ -125,7 +125,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
 | `data/` | 新分层数据服务（providers/services/cache/health/models），逐步承接行情、基础资料、研报、信号、新闻、公告等接口 |
-| `reports/` | 每日 Markdown 分析报告（大盘温度、自选股、推荐股、财务/资金/新闻摘要） |
+| `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
@@ -139,7 +139,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `scheduler.py` | 定时调度 |
 | `config.py` | 集中配置 |
 | `watchlist.py` | 自选股管理 |
-| `tests/` | 测试（17 文件，533 测试） |
+| `tests/` | 测试（18 文件，567 测试） |
 
 ### 分层数据服务
 
@@ -157,15 +157,20 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 ### 每日分析报告
 
-`reports/DailyReportService` 复用现有 `QuoteDataService`、`StockInfoService` 和 `StockRecommender`，按 `daily_stock_analysis` 项目的“每日 Markdown 复盘”思路补齐本项目目标能力，但保持无数据库、无额外服务依赖：
+`reports/DailyReportService` 复用现有 `QuoteDataService`、`StockInfoService` 和 `StockRecommender`，按 `daily_stock_analysis` 项目的“每日 Markdown 复盘/决策仪表盘”思路补齐本项目目标能力，但保持无数据库、无额外服务依赖：
 
 - 大盘温度：读取上证、深证、沪深300、北证50 实时摘要。
 - 自选股摘要：复用 `watchlist.json` 和现有自选股汇总逻辑。
 - 今日推荐：默认取短线推荐前 5，只在 CLI 生成报告时执行。
-- 扩展摘要：对自选股中的 A 股补充财务、资金和新闻摘要。
+- 研报层：对自选股中的 A 股补充东财个股研报、PDF 链接和同花顺一致预期 EPS。
+- 风险事件层：补充龙虎榜、限售解禁和近 30 日个股公告，风险公告会进入风险警报。
+- 板块归因层：补充行业/概念归属、板块涨跌幅和简单题材原因。
+- 决策面板：输出决策评分、买卖点、风险警报、催化因素和操作检查清单。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会先推送原有选股摘要，再生成并推送完整 Markdown 日报。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
+
+GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`。配置仓库 Secrets（`NOTIFY_CHANNELS`、`WECHAT_WEBHOOK_URL` 或 `FEISHU_WEBHOOK_URL`）后，不需要本地电脑常开。
 
 ## 指标说明
 

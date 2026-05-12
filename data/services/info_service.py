@@ -20,7 +20,7 @@ class StockInfoService:
         if market != "CN" or not re.fullmatch(r"\d{6}", symbol):
             return None
 
-        cache_key = f"{market}:{symbol}:extended"
+        cache_key = f"{market}:{symbol}:extended:v2"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
@@ -28,4 +28,3 @@ class StockInfoService:
         payload = self.provider.get_stock_extended_info(symbol)
         self.cache.set(cache_key, payload)
         return payload
-
