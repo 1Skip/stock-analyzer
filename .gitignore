@@ -42,6 +42,7 @@ update.json
 .stock_cache.json
 .main_board_cache.json
 watchlist.json
+reports/history/
 
 # 测试
 .coverage

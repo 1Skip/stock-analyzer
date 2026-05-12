@@ -525,6 +525,9 @@ if __name__ == "__main__":
     parser.add_argument('--multi-agent', action='store_true', help='使用多Agent协作AI分析')
     parser.add_argument('--watchlist', '-w', action='store_true', help='查看自选股信号和入场提示')
     parser.add_argument('--api', action='store_true', help='启动飞书机器人 API 服务')
+    parser.add_argument('--daily-report', action='store_true', help='生成每日 Markdown 分析报告')
+    parser.add_argument('--report-dir', default='reports/history', help='每日报告输出目录')
+    parser.add_argument('--no-report-recommendations', action='store_true', help='生成报告时跳过推荐股扫描')
 
     args = parser.parse_args()
 
@@ -536,6 +539,16 @@ if __name__ == "__main__":
     elif args.notify:
         from scheduler import run_scheduled_analysis
         run_scheduled_analysis()
+    elif args.daily_report:
+        from reports.daily_report_service import DailyReportService
+        service = DailyReportService()
+        paths = service.save_markdown(
+            output_dir=args.report_dir,
+            include_recommendations=not args.no_report_recommendations,
+        )
+        print("每日报告已生成：")
+        print(f"  日期报告: {paths['dated']}")
+        print(f"  最新报告: {paths['latest']}")
     elif args.backtest:
         from backtest_adapter import BacktestAdapter
         adapter = BacktestAdapter()
