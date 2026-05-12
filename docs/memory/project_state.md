@@ -47,6 +47,33 @@ ui/recommend_page.py 156行  智能推荐页面
 ui/compare_page.py  134行  股票对比页面
 ```
 
+### 代码质量改进（5/11）
+- P0: README 通知渠道修正（移除未实现的 Telegram/Bark，实际只支持 wechat+feishu）
+- P1: `_classify_signal()` 去重 — 从 analyze_page.py + sidebar.py 提取到 chart_utils.py
+- P1: 硬编码值统一到 config.py（data_fetcher 的 max_retries/retry_delay/OFFLINE_CACHE_MAX_ENTRIES，cached_data 的 CACHE_TTL_INTRADAY）
+- P1: UI 模块添加测试 — tests/test_ui_utils.py（17 tests，classify_signal + _validate_symbol + _format_val）
+- P2: 静态股票名称字典 → stock_names.py（~100行数据独立文件）
+- P2: 内联 CSS → ui/styles.py（~200行独立样式文件）
+- P2: .gitignore 已覆盖缓存文件，无需修改
+
+## 当前项目结构
+
+```
+app.py                ~100行  入口 + CSS注入（2行）+ 路由 + re-export
+stock_names.py         105行  股票名称静态映射表 + 热门美股列表
+chart_utils.py          45行  共享图表工具 + classify_signal
+ui/styles.py           207行  CSS样式定义（Apple × Tesla 设计体系）
+ui/cached_data.py       44行  fetcher + 缓存函数
+ui/charts.py           285行  K线/RSI/KDJ/BOLL/分时图
+ui/ai_analysis_ui.py   237行  AI分析UI
+ui/sidebar.py           289行  侧边栏组件
+ui/analyze_page.py     585行  个股分析页面
+ui/hot_stocks_page.py  186行  热门板块页面
+ui/recommend_page.py   156行  智能推荐页面
+ui/compare_page.py     134行  股票对比页面
+tests/test_ui_utils.py   90行  UI工具函数测试（17 tests）
+```
+
 ## 待做
 
 - 无紧急优化项，项目状态健康
