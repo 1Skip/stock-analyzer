@@ -2,19 +2,23 @@
 import logging
 
 import streamlit as st
-from data_fetcher import StockDataFetcher
 from config import (
     CACHE_TTL_FUNDAMENTALS,
     CACHE_TTL_INTRADAY,
     CACHE_TTL_REALTIME,
     CACHE_TTL_STOCK_DATA,
+    CACHE_TTL_STOCK_EXTENDED_INFO,
     CACHE_TTL_STOCK_INFO,
 )
 from data.services.fundamental_service import FundamentalDataService
+from data.services.info_service import StockInfoService
+from data.services.quote_service import QuoteDataService
 
 
-fetcher = StockDataFetcher()
+quote_service = QuoteDataService()
+fetcher = quote_service.provider.fetcher
 fundamental_service = FundamentalDataService()
+stock_info_service = StockInfoService()
 logger = logging.getLogger(__name__)
 STOCK_INPUT_CACHE_VERSION = "stock-input-v3-full-a-share-name-index"
 
@@ -23,7 +27,7 @@ STOCK_INPUT_CACHE_VERSION = "stock-input-v3-full-a-share-name-index"
 def get_cached_stock_data(symbol, period, market):
     """缓存股票数据获取"""
     try:
-        return fetcher.get_stock_data(symbol, period=period, market=market)
+        return quote_service.get_stock_data(symbol, period=period, market=market)
     except Exception:
         logger.warning("缓存层获取股票数据失败: symbol=%s market=%s period=%s", symbol, market, period, exc_info=True)
         return None
@@ -59,11 +63,21 @@ def get_cached_stock_profile(symbol, market):
         return None
 
 
+@st.cache_data(ttl=CACHE_TTL_STOCK_EXTENDED_INFO, max_entries=128, show_spinner=False)
+def get_cached_stock_extended_info(symbol, market):
+    """缓存财务摘要/资金流/新闻等扩展信息。"""
+    try:
+        return stock_info_service.get_stock_extended_info(symbol, market)
+    except Exception:
+        logger.warning("缓存层获取个股扩展信息失败: symbol=%s market=%s", symbol, market, exc_info=True)
+        return None
+
+
 @st.cache_data(ttl=CACHE_TTL_REALTIME, max_entries=64, show_spinner=False)
 def get_cached_realtime_quote(symbol, market):
     """缓存实时行情"""
     try:
-        return fetcher.get_realtime_quote(symbol, market)
+        return quote_service.get_realtime_quote(symbol, market)
     except Exception:
         logger.warning("缓存层获取实时行情失败: symbol=%s market=%s", symbol, market, exc_info=True)
         return None
@@ -73,7 +87,7 @@ def get_cached_realtime_quote(symbol, market):
 def get_cached_intraday_data(symbol, market):
     """缓存分时数据 — 60秒缓存，仅A股"""
     try:
-        return fetcher.get_intraday_data(symbol, market)
+        return quote_service.get_intraday_data(symbol, market)
     except Exception:
         logger.warning("缓存层获取分时数据失败: symbol=%s market=%s", symbol, market, exc_info=True)
         return None

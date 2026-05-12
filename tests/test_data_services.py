@@ -4,7 +4,11 @@ import pandas as pd
 from data.cache import JsonFileCache
 from data.health import SourceHealthRegistry
 from data.providers.akshare_provider import AkShareProvider
+from data.providers.akshare_info_provider import AkShareInfoProvider
+from data.runtime import safe_call
 from data.services.fundamental_service import FundamentalDataService
+from data.services.info_service import StockInfoService
+from data.services.quote_service import QuoteDataService
 
 
 class TestAkShareProvider:
@@ -130,3 +134,161 @@ class TestFundamentalDataService:
         service = FundamentalDataService(provider=object(), cache=cache)
 
         assert service.get_stock_profile("AAPL", "US") is None
+
+
+class TestQuoteDataService:
+
+    def test_quote_service_delegates_to_provider(self):
+        calls = []
+
+        class FakeProvider:
+            def get_stock_data(self, symbol, period, market):
+                calls.append(("data", symbol, period, market))
+                return "df"
+
+            def get_realtime_quote(self, symbol, market):
+                calls.append(("quote", symbol, market))
+                return {"price": 12.3}
+
+            def get_intraday_data(self, symbol, market):
+                calls.append(("intraday", symbol, market))
+                return "intraday"
+
+            def get_index_realtime(self, symbol):
+                calls.append(("index", symbol))
+                return {"price": 3000}
+
+            def get_preferred_source(self):
+                calls.append(("get_source",))
+                return "auto"
+
+            def set_preferred_source(self, source):
+                calls.append(("set_source", source))
+                return True
+
+        service = QuoteDataService(provider=FakeProvider())
+
+        assert service.get_stock_data("000001.0", "1y", "CN") == "df"
+        assert service.get_realtime_quote("aapl", "US") == {"price": 12.3}
+        assert service.get_intraday_data("000001", "CN") == "intraday"
+        assert service.get_index_realtime("000001.0") == {"price": 3000}
+        assert service.get_preferred_source() == "auto"
+        assert service.set_preferred_source("sina") is True
+        assert calls == [
+            ("data", "000001", "1y", "CN"),
+            ("quote", "AAPL", "US"),
+            ("intraday", "000001", "CN"),
+            ("index", "000001"),
+            ("get_source",),
+            ("set_source", "sina"),
+        ]
+
+    def test_quote_service_skips_intraday_for_non_cn(self):
+        class FakeProvider:
+            def get_intraday_data(self, symbol, market):
+                raise AssertionError("非 A 股不应请求分时 provider")
+
+        service = QuoteDataService(provider=FakeProvider())
+
+        assert service.get_intraday_data("AAPL", "US") is None
+
+    def test_quote_service_batch_filters_empty_symbols(self):
+        class FakeProvider:
+            def get_batch_realtime_quotes(self, symbols, market):
+                return {symbol: {"price": index} for index, symbol in enumerate(symbols)}
+
+        service = QuoteDataService(provider=FakeProvider())
+
+        quotes = service.get_batch_realtime_quotes(["000001", "", None, "600519.0"], "CN")
+
+        assert list(quotes) == ["000001", "600519"]
+
+    def test_quote_service_fetch_multiple_stocks_normalizes_codes(self):
+        class FakeProvider:
+            def fetch_multiple_stocks(self, stocks, period, market, max_workers):
+                return {
+                    "stocks": stocks,
+                    "period": period,
+                    "market": market,
+                    "max_workers": max_workers,
+                }
+
+        service = QuoteDataService(provider=FakeProvider())
+
+        result = service.fetch_multiple_stocks(
+            [{"code": "000001.0", "name": "平安银行"}, {"code": "", "name": "空"}],
+            period="6mo",
+            market="CN",
+            max_workers=3,
+        )
+
+        assert result["stocks"] == [{"code": "000001", "name": "平安银行"}]
+        assert result["period"] == "6mo"
+        assert result["max_workers"] == 3
+
+
+class TestStockInfoService:
+
+    def test_normalize_financial_summary(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([
+            {"指标": "营业总收入", "20260331": 100000000.0, "20251231": 90000000.0},
+            {"指标": "归母净利润", "20260331": 12000000.0, "20251231": 11000000.0},
+            {"指标": "经营现金流量净额", "20260331": -3000000.0, "20251231": 5000000.0},
+        ])
+
+        result = provider._normalize_financial_summary(df)
+
+        assert result["period"] == "20260331"
+        assert result["metrics"]["营业总收入"] == 100000000.0
+        assert result["metrics"]["归母净利润"] == 12000000.0
+        assert result["metrics"]["经营现金流量净额"] == -3000000.0
+
+    def test_normalize_fund_flow_summary(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([
+            {"日期": "2026-05-08", "主力净流入-净额": 100.0, "主力净流入-净占比": 1.5, "超大单净流入-净额": 30.0, "大单净流入-净额": 70.0},
+            {"日期": "2026-05-11", "主力净流入-净额": -20.0, "主力净流入-净占比": -0.5, "超大单净流入-净额": -10.0, "大单净流入-净额": -10.0},
+        ])
+
+        result = provider._normalize_fund_flow_summary(df)
+
+        assert result["date"] == "2026-05-11"
+        assert result["main_net_inflow"] == -20.0
+        assert result["main_net_inflow_ratio"] == -0.5
+        assert result["five_day_main_net_inflow"] == 80.0
+
+    def test_info_service_uses_cache(self, tmp_path):
+        calls = {"count": 0}
+
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol):
+                calls["count"] += 1
+                return {"symbol": symbol, "financial": {"period": "20260331"}, "fund_flow": {}, "news": []}
+
+        cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+
+        first = service.get_stock_extended_info("000001", "CN")
+        second = service.get_stock_extended_info("000001", "CN")
+
+        assert first == second
+        assert calls["count"] == 1
+
+    def test_info_service_ignores_non_cn_market(self, tmp_path):
+        cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)
+        service = StockInfoService(provider=object(), cache=cache)
+
+        assert service.get_stock_extended_info("AAPL", "US") is None
+
+
+class TestRuntimeHelpers:
+
+    def test_safe_call_returns_value(self):
+        assert safe_call(lambda: 123, 0, label="测试") == 123
+
+    def test_safe_call_returns_default_on_error(self):
+        def fail():
+            raise RuntimeError("boom")
+
+        assert safe_call(fail, [], label="测试") == []

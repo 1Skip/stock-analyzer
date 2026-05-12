@@ -90,10 +90,50 @@ type: project
 - `tests/test_ui_utils.py` 新增短历史提示测试。
 - 聚焦测试：`20 passed`。
 
+### 8. 阶段 2：行情服务接缝迁移
+
+**目标**：先把 UI 对 `data_fetcher.py` 的行情直连收敛到分层服务，为后续拆新浪、腾讯、AKShare 独立 provider 做准备。
+
+**落地**：
+- 新增 `data/providers/legacy_quote_provider.py`，把现有 `StockDataFetcher` 包成 provider 适配层。
+- 新增 `data/services/quote_service.py`，统一提供 K线、实时行情、分时、批量报价、股票名称、大盘指数和数据源切换入口。
+- `ui/cached_data.py` 的股票数据/实时行情/分时缓存改走 `QuoteDataService`。
+- `ui/compare_page.py`、`ui/recommend_page.py`、`ui/sidebar.py` 改走 `quote_service`，页面层不再直接调用行情 fetcher 方法。
+- `ui/analyze_page.py` 移除未使用的 `fetcher` 导入，继续通过缓存函数访问行情服务。
+
+**验证**：
+- `tests/test_data_services.py` 新增 `QuoteDataService` 委托、代码规范化、非 A 股分时拦截、批量过滤、批量 K 线入口测试。
+- 聚焦测试：`58 passed`。
+
+### 9. 阶段 3：扩展信息服务
+
+**目标**：按 `a-stock-data` 的多接口思路，为个股页补充基本面/资金面/消息面，但不影响技术分析主流程速度。
+
+**落地**：
+- 新增 `data/providers/akshare_info_provider.py`，封装 AKShare 财务摘要、资金流、个股新闻接口。
+- 新增 `data/services/info_service.py`，提供 `StockInfoService.get_stock_extended_info(symbol, market)`。
+- 新增 `CACHE_TTL_STOCK_EXTENDED_INFO=1800`，扩展信息缓存到 `.cache/stock_extended_info.json`。
+- `ui/cached_data.py` 新增 `get_cached_stock_extended_info()`。
+- `ui/analyze_page.py` 新增“财务 / 资金 / 新闻”折叠区，展示最新财报期的营业收入/归母净利润/经营现金流、主力资金净流入/占比/近5日净流入、相关新闻。
+- 扩展信息最多短暂等待，失败返回空结构，不阻塞 K线、分时图和技术指标。
+
+**验证**：
+- `tests/test_data_services.py` 覆盖财务摘要规范化、资金流规范化、扩展信息缓存和非 A 股忽略。
+- 聚焦测试：`64 passed`。
+
+### 10. 阶段 4：统一运行治理
+
+**落地**：
+- 新增 `data/runtime.py`，统一第三方接口超时包装 `run_with_timeout()` 和非关键数据源安全调用 `safe_call()`。
+- `AkShareProvider` 与 `AkShareInfoProvider` 复用统一超时包装，避免各 provider 重复写线程超时代码。
+
+**验证**：
+- `tests/test_data_services.py` 覆盖 `safe_call()` 成功和异常默认值。
+
 ## 测试结果
 
 - `py_compile` 通过。
-- 全量测试：`533 passed, 22 warnings`。
+- 全量测试：`542 passed, 22 warnings`。
 - `git diff --check` 通过。
 
 ## 注意事项

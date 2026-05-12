@@ -127,13 +127,15 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 项目已开始按 `a-stock-data` 的接口分层思路拆分数据层，但不会直接照搬外部仓库实现：
 
-- `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料 + 腾讯行情估值补充。
-- `data/services/`：业务接口层，目前提供 `FundamentalDataService.get_stock_profile()`。
+- `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料、财务摘要/资金流/新闻、腾讯行情估值补充，以及旧行情获取器适配层 `LegacyQuoteProvider`。
+- `data/services/`：业务接口层，目前提供 `FundamentalDataService.get_stock_profile()`、`QuoteDataService` 和 `StockInfoService`。
 - `data/cache.py`：统一 JSON 文件缓存，默认落到 `.cache/`。
 - `data/health.py`：数据源健康状态登记，后续用于多源 fallback。
 - `data/models.py`：标准数据模型，当前包含 `StockProfile`。
+- `data/runtime.py`：统一第三方接口超时包装和非关键数据源安全调用。
 
-当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。
+当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。行情相关入口（K线、实时行情、分时、批量报价、大盘指数、数据源选择）已先收敛到 `QuoteDataService`，后续可以继续把新浪、腾讯、AKShare 等源拆成独立 provider。
+个股页还会以非阻塞方式加载“财务 / 资金 / 新闻”折叠区；这些扩展信息失败时不会影响 K 线和技术分析主流程。
 
 ## 指标说明
 

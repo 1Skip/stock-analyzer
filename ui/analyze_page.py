@@ -12,10 +12,9 @@ from config import (
 from technical_indicators import TechnicalIndicators
 from watchlist import add_to_watchlist, remove_from_watchlist, is_in_watchlist
 from ui.cached_data import (
-    fetcher,
     get_cached_stock_data, get_cached_stock_info,
     get_cached_realtime_quote, get_cached_intraday_data,
-    get_cached_stock_profile,
+    get_cached_stock_profile, get_cached_stock_extended_info,
     resolve_cached_stock_input,
 )
 from ui.charts import (
@@ -69,6 +68,10 @@ def _format_optional_number(value, suffix="", precision=2):
     return f"{float(value):.{precision}f}{suffix}"
 
 
+def _format_money(value):
+    return _format_large_number(value)
+
+
 def _build_short_history_notice(symbol, stock_name, data_len, period):
     """生成短历史数据提示。"""
     if data_len >= 30:
@@ -120,6 +123,54 @@ def _render_stock_profile(profile):
 
         if profile.get("source") or profile.get("updated_at"):
             st.caption(f"来源：{profile.get('source') or '未知'} · 更新：{profile.get('updated_at') or '--'}")
+
+
+def _render_extended_info(extended_info):
+    """渲染财务摘要/资金流/新闻信息。"""
+    if not extended_info:
+        return
+
+    financial = extended_info.get("financial") or {}
+    fund_flow = extended_info.get("fund_flow") or {}
+    news = extended_info.get("news") or []
+    if not financial and not fund_flow and not news:
+        return
+
+    with st.expander("财务 / 资金 / 新闻", expanded=False):
+        metrics = financial.get("metrics") or {}
+        if metrics:
+            st.caption(f"财务报告期：{financial.get('period') or '--'}")
+            col_revenue, col_profit, col_cash = st.columns(3)
+            with col_revenue:
+                st.metric("营业总收入", _format_money(metrics.get("营业总收入")))
+            with col_profit:
+                st.metric("归母净利润", _format_money(metrics.get("归母净利润")))
+            with col_cash:
+                st.metric("经营现金流", _format_money(metrics.get("经营现金流量净额")))
+
+        if fund_flow:
+            st.caption(f"资金流日期：{fund_flow.get('date') or '--'}")
+            col_main, col_ratio, col_five = st.columns(3)
+            with col_main:
+                st.metric("主力净流入", _format_money(fund_flow.get("main_net_inflow")))
+            with col_ratio:
+                st.metric("主力净占比", _format_optional_number(fund_flow.get("main_net_inflow_ratio"), "%"))
+            with col_five:
+                st.metric("近5日主力净流入", _format_money(fund_flow.get("five_day_main_net_inflow")))
+
+        if news:
+            st.caption("相关新闻")
+            for item in news[:5]:
+                title = html.escape(str(item.get("title", "")))
+                date = html.escape(str(item.get("date", "")))
+                url = str(item.get("url", ""))
+                if url.startswith("http"):
+                    st.markdown(f"- [{title}]({url}) <span style='opacity:0.6'>{date}</span>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"- {title} <span style='opacity:0.6'>{date}</span>", unsafe_allow_html=True)
+
+        if extended_info.get("source") or extended_info.get("updated_at"):
+            st.caption(f"来源：{extended_info.get('source') or '未知'} · 更新：{extended_info.get('updated_at') or '--'}")
 
 
 def display_signals(signals):
@@ -245,7 +296,7 @@ def _display_indicator_values(data):
         )
 
 
-def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None):
+def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
@@ -320,6 +371,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     st.write("")
 
     _render_stock_profile(profile)
+    _render_extended_info(extended_info)
 
     # ③ 分时图（仅A股）
     if market == "CN":
@@ -533,8 +585,9 @@ def analyze_stock_page():
         quote = None
         intraday_data = None
         profile = None
+        extended_info = None
 
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
         futures = {}
         try:
             futures = {
@@ -545,6 +598,7 @@ def analyze_stock_page():
             if market == "CN":
                 futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
                 futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
+                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
 
             try:
                 data = futures['data'].result(timeout=20)
@@ -577,6 +631,12 @@ def analyze_stock_page():
                     profile = futures['profile'].result(timeout=0.2)
             except Exception:
                 profile = None
+
+            try:
+                if 'extended_info' in futures:
+                    extended_info = futures['extended_info'].result(timeout=0.2)
+            except Exception:
+                extended_info = None
         finally:
             for future in futures.values():
                 if not future.done():
@@ -658,12 +718,13 @@ def analyze_stock_page():
         st.session_state.analyzed_quote = quote
         st.session_state.analyzed_stock_name = stock_name
         st.session_state.analyzed_profile = profile
+        st.session_state.analyzed_extended_info = extended_info
 
         period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
         cutoff = data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
         display_data = data[data.index >= cutoff] if len(data[data.index >= cutoff]) >= 10 else data
 
-        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data, profile=profile)
+        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data, profile=profile, extended_info=extended_info)
 
         progress_bar.empty()
         status_text.empty()
@@ -684,6 +745,7 @@ def analyze_stock_page():
                 market,
                 period,
                 profile=st.session_state.get("analyzed_profile"),
+                extended_info=st.session_state.get("analyzed_extended_info"),
             )
 
     # 锚点滚动

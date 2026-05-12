@@ -3,6 +3,7 @@ import html
 import concurrent.futures
 import streamlit as st
 from stock_recommendation import StockRecommender
+from ui.cached_data import quote_service
 
 
 def display_recommendation_list(recommended, strategy_name):
@@ -137,12 +138,11 @@ def recommended_stocks_page():
 
             if recommended:
                 try:
-                    from data_fetcher import StockDataFetcher
-                    fetcher = StockDataFetcher()
                     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                         future = executor.submit(
-                            fetcher.get_batch_realtime_quotes,
-                            [s['symbol'] for s in recommended]
+                            quote_service.get_batch_realtime_quotes,
+                            [s['symbol'] for s in recommended],
+                            "CN",
                         )
                         quotes = future.result(timeout=3)
                     for s in recommended:

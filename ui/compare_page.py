@@ -3,8 +3,7 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from technical_indicators import TechnicalIndicators
-from data_fetcher import StockDataFetcher
-from ui.cached_data import fetcher
+from ui.cached_data import quote_service
 from ui.analyze_page import _validate_symbol
 
 
@@ -48,7 +47,7 @@ def compare_stocks_page():
             stocks_to_fetch = [{'code': s, 'name': s} for s in symbols]
 
             status_text.text("并发获取股票数据...")
-            results = StockDataFetcher.fetch_multiple_stocks(
+            results = quote_service.fetch_multiple_stocks(
                 stocks_to_fetch, period='1y', market=market, max_workers=5
             )
 
@@ -63,7 +62,7 @@ def compare_stocks_page():
                         data = TechnicalIndicators.calculate_all(result['data'])
                         latest = data.iloc[-1]
 
-                        quote = fetcher.get_realtime_quote(symbol, market)
+                        quote = quote_service.get_realtime_quote(symbol, market)
                         if quote and quote.get('price'):
                             price = quote['price']
                             change_pct = quote.get('change', 0)
@@ -73,7 +72,7 @@ def compare_stocks_page():
 
                         comparison_data.append({
                             '代码': symbol,
-                            '名称': fetcher.get_stock_name(symbol, market),
+                            '名称': quote_service.get_stock_name(symbol, market),
                             '最新价': f"{price:.2f}",
                             '涨跌幅': f"{change_pct:+.2f}%",
                             '成交量': (
@@ -112,7 +111,7 @@ def compare_stocks_page():
                             fig.add_trace(go.Scatter(
                                 x=data.index,
                                 y=normalized_price,
-                                name=f"{symbol} ({fetcher.get_stock_name(symbol, market)})",
+                                name=f"{symbol} ({quote_service.get_stock_name(symbol, market)})",
                                 mode='lines'
                             ))
                         except Exception:

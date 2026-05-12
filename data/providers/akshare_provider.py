@@ -1,7 +1,6 @@
 """AKShare 数据源适配器。"""
 from __future__ import annotations
 
-import concurrent.futures
 import logging
 import re
 from typing import Any
@@ -12,6 +11,7 @@ import requests
 
 from data.health import SourceHealthRegistry
 from data.models import StockProfile, utc_now_iso
+from data.runtime import run_with_timeout
 
 try:
     import akshare as ak
@@ -55,13 +55,7 @@ def _brief_error(error: Exception | str) -> str:
     return text[:180]
 
 
-def _run_with_timeout(func, timeout_seconds: float):
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    try:
-        future = executor.submit(func)
-        return future.result(timeout=timeout_seconds)
-    finally:
-        executor.shutdown(wait=False, cancel_futures=True)
+_run_with_timeout = run_with_timeout
 
 
 class AkShareProvider:

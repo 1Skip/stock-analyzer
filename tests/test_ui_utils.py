@@ -3,7 +3,7 @@ import pytest
 import pandas as pd
 import numpy as np
 from chart_utils import classify_signal
-from ui.analyze_page import _validate_symbol, _format_val, _build_short_history_notice
+from ui.analyze_page import _validate_symbol, _format_val, _build_short_history_notice, _format_money
 
 
 class TestClassifySignal:
@@ -110,3 +110,12 @@ class TestShortHistoryNotice:
         assert "历史数据偏少" in notice
         assert "25个交易日" in notice
         assert "6mo" in notice
+
+
+class TestFormatMoney:
+
+    def test_large_money_uses_yi(self):
+        assert _format_money(123456789) == "1.23亿"
+
+    def test_empty_money(self):
+        assert _format_money(None) == "--"

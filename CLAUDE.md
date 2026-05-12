@@ -18,7 +18,7 @@
 | `stock_names.py` | 股票名称静态映射表 | ~200只A股 + 热门美股列表，data_fetcher 导入使用 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置、classify_signal，供 Web 和 CLI 共用 |
 | `ui/styles.py` | CSS 样式定义 | ~207行，Apple × Tesla 设计体系，app.py 导入注入 |
-| `ui/cached_data.py` | 缓存数据层 | fetcher 实例 + 股票数据/实时行情/分时/名称解析等 @st.cache_data 函数 |
+| `ui/cached_data.py` | 缓存数据层 | quote_service/fundamental_service 实例 + 股票数据/实时行情/分时/名称解析等 @st.cache_data 函数 |
 | `ui/charts.py` | 图表函数 | K线/RSI/KDJ/BOLL/分时图，Plotly 实现 |
 | `ui/ai_analysis_ui.py` | AI 分析 UI | API 配置表单 + 单Agent/多Agent 结果渲染 |
 | `ui/sidebar.py` | 侧边栏组件 | 大盘温度、自选股列表、mini 分析面板、数据源选择 |
@@ -28,7 +28,7 @@
 | `ui/compare_page.py` | 股票对比页面 | 多股票指标对比 + 标准化走势 |
 | `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
 | `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护、全量A股名称索引 |
-| `data/` | 分层数据服务 | providers/services/cache/health/models；先接入 A股基础资料/估值，后续承接行情、研报、信号、新闻、公告等接口 |
+| `data/` | 分层数据服务 | providers/services/cache/health/models/runtime；已接入 A股基础资料/估值、行情服务接缝、财务摘要/资金流/新闻扩展信息 |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多Agent协作（技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
@@ -58,8 +58,9 @@
 - **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；静态表仅作为冷启动/离线 fallback，不再靠“报一个补一个”
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
-- **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict
+- **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻
 - **基础资料/估值**：A股个股分析页并行调用 `get_cached_stock_profile()`，AKShare 获取股票简称/行业/上市日期/股本/市值，腾讯行情补 PE/PB/换手率，辅助数据最多短暂等待，不阻塞 K线主流程
+- **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；失败返回空结构，不影响主图表和技术指标
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）

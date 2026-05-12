@@ -14,7 +14,7 @@ from watchlist import (
     get_watchlist, is_in_watchlist, get_watchlist_summary,
 )
 from chart_utils import classify_signal
-from ui.cached_data import fetcher
+from ui.cached_data import quote_service
 
 
 def display_market_temperature():
@@ -24,7 +24,7 @@ def display_market_temperature():
     def _fetch_indices():
         results = []
         for code, name in INDEX_WATCHLIST:
-            quote = fetcher.get_index_realtime(code)
+            quote = quote_service.get_index_realtime(code)
             if quote:
                 results.append(quote)
         return results
@@ -264,7 +264,7 @@ def display_watchlist_mini_panel(summaries):
 def display_data_source_selector():
     """数据源设置（含简要说明）"""
     with st.expander("数据源"):
-        current_source = fetcher.get_preferred_source()
+        current_source = quote_service.get_preferred_source()
 
         source_options = {
             'auto': '自动选择（推荐）',
@@ -280,7 +280,7 @@ def display_data_source_selector():
         )
 
         if selected != current_source:
-            fetcher.set_preferred_source(selected)
+            quote_service.set_preferred_source(selected)
             st.success(f"已切换到: {source_options[selected]}")
             st.info("请重新获取数据以生效")
 
