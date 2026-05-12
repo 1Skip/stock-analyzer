@@ -38,6 +38,7 @@ update.json
 *.b64
 *.b64.clean
 *.b64.oneline
+.cache/
 .stock_cache.json
 .main_board_cache.json
 watchlist.json

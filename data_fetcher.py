@@ -8,19 +8,23 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 import time
+import logging
 
 # 绕过Windows系统代理（系统代理127.0.0.1:7897不可用时会导致所有数据源失败）
 # 创建专用 session，trust_env=False 避免读取 Windows 注册表中的代理配置
 _session = requests.Session()
 _session.trust_env = False
 
-from config import SPOT_CACHE_TTL_SECONDS, OFFLINE_CACHE_MAX_ENTRIES
+from config import SPOT_CACHE_TTL_SECONDS, OFFLINE_CACHE_MAX_ENTRIES, RUNTIME_CACHE_DIR
 import random
 import io
 import json
 import os
 import re
+import unicodedata
 from threading import Lock
+
+logger = logging.getLogger(__name__)
 
 # 尝试导入 AKShare，如果失败则使用备选方案
 try:
@@ -28,7 +32,49 @@ try:
     AKSHARE_AVAILABLE = True
 except ImportError:
     AKSHARE_AVAILABLE = False
-    print("AKShare 导入失败，将使用 yfinance 作为备选")
+    logger.warning("AKShare 导入失败，将使用 yfinance 作为备选")
+
+
+def _runtime_cache_path(filename):
+    """返回运行缓存路径，兼容旧根目录缓存文件。"""
+    cache_dir = RUNTIME_CACHE_DIR or os.path.dirname(__file__)
+    return os.path.join(cache_dir, filename)
+
+
+def _legacy_cache_path(filename):
+    return os.path.join(os.path.dirname(__file__), filename)
+
+
+def _ensure_parent_dir(path):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+def _read_json_cache(primary_file, legacy_filename=None):
+    """读取运行缓存，主路径不存在时兼容旧根目录缓存。"""
+    candidates = [primary_file]
+    if legacy_filename:
+        legacy_file = _legacy_cache_path(legacy_filename)
+        if legacy_file != primary_file:
+            candidates.append(legacy_file)
+
+    for cache_file in candidates:
+        if not os.path.exists(cache_file):
+            continue
+        with open(cache_file, 'r', encoding='utf-8') as f:
+            return json.load(f), cache_file
+    return None, None
+
+
+def _normalize_stock_name(name):
+    """规范化股票名称，兼容全角字符、空格和大小写差异。"""
+    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', str(name))).upper()
+
+
+def _clean_stock_name(name):
+    """清理展示用股票名称，去掉异常空格并转半角。"""
+    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', str(name)))
 
 
 class StockDataFetcher:
@@ -58,7 +104,10 @@ class StockDataFetcher:
     _index_spot_cache_time = None
 
     # 离线数据缓存文件路径
-    _offline_cache_file = os.path.join(os.path.dirname(__file__), '.stock_cache.json')
+    _offline_cache_file = _runtime_cache_path('stock_cache.json')
+    _default_offline_cache_file = _offline_cache_file
+    _main_board_cache_file = _runtime_cache_path('main_board_cache.json')
+    _stock_name_index_file = _runtime_cache_path('stock_name_index.json')
 
     def __init__(self):
         from config import MAX_RETRIES, RETRY_DELAY
@@ -94,10 +143,11 @@ class StockDataFetcher:
         return self._health_status.copy()
 
     @classmethod
-    def _get_spot_snapshot(cls):
+    def _get_spot_snapshot(cls, timeout=45):
         """获取A股全市场快照（带缓存，60秒内复用，避免重复下载5000+条）
         数据源：新浪财经（通过 AKShare）
         成功下载后自动生成主板股票池缓存文件
+        timeout: 请求超时秒数（默认45，名称搜索时可设短，如8秒）
         """
         now = datetime.now()
         if cls._spot_cache is not None and cls._spot_cache_time is not None:
@@ -108,7 +158,7 @@ class StockDataFetcher:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                     future = executor.submit(ak.stock_zh_a_spot)
-                    cls._spot_cache = future.result(timeout=45)
+                    cls._spot_cache = future.result(timeout=timeout)
                 cls._spot_cache_time = now
 
                 # 自动生成主板股票池缓存（供推荐系统使用）
@@ -116,6 +166,7 @@ class StockDataFetcher:
 
                 return cls._spot_cache
             except Exception:
+                logger.warning("获取A股全市场快照失败", exc_info=True)
                 return None
         return None
 
@@ -123,8 +174,9 @@ class StockDataFetcher:
     def _save_main_board_cache(cls, spot_df):
         """从全市场快照中提取主板股票并写入缓存文件"""
         import json as _json
-        cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+        cache_file = cls._main_board_cache_file
         try:
+            _ensure_parent_dir(cache_file)
             stocks = []
             for _, row in spot_df.iterrows():
                 code = str(row['代码'])
@@ -143,7 +195,7 @@ class StockDataFetcher:
                     'stocks': stocks
                 }, f, ensure_ascii=False)
         except Exception:
-            pass
+            logger.warning("保存主板股票池缓存失败: %s", cache_file, exc_info=True)
 
     def _retry_with_backoff(self, func, source_name, *args, **kwargs):
         """带指数退避和智能重试间隔的重试机制"""
@@ -157,7 +209,7 @@ class StockDataFetcher:
                     try:
                         last_check_time = datetime.fromisoformat(last_check)
                         if datetime.now() - last_check_time > timedelta(minutes=5):
-                            print(f"{source_name} 离线超5分钟，尝试恢复检查...")
+                            logger.info("%s 离线超5分钟，尝试恢复检查", source_name)
                             status['healthy'] = True
                             status['fail_count'] = 0
                     except (ValueError, TypeError):
@@ -170,7 +222,7 @@ class StockDataFetcher:
                 fail_count = status['fail_count']
                 # 随着失败次数增加，跳过更多尝试
                 if fail_count > 5 and random.random() < 0.5:
-                    print(f"{source_name} 数据源暂时跳过（连续失败{fail_count}次）")
+                    logger.warning("%s 数据源暂时跳过（连续失败%s次）", source_name, fail_count)
                     return None
 
         for attempt in range(self.max_retries):
@@ -179,8 +231,14 @@ class StockDataFetcher:
                 if result is not None and (not isinstance(result, pd.DataFrame) or not result.empty):
                     self._update_health_status(source_name, True)
                     return result
-            except Exception as e:
-                print(f"{source_name} 尝试 {attempt + 1}/{self.max_retries} 失败: {str(e)}")
+            except Exception:
+                logger.warning(
+                    "%s 尝试 %s/%s 失败",
+                    source_name,
+                    attempt + 1,
+                    self.max_retries,
+                    exc_info=True,
+                )
                 self._update_health_status(source_name, False)
 
             if attempt < self.max_retries - 1:
@@ -195,6 +253,7 @@ class StockDataFetcher:
         """保存离线缓存数据（线程安全 + 原子写入）"""
         with self._cache_lock:
             try:
+                _ensure_parent_dir(self._offline_cache_file)
                 cache_data = {}
                 if os.path.exists(self._offline_cache_file):
                     try:
@@ -202,6 +261,12 @@ class StockDataFetcher:
                             cache_data = json.load(f)
                     except json.JSONDecodeError:
                         # 缓存文件已损坏，重建
+                        cache_data = {}
+                elif self._offline_cache_file == self._default_offline_cache_file:
+                    try:
+                        cache_data, _ = _read_json_cache(self._offline_cache_file, '.stock_cache.json')
+                        cache_data = cache_data or {}
+                    except json.JSONDecodeError:
                         cache_data = {}
 
                 # 只保存最近 N 个股票
@@ -219,29 +284,38 @@ class StockDataFetcher:
                 with open(tmp_file, 'w', encoding='utf-8') as f:
                     json.dump(cache_data, f, default=str)
                 os.replace(tmp_file, self._offline_cache_file)
-            except Exception as e:
-                print(f"保存离线缓存失败: {str(e)}")
+            except Exception:
+                logger.warning("保存离线缓存失败: %s", self._offline_cache_file, exc_info=True)
                 # 清理可能残留的临时文件
                 try:
                     tmp_file = self._offline_cache_file + '.tmp'
                     if os.path.exists(tmp_file):
                         os.remove(tmp_file)
                 except Exception:
-                    pass
+                    logger.debug("清理离线缓存临时文件失败", exc_info=True)
 
     def _load_offline_cache(self, symbol, max_age_hours=24):
         """加载离线缓存数据（线程安全）"""
         try:
+            legacy_filename = None
+            if self._offline_cache_file == self._default_offline_cache_file:
+                legacy_filename = '.stock_cache.json'
+
             if not os.path.exists(self._offline_cache_file):
-                return None
+                if not legacy_filename or not os.path.exists(_legacy_cache_path(legacy_filename)):
+                    return None
 
             with self._cache_lock:
                 try:
-                    with open(self._offline_cache_file, 'r', encoding='utf-8') as f:
-                        cache_data = json.load(f)
+                    cache_data, _ = _read_json_cache(self._offline_cache_file, legacy_filename)
+                    if not cache_data:
+                        return None
                 except json.JSONDecodeError:
                     # 缓存文件损坏，删除后重建
-                    os.remove(self._offline_cache_file)
+                    if os.path.exists(self._offline_cache_file):
+                        os.remove(self._offline_cache_file)
+                    elif legacy_filename and os.path.exists(_legacy_cache_path(legacy_filename)):
+                        logger.warning("旧离线缓存文件已损坏，请删除后重建: %s", _legacy_cache_path(legacy_filename))
                     return None
 
             if symbol not in cache_data:
@@ -269,8 +343,8 @@ class StockDataFetcher:
 
             df.attrs['data_source'] = f"离线缓存 ({age.days}天{age.seconds//3600}小时前)"
             return df
-        except Exception as e:
-            print(f"加载离线缓存失败: {str(e)}")
+        except Exception:
+            logger.warning("加载离线缓存失败: %s", self._offline_cache_file, exc_info=True)
             return None
 
     def get_stock_data(self, symbol, period="1y", interval="1d", market="US", use_cache=True):
@@ -708,7 +782,12 @@ class StockDataFetcher:
             if name:
                 return name
 
-            # 第三优先：AKShare 全市场快照（慢，但覆盖全）
+            # 第三优先：查全量名称索引缓存
+            index_name = self._get_name_from_index(symbol)
+            if index_name:
+                return index_name
+
+            # 第四优先：AKShare 全市场快照（慢，但覆盖全）
             spot_df = self._get_spot_snapshot()
             if spot_df is not None:
                 stock_row = spot_df[spot_df['代码'].str.endswith(symbol)]
@@ -741,7 +820,7 @@ class StockDataFetcher:
 
         # 已经是代码
         if market == "CN" and text.isdigit() and len(text) == 6:
-            name = CN_STOCK_NAMES_EXTENDED.get(text, text)
+            name = CN_STOCK_NAMES_EXTENDED.get(text) or self._get_name_from_index(text) or text
             return (text, name)
 
         # 非CN市场不支持名称搜索
@@ -752,58 +831,125 @@ class StockDataFetcher:
         if not any('一' <= c <= '鿿' for c in text):
             return None
 
-        # 快速路径：静态映射表反查
-        name_to_code = {v: k for k, v in CN_STOCK_NAMES_EXTENDED.items()}
+        return self._resolve_cn_stock_name(text)
+
+    @classmethod
+    def _load_stock_name_index(cls, max_age_hours=24):
+        """加载全量A股名称索引，优先磁盘缓存，过期后用 AKShare 轻量接口刷新。"""
+        try:
+            cached, _ = _read_json_cache(cls._stock_name_index_file)
+            if cached:
+                cache_time = datetime.fromisoformat(cached.get('updated', '2000-01-01'))
+                stocks = cached.get('stocks', [])
+                if datetime.now() - cache_time < timedelta(hours=max_age_hours) and stocks:
+                    return stocks
+        except Exception:
+            logger.warning("读取股票名称索引缓存失败", exc_info=True)
+
+        stocks = []
+        if AKSHARE_AVAILABLE:
+            try:
+                df = ak.stock_info_a_code_name()
+                for _, row in df.iterrows():
+                    code = str(row.get('code', '')).strip()
+                    name = str(row.get('name', '')).strip()
+                    if re.fullmatch(r'\d{6}', code) and name:
+                        stocks.append({'code': code, 'name': _clean_stock_name(name)})
+                if stocks:
+                    _ensure_parent_dir(cls._stock_name_index_file)
+                    with open(cls._stock_name_index_file, 'w', encoding='utf-8') as f:
+                        json.dump({
+                            'updated': datetime.now().isoformat(),
+                            'count': len(stocks),
+                            'stocks': stocks,
+                        }, f, ensure_ascii=False)
+                    return stocks
+            except Exception:
+                logger.warning("刷新股票名称索引失败", exc_info=True)
+
+        return [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
+
+    @classmethod
+    def _get_name_from_index(cls, symbol):
+        for item in cls._load_stock_name_index():
+            if item.get('code') == symbol:
+                return _clean_stock_name(item.get('name'))
+        return None
+
+    def _resolve_cn_stock_name(self, text):
+        """用全量名称索引解析 A 股中文名，失败时才进入慢网络行情快照。"""
+        normalized_text = _normalize_stock_name(text)
+
+        all_stocks = []
+        seen_codes = set()
+        for code, name in CN_STOCK_NAMES_EXTENDED.items():
+            all_stocks.append({'code': code, 'name': name})
+            seen_codes.add(code)
+
+        for item in self._load_stock_name_index():
+            code = item.get('code', '')
+            if code and code not in seen_codes:
+                all_stocks.append(item)
+                seen_codes.add(code)
+
+        for item in self.get_main_board_stocks():
+            code = item.get('code', '')
+            if code and code not in seen_codes:
+                all_stocks.append({'code': code, 'name': _clean_stock_name(item.get('name', ''))})
+                seen_codes.add(code)
 
         # 精确匹配
-        if text in name_to_code:
-            code = name_to_code[text]
-            return (code, text)
+        for item in all_stocks:
+            if _normalize_stock_name(item.get('name', '')) == normalized_text:
+                return (item['code'], _clean_stock_name(item['name']))
 
-        # 前缀匹配
-        prefix_matches = [(name, code) for name, code in name_to_code.items() if name.startswith(text)]
-        if len(prefix_matches) == 1:
-            return (prefix_matches[0][1], prefix_matches[0][0])
+        prefix_matches = []
+        contains_matches = []
+        for item in all_stocks:
+            normalized_name = _normalize_stock_name(item.get('name', ''))
+            if normalized_name.startswith(normalized_text):
+                prefix_matches.append(item)
+            elif normalized_text in normalized_name:
+                contains_matches.append(item)
 
-        # 包含匹配
-        contains_matches = [(name, code) for name, code in name_to_code.items() if text in name]
-        if len(contains_matches) == 1:
-            return (contains_matches[0][1], contains_matches[0][0])
-
-        # 多个匹配时，如果有前缀匹配优先返回前缀匹配的第一个
         if prefix_matches:
-            return (prefix_matches[0][1], prefix_matches[0][0])
+            match = sorted(prefix_matches, key=lambda item: len(item.get('name', '')))[0]
+            return (match['code'], _clean_stock_name(match['name']))
         if contains_matches:
-            return (contains_matches[0][1], contains_matches[0][0])
+            match = sorted(contains_matches, key=lambda item: len(item.get('name', '')))[0]
+            return (match['code'], _clean_stock_name(match['name']))
 
-        # 全量快照搜索（覆盖5000+只股票）
-        spot_df = self._get_spot_snapshot()
+        # 兼容老缓存或轻量索引临时失败时的最后兜底
+        return self._resolve_cn_stock_name_from_spot(text)
+
+    def _resolve_cn_stock_name_from_spot(self, text):
+        """从全市场行情快照兜底解析名称，可能较慢。"""
+        normalized_text = _normalize_stock_name(text)
+
+        # 全量快照搜索（覆盖5000+只股票），限时8秒，缓存命中直接返回
+        spot_df = self._get_spot_snapshot(timeout=8)
         if spot_df is not None:
+            def _strip_code(c):
+                """去掉 sh/sz/bj 前缀，返回6位数字代码"""
+                c = str(c)
+                if c.startswith(('sh', 'sz', 'bj')) and len(c) >= 8:
+                    return c[2:]
+                return c
+
             # 精确匹配
-            exact = spot_df[spot_df['名称'] == text]
-            if not exact.empty:
-                row = exact.iloc[0]
-                return (row['代码'], row['名称'])
-
-            # 前缀匹配
-            prefix_spot = spot_df[spot_df['名称'].str.startswith(text, na=False)]
-            if len(prefix_spot) == 1:
-                row = prefix_spot.iloc[0]
-                return (row['代码'], row['名称'])
-
-            # 包含匹配
-            contains_spot = spot_df[spot_df['名称'].str.contains(text, na=False)]
-            if len(contains_spot) == 1:
-                row = contains_spot.iloc[0]
-                return (row['代码'], row['名称'])
-
-            # 多个匹配返回第一个
-            if not prefix_spot.empty:
-                row = prefix_spot.iloc[0]
-                return (row['代码'], row['名称'])
-            if not contains_spot.empty:
-                row = contains_spot.iloc[0]
-                return (row['代码'], row['名称'])
+            candidates = []
+            for _, row in spot_df.iterrows():
+                name = str(row['名称'])
+                normalized_name = _normalize_stock_name(name)
+                if normalized_name == normalized_text:
+                    return (_strip_code(row['代码']), _clean_stock_name(name))
+                if normalized_name.startswith(normalized_text):
+                    candidates.append((0, len(name), row))
+                elif normalized_text in normalized_name:
+                    candidates.append((1, len(name), row))
+            if candidates:
+                _, _, row = sorted(candidates, key=lambda item: (item[0], item[1]))[0]
+                return (_strip_code(row['代码']), _clean_stock_name(row['名称']))
 
         return None
 
@@ -1277,18 +1423,17 @@ class StockDataFetcher:
         返回 [{'code': '000001', 'name': '平安银行'}, ...]
         """
         import json as _json
-        cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+        cache_file = cls._main_board_cache_file
 
         # 1. 尝试从缓存加载（24小时有效）
         try:
-            if os.path.exists(cache_file):
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    cached = _json.load(f)
+            cached, _ = _read_json_cache(cache_file, '.main_board_cache.json')
+            if cached:
                 cache_time = datetime.fromisoformat(cached.get('updated', '2000-01-01'))
                 if datetime.now() - cache_time < timedelta(hours=24):
                     return cached['stocks']
         except Exception:
-            pass
+            logger.warning("读取主板股票池缓存失败", exc_info=True)
 
         # 2. 从AKShare全市场快照获取
         stocks = []
@@ -1308,6 +1453,7 @@ class StockDataFetcher:
 
                 # 写入缓存
                 try:
+                    _ensure_parent_dir(cache_file)
                     with open(cache_file, 'w', encoding='utf-8') as f:
                         _json.dump({
                             'updated': datetime.now().isoformat(),
@@ -1315,9 +1461,9 @@ class StockDataFetcher:
                             'stocks': stocks
                         }, f, ensure_ascii=False)
                 except Exception:
-                    pass
+                    logger.warning("写入主板股票池缓存失败: %s", cache_file, exc_info=True)
         except Exception:
-            pass
+            logger.warning("刷新主板股票池失败", exc_info=True)
 
         return stocks
 
@@ -1330,19 +1476,17 @@ def _build_cn_stock_pool():
     缓存文件由 StockDataFetcher.get_main_board_stocks() 在首次成功下载后写入。
     应用冷启动后缓存就已存在（除首次部署外），无需每次导入都下载全市场快照。
     """
-    import json as _json
-    cache_file = os.path.join(os.path.dirname(__file__), '.main_board_cache.json')
+    cache_file = StockDataFetcher._main_board_cache_file
     try:
-        if os.path.exists(cache_file):
-            with open(cache_file, 'r', encoding='utf-8') as f:
-                cached = _json.load(f)
+        cached, _ = _read_json_cache(cache_file, '.main_board_cache.json')
+        if cached:
             cache_time = datetime.fromisoformat(cached.get('updated', '2000-01-01'))
             if datetime.now() - cache_time < timedelta(hours=24):
                 stocks = cached.get('stocks', [])
                 if stocks and len(stocks) >= 20:
                     return stocks
     except Exception:
-        pass
+        logger.warning("构建A股推荐池时读取缓存失败", exc_info=True)
 
     # 无缓存或缓存过期：退回静态映射表（首次部署时）
     return [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]

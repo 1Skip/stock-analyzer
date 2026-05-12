@@ -18,7 +18,7 @@
 | `stock_names.py` | 股票名称静态映射表 | ~200只A股 + 热门美股列表，data_fetcher 导入使用 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置、classify_signal，供 Web 和 CLI 共用 |
 | `ui/styles.py` | CSS 样式定义 | ~207行，Apple × Tesla 设计体系，app.py 导入注入 |
-| `ui/cached_data.py` | 缓存数据层 | fetcher 实例 + 4个 @st.cache_data 函数 |
+| `ui/cached_data.py` | 缓存数据层 | fetcher 实例 + 股票数据/实时行情/分时/名称解析等 @st.cache_data 函数 |
 | `ui/charts.py` | 图表函数 | K线/RSI/KDJ/BOLL/分时图，Plotly 实现 |
 | `ui/ai_analysis_ui.py` | AI 分析 UI | API 配置表单 + 单Agent/多Agent 结果渲染 |
 | `ui/sidebar.py` | 侧边栏组件 | 大盘温度、自选股列表、mini 分析面板、数据源选择 |
@@ -27,7 +27,7 @@
 | `ui/recommend_page.py` | 智能推荐页面 | 短线/长线龙头股推荐 |
 | `ui/compare_page.py` | 股票对比页面 | 多股票指标对比 + 标准化走势 |
 | `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
-| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护 |
+| `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护、全量A股名称索引 |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多Agent协作（技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
@@ -41,7 +41,7 @@
 | `backtest_adapter.py` | 回测适配 | 连接信号体系与回测引擎 |
 | `backtest_ui.py` | 回测 UI | Streamlit 回测页面 |
 | `api_server.py` | FastAPI 服务 | 飞书机器人回调 + 股票查询 API（可选，`FEISHU_BOT_ENABLED` 控制） |
-| `tests/` | 测试（19文件，531测试） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
+| `tests/` | 测试（17文件，533测试） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
 | `pytest.ini` | pytest 配置 | testpaths=tests, 注册 slow/network 标记, --tb=short |
 | `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare / fastapi / uvicorn（飞书机器人可选） |
 | `.devcontainer/devcontainer.json` | Dev Container | Python 3.11，自动安装依赖并启动 Streamlit |
@@ -54,10 +54,11 @@
 - **Web 指标图** → Plotly（RSI/KDJ/BOLL 子图），交互式可缩放
 - **CLI 图表** → Matplotlib（在 `chart_plotter.py` 中），静态图片
 - **超时保护**：所有数据获取调用通过 `concurrent.futures.ThreadPoolExecutor` 包装超时（stock_info 5s / K线数据 20s / 实时行情 3s / 全市场快照 8s），超时后降级到已获取数据继续渲染
+- **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；静态表仅作为冷启动/离线 fallback，不再靠“报一个补一个”
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
-- **离线模式**：所有在线源失败时，使用 `.stock_cache.json` 24 小时内缓存
+- **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
 - **定时调度**：默认关闭，通过 `SCHEDULE_ENABLED=true` 开启，`SCHEDULE_TIME` 设定执行时间
 - **飞书机器人**：默认关闭，通过 `FEISHU_BOT_ENABLED=true` 开启 FastAPI 回调服务
@@ -158,6 +159,7 @@
 | A股数据获取全部失败 | AKShare 网络超时或其他数据源不可用 | 检查三级回退链：AKShare → 新浪 → yfinance。全部失败则启用 `.stock_cache.json` 离线缓存（24h 有效） |
 | 换手率显示 None | AKShare 全市场接口返回空或字段缺失 | 在 `stock_recommendation.py` 中从 `StockDataFetcher._get_spot_snapshot()` 获取，失败则返回 None（绝不使用随机模拟数据） |
 | 全市场快照每次查询都下载 5000+ 行 | 未缓存快照结果 | 使用类级别 `_spot_cache` + 60 秒 TTL 缓存 |
+| 股票代码能查但中文名称查不到 | 名称搜索依赖不完整静态映射表，代码查询无需名称库 | 使用 `stock_info_a_code_name()` 构建全量 A 股名称索引，缓存到 `.cache/stock_name_index.json`；名称匹配前做 NFKC/去空格规范化 |
 | 实时行情调用阻塞页面加载 | `ak.stock_zh_a_spot_em()` 无超时参数，下载全市场数据可能耗时 5-15 秒 | 用 `ThreadPoolExecutor` 包装，`future.result(timeout=N)` 限制等待时间，超时降级到 K 线 fallback |
 | 分时图在非交易日显示空白 | `_fetch_intraday_akshare` 未做当日过滤，返回上周数据；`plot_intraday_chart` 的 X 轴硬编码 `pd.Timestamp.now().date()` 导致数据点落在不可见区间 | 1) AKShare 源也加 `df['time'].dt.date == today` 过滤；2) X 轴刻度用数据实际日期而非当天日期；3) 数据为空时显示提示 |
 
@@ -218,6 +220,7 @@ pip-audit
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）
 - **所有对用户的汇报必须基于验证后的结论**：对用户说"X 是原因"之前，必须用代码/数据/测试实际验证过。不确定时就说不确定，然后去验证。禁止未经证实的猜测当作结论汇报
+- **禁止假设性回答**：用户验证后发现不对才说"没解决"，说明之前的结论是猜的。提交修复前必须自己做完整数据流验证（用真实数据调核心函数），确认所有路径都通，再汇报。宁可说"我还没找到根因，正在排查"也不要说"应该修复了"
 - **用户报bug时必须一次性修完，禁止反复修复**：
   1. 先完整追踪调用链（从 UI → 业务逻辑 → 数据源，每层都查），找到所有相关代码路径
   2. 必要时调用相关 skill（finance-ai-expert / python-data-expert / frontend-expert / architect-expert 等）协助分析

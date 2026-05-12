@@ -2,7 +2,13 @@
 import json as _json_for_hash
 import html
 import streamlit as st
-from config import MARKET_INDEX_ENABLED, INDEX_WATCHLIST, INDEX_CACHE_TTL
+from config import (
+    MARKET_INDEX_ENABLED,
+    INDEX_WATCHLIST,
+    INDEX_CACHE_TTL,
+    CACHE_TTL_WATCHLIST_SUMMARY,
+    CACHE_TTL_WATCHLIST_MINI,
+)
 from watchlist import (
     add_to_watchlist, remove_from_watchlist,
     get_watchlist, is_in_watchlist, get_watchlist_summary,
@@ -51,7 +57,7 @@ def display_market_temperature():
     )
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_WATCHLIST_SUMMARY, show_spinner=False)
 def _cached_watchlist_summary(_watchlist_hash):
     """获取自选股技术摘要（带缓存，5分钟有效）"""
     watchlist = get_watchlist()
@@ -139,7 +145,7 @@ def display_watchlist_sidebar():
     return summaries
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=CACHE_TTL_WATCHLIST_MINI, show_spinner=False)
 def _cached_mini_analysis(symbol, market):
     """获取单只股票简要分析数据（侧边栏 mini 面板用，5分钟缓存）"""
     from watchlist import get_watchlist_summary

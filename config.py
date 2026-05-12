@@ -38,6 +38,7 @@ HEALTH_SKIP_PROBABILITY = 0.5  # fail_count>5时随机跳过概率
 
 OFFLINE_CACHE_MAX_ENTRIES = 20     # 离线缓存最大股票数
 OFFLINE_CACHE_MAX_AGE_HOURS = 24   # 离线缓存有效期
+RUNTIME_CACHE_DIR = os.getenv("RUNTIME_CACHE_DIR", os.path.join(os.path.dirname(__file__), ".cache"))
 
 SPOT_CACHE_TTL_SECONDS = 60  # 全市场快照缓存时间
 
@@ -50,6 +51,8 @@ CACHE_TTL_STOCK_INFO = 300    # 股票基本信息
 CACHE_TTL_INTRADAY = 60       # 分时图数据（1分钟）
 CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算
+CACHE_TTL_WATCHLIST_SUMMARY = 300  # 自选股摘要（5分钟）
+CACHE_TTL_WATCHLIST_MINI = 300     # 自选股 mini 面板（5分钟）
 
 # 板块推送配置
 SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "false").lower() == "true"

@@ -24,7 +24,7 @@
 - 默认关闭，通过环境变量 `NOTIFY_CHANNELS` 开启（可选值：`wechat`, `feishu`）
 
 ### 市场支持
-- **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退
+- **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退；中文名称搜索使用全量 A 股名称索引（5515+ 只，24h 本地缓存）
 - **港股** — 新浪财经 → Yahoo Finance
 - **美股** — 新浪财经 → Yahoo Finance
 
@@ -55,7 +55,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-个股分析页支持**股票中文名称搜索**（如"平安银行"、"茅台"），输入后按 **Enter 键**直接分析。
+个股分析页支持**股票代码/中文名称搜索**（如"平安银行"、"报喜鸟"、"茅台"），输入后按 **Enter 键**直接分析。A股名称索引会缓存到 `.cache/stock_name_index.json`，避免每次搜索都拉全市场行情。
 
 ### CLI 命令行
 
@@ -83,6 +83,13 @@ pytest tests/ -v -m "not network"   # 跳过网络测试（离线环境）
 pytest tests/test_technical_indicators.py -v  # 单文件
 ```
 
+### 常用配置
+
+- `RUNTIME_CACHE_DIR`：运行缓存目录，默认 `.cache/`，用于离线行情缓存和主板股票池缓存。
+- `API_AUTH_KEY`：API 鉴权密钥；如果 API 服务不只监听本地地址，建议务必设置。
+- `CACHE_TTL_WATCHLIST_SUMMARY` / `CACHE_TTL_WATCHLIST_MINI`：自选股侧边栏缓存时间，默认 300 秒。
+- `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
+
 ## 项目结构
 
 | 文件 | 职责 |
@@ -97,7 +104,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/ai_analysis_ui.py` | AI 分析 UI（API 配置 + 单/多Agent 结果渲染） |
 | `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
-| `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 股票名称解析 |
+| `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
@@ -111,7 +118,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `scheduler.py` | 定时调度 |
 | `config.py` | 集中配置 |
 | `watchlist.py` | 自选股管理 |
-| `tests/` | 测试（18 文件，514 测试） |
+| `tests/` | 测试（17 文件，533 测试） |
 
 ## 指标说明
 

@@ -95,8 +95,13 @@ def _setup_auth():
     if not FASTAPI_AVAILABLE or app is None:
         return
     app.add_middleware(AuthMiddleware)
-    from config import API_AUTH_KEY
-    logger.info("API 鉴权: %s", "已启用" if API_AUTH_KEY else "已关闭（未设置 API_AUTH_KEY）")
+    from config import API_AUTH_KEY, API_SERVER_HOST
+    if API_AUTH_KEY:
+        logger.info("API 鉴权: 已启用")
+    elif API_SERVER_HOST not in ("127.0.0.1", "localhost", "::1"):
+        logger.warning("API 鉴权已关闭，且服务监听 %s；公网/局域网部署请设置 API_AUTH_KEY", API_SERVER_HOST)
+    else:
+        logger.info("API 鉴权: 已关闭（仅本地监听时可接受）")
 
 
 # ============================================================
@@ -105,7 +110,6 @@ def _setup_auth():
 
 def setup_logging():
     """配置统一的结构化日志"""
-    from config import API_SERVER_PORT
     format_str = "[%(asctime)s] %(levelname)-5s [%(name)s] %(message)s"
     datefmt = "%Y-%m-%d %H:%M:%S"
     
@@ -140,6 +144,7 @@ def _get_watchlist_text():
         with open(watchlist_file, 'r', encoding='utf-8') as f:
             watchlist = json.load(f)
     except Exception:
+        logger.warning("读取自选股文件失败: %s", watchlist_file, exc_info=True)
         return "自选股数据读取失败"
 
     if not watchlist:
@@ -196,7 +201,7 @@ def _get_analysis_text(symbol, market='CN'):
                 df.loc[idx, 'high'] = max(df.loc[idx, 'high'], quote['high'])
                 df.loc[idx, 'low'] = min(df.loc[idx, 'low'], quote['low'])
     except Exception:
-        pass
+        logger.warning("合并实时行情失败: symbol=%s market=%s", symbol, market, exc_info=True)
 
     df = TechnicalIndicators.calculate_all(df)
     signals = TechnicalIndicators.get_signals(df)
@@ -320,6 +325,7 @@ if FASTAPI_AVAILABLE:
             with open(watchlist_file, 'r', encoding='utf-8') as f:
                 watchlist = json.load(f)
         except Exception:
+            logger.warning("API 读取自选股文件失败: %s", watchlist_file, exc_info=True)
             return {"watchlist": [], "message": "读取失败"}
 
         if not watchlist:

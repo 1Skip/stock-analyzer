@@ -599,6 +599,46 @@ class TestGetStockName:
 
 
 # ============================================================
+# TestResolveStockInput
+# ============================================================
+
+class TestResolveStockInput:
+
+    def test_cn_known_name_does_not_need_network(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        def fail_snapshot(cls, timeout=45):
+            raise AssertionError("should not fetch full market snapshot")
+
+        monkeypatch.setattr(StockDataFetcher, '_get_spot_snapshot', classmethod(fail_snapshot))
+
+        fetcher = StockDataFetcher()
+        assert fetcher.resolve_stock_input('大唐电信', market='CN') == ('600198', '大唐电信')
+        assert fetcher.resolve_stock_input('大唐', market='CN') == ('600198', '大唐电信')
+
+    def test_cn_full_name_index_covers_non_static_names(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_load_stock_name_index',
+            classmethod(lambda cls, max_age_hours=24: [
+                {'code': '002154', 'name': '报喜鸟'},
+                {'code': '000002', 'name': '万  科Ａ'},
+            ]),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            'get_main_board_stocks',
+            classmethod(lambda cls: []),
+        )
+
+        fetcher = StockDataFetcher()
+        assert fetcher.resolve_stock_input('报喜鸟', market='CN') == ('002154', '报喜鸟')
+        assert fetcher.resolve_stock_input('万科A', market='CN') == ('000002', '万科A')
+
+
+# ============================================================
 # TestGetRealtimeQuote
 # ============================================================
 

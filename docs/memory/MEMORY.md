@@ -1,3 +1,4 @@
+- [Bug fixes & context 2026-05-12](bug_fixes_and_context_2026-05-12.md) — 5/12修复：全量A股名称索引、搜索性能优化、运行缓存迁移、API安全提示，533 tests pass
 - [Project state 2026-05-10](project_state.md) — P0代码质量修复完成，P1/P2优化待做，514测试通过
 - [Optimization plan 2026-05-10](optimization_plan.md) — 测试隔离+缓存写坏+XSS+大文件拆分+评分合并+AI线程安全+依赖CI+两个配置坑
 - [Screenshot folder](screenshot_folder.md) — 问题截图存放路径：`Screenshot of the problem/`

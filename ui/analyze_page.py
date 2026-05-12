@@ -15,6 +15,7 @@ from ui.cached_data import (
     fetcher,
     get_cached_stock_data, get_cached_stock_info,
     get_cached_realtime_quote, get_cached_intraday_data,
+    resolve_cached_stock_input,
 )
 from ui.charts import (
     plot_candlestick_chart, plot_rsi_chart, plot_kdj_chart,
@@ -306,13 +307,12 @@ def analyze_stock_page():
 
     if 'analyze_symbol' not in st.session_state:
         st.session_state.analyze_symbol = "000001"
+    if 'analyze_symbol_input' not in st.session_state:
+        st.session_state.analyze_symbol_input = "000001"
     if 'analyze_market' not in st.session_state:
         st.session_state.analyze_market = "CN"
     if 'analyze_period' not in st.session_state:
         st.session_state.analyze_period = "1y"
-
-    def on_symbol_change():
-        st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
 
     def on_market_change():
         st.session_state.analyze_market = st.session_state.analyze_market_select
@@ -325,24 +325,24 @@ def analyze_stock_page():
     # ================================================================
 
     # 第1行：搜索框 | 开始分析（核心操作，视觉焦点）
+    # 用 st.form 包住：表单提交时保证所有值批量发送，不依赖输入框的 dirty 标记
     with st.form("search_form"):
         col_input, col_btn = st.columns([5, 1])
         with col_input:
             st.text_input(
                 "股票代码或名称",
-                value=st.session_state.analyze_symbol,
                 placeholder="000001 或 平安银行 · AAPL · 00700",
                 label_visibility="collapsed",
                 key="analyze_symbol_input",
             )
         with col_btn:
-            form_submitted = st.form_submit_button(
+            submitted = st.form_submit_button(
                 "开始分析", type="primary", use_container_width=True
             )
 
-    # 表单提交后同步输入框值到 analyze_symbol
-    if form_submitted:
+    if submitted:
         st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
+        st.session_state.trigger_analysis = True
 
     # 第2行：市场 | 周期 | 配色 | 刷新 — 总宽6份，对齐上行 input(5)+btn(1)
     col_mkt, col_period, col_pref, col_refresh = st.columns([2, 2, 1, 1])
@@ -409,24 +409,39 @@ def analyze_stock_page():
             get_cached_stock_data.clear()
             get_cached_realtime_quote.clear()
             get_cached_stock_info.clear()
+            get_cached_intraday_data.clear()
+            resolve_cached_stock_input.clear()
             st.success("已清除缓存，请重新分析")
 
     symbol = st.session_state.analyze_symbol
     market = st.session_state.analyze_market
     period = st.session_state.analyze_period
 
-    analyze_clicked = form_submitted or st.session_state.pop('trigger_analysis', False)
+    analyze_clicked = st.session_state.pop('trigger_analysis', False)
 
     if analyze_clicked:
         # 名称→代码解析（A股支持输入中文名称）
         resolved_name = None
+        has_chinese = any('一' <= c <= '鿿' for c in symbol)
         if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
-            result = fetcher.resolve_stock_input(symbol, market)
-            if result:
-                resolved_name = result[1]
-                symbol = result[0]
-                st.session_state.analyze_symbol = symbol
-                st.caption(f"已识别: {resolved_name} ({symbol})")
+            if has_chinese:
+                with st.spinner("正在搜索股票..."):
+                    result = resolve_cached_stock_input(symbol, market)
+                if result:
+                    resolved_name = result[1]
+                    symbol = result[0]
+                    st.session_state.analyze_symbol = symbol
+                    st.caption(f"已识别: {resolved_name} ({symbol})")
+                else:
+                    st.error(f"未找到匹配「{symbol}」的股票，请使用6位代码搜索或检查名称是否正确")
+                    st.stop()
+            else:
+                result = resolve_cached_stock_input(symbol, market)
+                if result:
+                    resolved_name = result[1]
+                    symbol = result[0]
+                    st.session_state.analyze_symbol = symbol
+                    st.caption(f"已识别: {resolved_name} ({symbol})")
 
         is_valid, err_msg = _validate_symbol(symbol, market)
         if not is_valid:
@@ -436,28 +451,55 @@ def analyze_stock_page():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        status_text.text("正在获取股票信息...")
+        status_text.text("正在并行获取股票数据...")
         progress_bar.progress(5)
-        info = None
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(get_cached_stock_info, symbol, market)
-                info = future.result(timeout=5)
-        except Exception:
-            info = {'shortName': symbol, 'symbol': symbol}
-        if info is None or not info:
-            info = {'shortName': symbol, 'symbol': symbol}
-        progress_bar.progress(15)
-
-        status_text.text("正在获取K线数据...")
+        info = {'shortName': symbol, 'symbol': symbol}
         data = None
+        quote = None
+        intraday_data = None
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+        futures = {}
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(get_cached_stock_data, symbol, '1y', market)
-                data = future.result(timeout=20)
-        except Exception:
-            data = None
-        progress_bar.progress(50)
+            futures = {
+                'info': executor.submit(get_cached_stock_info, symbol, market),
+                'data': executor.submit(get_cached_stock_data, symbol, '1y', market),
+                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
+            }
+            if market == "CN":
+                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+
+            try:
+                data = futures['data'].result(timeout=20)
+            except Exception:
+                data = None
+            progress_bar.progress(45)
+
+            try:
+                info_result = futures['info'].result(timeout=0.2)
+                if info_result:
+                    info = info_result
+            except Exception:
+                info = {'shortName': symbol, 'symbol': symbol}
+            progress_bar.progress(50)
+
+            try:
+                quote = futures['quote'].result(timeout=0.2)
+            except Exception:
+                quote = None
+            progress_bar.progress(55)
+
+            try:
+                if 'intraday' in futures:
+                    intraday_data = futures['intraday'].result(timeout=0.2)
+            except Exception:
+                intraday_data = None
+        finally:
+            for future in futures.values():
+                if not future.done():
+                    future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+        progress_bar.progress(60)
 
         if data is None or data.empty:
             st.error(f"未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
@@ -479,15 +521,7 @@ def analyze_stock_page():
         if len(data) < 30:
             st.warning(f"{symbol} 数据不足（仅{len(data)}天），部分指标可能无法计算")
 
-        status_text.text("正在获取实时行情...")
-        progress_bar.progress(55)
-        quote = None
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(get_cached_realtime_quote, symbol, market)
-                quote = future.result(timeout=3)
-        except Exception:
-            quote = None
+        status_text.text("正在合并实时行情...")
 
         if quote and data is not None and not data.empty:
             today = pd.Timestamp.now().normalize()
@@ -512,26 +546,13 @@ def analyze_stock_page():
         if isinstance(info, dict):
             stock_name = info.get('shortName') or info.get('longName') or stock_name
         if stock_name == symbol and market == "CN":
-            status_text.text("正在获取股票名称...")
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(fetcher.get_stock_name, symbol, market)
-                    stock_name = future.result(timeout=5)
-            except Exception:
-                stock_name = symbol
+            name_result = resolve_cached_stock_input(symbol, market)
+            if name_result:
+                stock_name = name_result[1]
         elif stock_name == symbol:
             stock_name = symbol
         progress_bar.progress(78)
 
-        intraday_data = None
-        if market == "CN":
-            status_text.text("正在获取分时数据...")
-            try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(get_cached_intraday_data, symbol, market)
-                    intraday_data = future.result(timeout=5)
-            except Exception:
-                intraday_data = None
         progress_bar.progress(82)
 
         status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")

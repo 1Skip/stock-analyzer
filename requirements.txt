@@ -5,6 +5,7 @@ pandas>=2.2
 numpy>=2.1
 requests>=2.31
 akshare>=1.14
+beautifulsoup4>=4.12
 MyTT>=2.9
 litellm>=1.80
 matplotlib>=3.8
