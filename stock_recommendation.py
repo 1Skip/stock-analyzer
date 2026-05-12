@@ -12,54 +12,11 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # 导入热门股票列表
-from data_fetcher import StockDataFetcher, POPULAR_CN_STOCKS, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
+from data_fetcher import StockDataFetcher, get_popular_cn_stocks, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
+from stock_names import SECTOR_STOCKS
 from technical_indicators import TechnicalIndicators
 
 # 板块股票定义 - 短线龙头股
-SECTOR_STOCKS = {
-    "苹果概念": [
-        {'code': '002475', 'name': '立讯精密'},  # AirPods主力供应商
-        {'code': '002456', 'name': '欧菲光'},    # 光学镜头模组
-        {'code': '601231', 'name': '环旭电子'},  # SiP模组龙头
-        {'code': '002241', 'name': '歌尔股份'},  # 声学组件龙头
-        {'code': '603501', 'name': '韦尔股份'},  # 摄像头芯片
-        {'code': '000725', 'name': '京东方A'},   # 显示屏供应商
-        {'code': '002600', 'name': '领益智造'},  # 精密功能件
-        {'code': '002938', 'name': '鹏鼎控股'},  # PCB龙头
-    ],
-    "特斯拉概念": [
-        {'code': '002594', 'name': '比亚迪'},    # 新能源汽车对标
-        {'code': '002460', 'name': '赣锋锂业'},  # 锂资源龙头
-        {'code': '002050', 'name': '三花智控'},  # 热管理系统
-        {'code': '600885', 'name': '宏发股份'},  # 继电器龙头
-        {'code': '603305', 'name': '旭升集团'},  # 特斯拉零部件
-        {'code': '002101', 'name': '广东鸿图'},  # 压铸零部件
-        {'code': '600580', 'name': '卧龙电驱'},  # 电机龙头
-        {'code': '603596', 'name': '伯特利'},    # 汽车制动系统
-    ],
-    "电力": [
-        {'code': '600900', 'name': '长江电力'},  # 水电龙头
-        {'code': '600011', 'name': '华能国际'},  # 火电龙头
-        {'code': '600795', 'name': '国电电力'},  # 大型发电集团
-        {'code': '601985', 'name': '中国核电'},  # 核电运营
-        {'code': '003816', 'name': '中国广核'},  # 核电双巨头之一
-        {'code': '600023', 'name': '浙能电力'},  # 区域电力龙头
-        {'code': '600886', 'name': '国投电力'},  # 水电+火电
-        {'code': '600027', 'name': '华电国际'},  # 大型发电企业
-    ],
-    "算力租赁": [
-        {'code': '603019', 'name': '中科曙光'},  # AI服务器龙头
-        {'code': '000938', 'name': '中核科技'},  # 算力基础设施
-        {'code': '002335', 'name': '科华数据'},  # 数据中心+UPS
-        {'code': '600756', 'name': '浪潮软件'},  # 服务器相关
-        {'code': '000977', 'name': '浪潮信息'},  # 服务器龙头
-        {'code': '600845', 'name': '宝信软件'},  # 工业IDC龙头
-        {'code': '002929', 'name': '润建股份'},  # IDC运维
-        {'code': '603881', 'name': '数据港'},    # 数据中心运营
-    ],
-}
-
-
 # 评分权重配置
 _STANDARD_WEIGHTS = {
     'macd': [("金叉", 15), ("多头", 10), ("死叉", -10)],
@@ -201,7 +158,7 @@ class StockRecommender:
         获取A股热门股票（使用新浪财经批量行情，一次请求全部获取）
         """
         results = []
-        stocks = [s for s in POPULAR_CN_STOCKS[:max(limit, 30)]
+        stocks = [s for s in get_popular_cn_stocks()[:max(limit, 30)]
                   if self._is_main_board(s['code'])]  # 排除创业板/科创板
 
         try:
@@ -718,7 +675,7 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:20]
+            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:20]
                        if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
@@ -745,7 +702,7 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]
+            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:25]
                        if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()
@@ -772,7 +729,7 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in POPULAR_CN_STOCKS[:25]
+            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:25]
                        if self._is_main_board(s['code'])}
             for future in as_completed(futures):
                 result = future.result()

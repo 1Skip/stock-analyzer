@@ -781,8 +781,8 @@ class TestModuleConstants:
         assert len(CN_STOCK_NAMES_EXTENDED) >= 20
 
     def test_popular_cn_count(self):
-        from data_fetcher import POPULAR_CN_STOCKS
-        assert len(POPULAR_CN_STOCKS) >= 10
+        from data_fetcher import get_popular_cn_stocks
+        assert len(get_popular_cn_stocks()) >= 10
 
     def test_popular_us_count(self):
         from data_fetcher import POPULAR_US_STOCKS
@@ -793,8 +793,8 @@ class TestModuleConstants:
         assert len(POPULAR_HK_STOCKS) >= 10
 
     def test_cn_no_duplicates(self):
-        from data_fetcher import POPULAR_CN_STOCKS
-        codes = [s['code'] for s in POPULAR_CN_STOCKS]
+        from data_fetcher import get_popular_cn_stocks
+        codes = [s['code'] for s in get_popular_cn_stocks()]
         assert len(codes) == len(set(codes))
 
 

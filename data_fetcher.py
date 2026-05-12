@@ -1347,8 +1347,16 @@ def _build_cn_stock_pool():
     # 无缓存或缓存过期：退回静态映射表（首次部署时）
     return [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
 
-# 直接加载缓存中的股票池（首次启动时只有静态列表，之后会被动态刷新）
-POPULAR_CN_STOCKS = _build_cn_stock_pool()
+# 懒加载：避免导入时读取磁盘 JSON，首次调用 _build_cn_stock_pool() 时才加载
+_POPULAR_CN_STOCKS = None
+
+
+def get_popular_cn_stocks():
+    """获取 A 股推荐池（懒加载 + 缓存）"""
+    global _POPULAR_CN_STOCKS
+    if _POPULAR_CN_STOCKS is None:
+        _POPULAR_CN_STOCKS = _build_cn_stock_pool()
+    return _POPULAR_CN_STOCKS
 
 POPULAR_HK_STOCKS = [
     {'code': '00700', 'name': '腾讯控股'},

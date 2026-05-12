@@ -50,10 +50,6 @@ CACHE_TTL_STOCK_INFO = 300    # 股票基本信息
 CACHE_TTL_INTRADAY = 60       # 分时图数据（1分钟）
 CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算
-CACHE_TTL_RECOMMENDED = 600   # 推荐股票
-CACHE_TTL_SHORT_TERM = 600    # 短线推荐
-CACHE_TTL_SECTOR = 600        # 板块推荐
-CACHE_TTL_LONG_TERM = int(os.getenv("CACHE_TTL_LONG_TERM", "600"))  # 长线推荐缓存
 
 # 板块推送配置
 SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "false").lower() == "true"

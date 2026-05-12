@@ -637,8 +637,8 @@ def _mock_sina_response():
         text = ''
     resp = MockResponse()
     lines = []
-    from stock_recommendation import POPULAR_CN_STOCKS
-    for i, stock in enumerate(POPULAR_CN_STOCKS[:30]):
+    from data_fetcher import get_popular_cn_stocks
+    for i, stock in enumerate(get_popular_cn_stocks()[:30]):
         code = stock['code']
         prefix = 'sh' if code.startswith(('6', '68')) else 'sz'
         price = 10 + i * 0.5
