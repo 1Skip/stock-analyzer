@@ -1,7 +1,14 @@
 """UI workspace enhancement tests."""
 
+import pandas as pd
+
 from ui.decision_dashboard import build_decision_snapshot
-from ui.compare_page import resolve_compare_inputs
+from ui.compare_page import (
+    build_compare_insights,
+    build_trend_dashboard_figure,
+    build_trend_metrics,
+    resolve_compare_inputs,
+)
 from ui.report_history_page import _list_reports
 from ui.stock_search import parse_suggestion_label, suggest_stock_inputs
 
@@ -67,6 +74,65 @@ def test_compare_inputs_accept_fuzzy_corrected_names(monkeypatch):
     assert [item["symbol"] for item in resolved] == ["002609", "600021"]
     assert resolved[0]["name"] == "\u6377\u987a\u79d1\u6280"
     assert warnings == []
+
+
+def test_compare_trend_metrics_include_return_risk_and_trend():
+    dates = pd.date_range("2026-01-01", periods=80, freq="D")
+    prices = [100 + i for i in range(40)] + [130 - i * 0.5 for i in range(40)]
+    data = pd.DataFrame({"close": prices}, index=dates)
+
+    metrics = build_trend_metrics("600519", "\u8d35\u5dde\u8305\u53f0", data)
+
+    assert metrics["symbol"] == "600519"
+    assert metrics["return_20d"] < 0
+    assert metrics["return_60d"] is not None
+    assert metrics["max_drawdown"] < 0
+    assert metrics["volatility"] > 0
+    assert 0 <= metrics["up_day_ratio"] <= 100
+    assert metrics["ma_status"] in {"\u591a\u5934\u6392\u5217", "\u7a7a\u5934\u6392\u5217", "\u7ad9\u4e0aMA20", "\u8dcc\u7834MA20"}
+
+
+def test_compare_insights_pick_best_candidates():
+    metrics = [
+        {
+            "symbol": "600519",
+            "name": "\u8d35\u5dde\u8305\u53f0",
+            "return_20d": 8.0,
+            "volatility": 20.0,
+            "max_drawdown": -12.0,
+            "trend_slope_20d": 0.2,
+        },
+        {
+            "symbol": "600036",
+            "name": "\u62db\u5546\u94f6\u884c",
+            "return_20d": 3.0,
+            "volatility": 12.0,
+            "max_drawdown": -5.0,
+            "trend_slope_20d": 0.5,
+        },
+    ]
+
+    insights = build_compare_insights(metrics)
+    values = [(title, item["symbol"]) for title, item, _ in insights]
+
+    assert ("\u8fd120\u65e5\u6700\u5f3a", "600519") in values
+    assert ("\u8d8b\u52bf\u659c\u7387\u6700\u5f3a", "600036") in values
+    assert ("\u6ce2\u52a8\u6700\u4f4e", "600036") in values
+    assert ("\u56de\u64a4\u6700\u5c0f", "600036") in values
+
+
+def test_compare_trend_dashboard_has_three_chart_layers():
+    dates = pd.date_range("2026-01-01", periods=30, freq="D")
+    history = {
+        "600519": pd.DataFrame({"close": [100 + i for i in range(30)]}, index=dates),
+        "600036": pd.DataFrame({"close": [100 + i * 0.5 for i in range(30)]}, index=dates),
+    }
+
+    fig = build_trend_dashboard_figure(history, {"600519": "\u8d35\u5dde\u8305\u53f0", "600036": "\u62db\u5546\u94f6\u884c"})
+
+    assert len(fig.data) == 6
+    assert "\u533a\u95f4\u56de\u64a4" in fig.layout.annotations[1].text
+    assert "\u76f8\u5bf9\u5f3a\u5f31" in fig.layout.annotations[2].text
 
 
 def test_history_reports_hide_latest_alias(tmp_path, monkeypatch):

@@ -63,6 +63,8 @@ _PAGE_SCOPED_STATE_KEYS = {
     },
 }
 
+_PAGE_SWITCH_PENDING_KEY = "_page_switch_pending"
+
 
 def _clear_inactive_page_state(active_page):
     """清理非当前页面的展示态，防止切页后旧结果被复用或残留。"""
@@ -78,6 +80,7 @@ def _sync_active_page(page):
     if st.session_state.get("_active_page") == page:
         return False
     st.session_state["_active_page"] = page
+    st.session_state[_PAGE_SWITCH_PENDING_KEY] = True
     _clear_inactive_page_state(page)
     st.rerun()
     return True
@@ -101,6 +104,13 @@ def _render_selected_page(page):
         report_history_page()
     elif page == "配置推送":
         settings_page()
+
+
+def _render_main_page(page):
+    """把主页面挂在稳定占位容器内，避免切页时旧页面长列表残留。"""
+    main_slot = st.empty()
+    with main_slot.container():
+        _render_selected_page(page)
 
 
 def main():
@@ -141,7 +151,12 @@ def main():
     if _sync_active_page(page):
         return
 
-    _render_selected_page(page)
+    page_switch_pending = st.session_state.pop(_PAGE_SWITCH_PENDING_KEY, False)
+
+    _render_main_page(page)
+
+    if page_switch_pending:
+        return
 
     with st.sidebar:
         if MARKET_INDEX_ENABLED:

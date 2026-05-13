@@ -28,7 +28,7 @@ def test_app_shell_uses_main_page_container():
 
     assert "main_page" in source
     assert "_sync_active_page(page)" in source
-    assert "_render_selected_page(page)" in source
+    assert "_render_main_page(page)" in source
     assert "options=nav_items" in source
     assert "key=\"main_page\"" in source
 
@@ -39,7 +39,7 @@ def test_main_page_renders_before_slow_sidebar_widgets():
 
     source = inspect.getsource(app.main)
 
-    render_index = source.index("_render_selected_page(page)")
+    render_index = source.index("_render_main_page(page)")
     market_index = source.index("display_market_temperature()")
     watchlist_index = source.index("display_watchlist_sidebar()")
 
@@ -136,3 +136,59 @@ def test_main_returns_immediately_after_page_change(monkeypatch):
     app.main()
 
     assert calls == ["rerun"]
+
+
+def test_main_page_uses_stable_empty_container(monkeypatch):
+    import app
+    import streamlit as st
+
+    calls = []
+
+    class DummyEmpty:
+        def container(self):
+            return self
+        def __enter__(self):
+            calls.append("enter_container")
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            calls.append("exit_container")
+            return False
+
+    monkeypatch.setattr(st, "empty", lambda: calls.append("empty") or DummyEmpty())
+    monkeypatch.setattr(app, "_render_selected_page", lambda page: calls.append(f"render:{page}"))
+
+    app._render_main_page("股票对比")
+
+    assert calls == ["empty", "enter_container", "render:股票对比", "exit_container"]
+
+
+def test_page_switch_second_run_skips_slow_sidebar(monkeypatch):
+    import app
+    import streamlit as st
+
+    class DummySidebar:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    st.session_state.clear()
+    st.session_state["main_page"] = "股票对比"
+    st.session_state["_active_page"] = "股票对比"
+    st.session_state[app._PAGE_SWITCH_PENDING_KEY] = True
+    calls = []
+
+    monkeypatch.setattr(st, "sidebar", DummySidebar())
+    monkeypatch.setattr(st, "title", lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(st, "radio", lambda *args, **kwargs: "股票对比", raising=False)
+    monkeypatch.setattr(app, "_render_main_page", lambda page: calls.append(f"render:{page}"))
+    monkeypatch.setattr(app, "display_market_temperature", lambda: calls.append("market"))
+    monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: calls.append("watchlist") or None)
+    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda summaries: calls.append("mini"))
+    monkeypatch.setattr(app, "display_data_source_selector", lambda: calls.append("source"))
+
+    app.main()
+
+    assert calls == ["render:股票对比"]
+    assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

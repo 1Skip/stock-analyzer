@@ -32,7 +32,7 @@
 ### 其他功能
 - **热门股票** — 涨幅榜/跌幅榜/成交量榜 + 行业板块排行 + 概念板块排行，保留全市场热度观察
 - **推荐股票** — 多因子技术分析评分（0-100），含短线/长线/板块推荐；A股推荐池仅包含沪深主板股票
-- **股票对比** — 多只股票技术指标横向对比
+- **股票对比** — 多只股票技术指标 + 走势决策仪表盘，含区间收益、最大回撤、波动率、上涨天数占比、MA 状态和相对强弱
 - **回测引擎** — 信号→交易模拟，含止损/止盈/中性区间
 - **大盘温度** — 上证/深证/沪深300/北证50 实时跟踪
 - **自选股** — 持久化管理，支持 A股/港股/美股，侧边栏 mini 分析面板
@@ -51,7 +51,24 @@
 
 ## 快速开始
 
-### 安装
+### Windows 一键启动（推荐）
+
+如果只是想直接使用 Web 页面：
+
+1. 安装 Python 3.10+，安装时勾选 **Add Python to PATH**。
+2. 双击项目根目录的 `启动.bat` 或 `start.bat`。
+3. 首次运行会自动创建 `.venv` 并安装依赖，完成后自动打开浏览器。
+
+常用脚本：
+
+| 脚本 | 用途 |
+|------|------|
+| `启动.bat` / `start.bat` | 一键启动 Web 系统 |
+| `创建桌面快捷方式.vbs` | 在桌面创建“股票分析系统”快捷方式 |
+| `install_startup.bat` | 设置 Windows 登录后自动启动 |
+| `uninstall_startup.bat` | 取消 Windows 开机自动启动 |
+
+### 手动安装
 
 ```bash
 cd stock_analyzer
@@ -65,6 +82,29 @@ streamlit run app.py
 ```
 
 个股分析页支持**股票代码/中文名称搜索**（如"平安银行"、"报喜鸟"、"茅台"），输入后按 **Enter 键**直接分析。A股名称索引会缓存到 `.cache/stock_name_index.json`，避免每次搜索都拉全市场行情。
+
+### 下载后直接使用
+
+别人下载本项目后，Windows 下最简单流程：
+
+```text
+解压项目 → 双击 start.bat → 等待依赖安装 → 浏览器自动打开
+```
+
+如果依赖安装慢或失败，可以先换 pip 镜像：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+macOS / Linux 用户：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
 
 ### CLI 命令行
 
@@ -127,7 +167,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/analyze_page.py` | 个股分析页面（股票名称搜索 + Enter 键搜索 + 指标图表） |
 | `ui/hot_stocks_page.py` | 热门板块页面（行业/概念排行 + 涨跌幅榜） |
 | `ui/recommend_page.py` | 智能推荐页面（短线/长线龙头股推荐） |
-| `ui/compare_page.py` | 股票对比页面（多股票指标横向对比） |
+| `ui/compare_page.py` | 股票对比页面（多股票指标横向对比 + 走势决策仪表盘） |
 | `ui/sidebar.py` | 侧边栏组件（大盘温度 + 自选股 + mini 面板） |
 | `ui/ai_analysis_ui.py` | AI 分析 UI（API 配置 + 单/多Agent 结果渲染） |
 | `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |

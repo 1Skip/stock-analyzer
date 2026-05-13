@@ -145,3 +145,47 @@ python main.py --schedule
   - `StockDataFetcher().resolve_stock_input("顺捷科技", "CN") == ("002609", "捷顺科技")`
   - `suggest_stock_inputs("顺捷科技", "CN", 3)` 首位返回 `002609 · 捷顺科技`
   - `py -m pytest tests\test_data_fetcher.py tests\test_ui_enhancements.py tests\test_app_navigation.py -q` → 88 passed
+
+## 追加记录：智能推荐切到股票对比仍残留旧页面
+- 问题现象：从“智能推荐”切换到“股票对比”后，股票对比已显示在顶部，但页面底部仍能看到淡化后的智能推荐结果。
+- 原因定位：这是 Streamlit rerun 期间的前端 stale DOM 占位现象，旧页面长列表在新脚本尚未完全结束时会被淡化保留；应用侧慢侧边栏刷新会拉长这个窗口，让残影更明显。
+- 修复方式：
+  - `app.py` 新增 `_render_main_page(page)`，用稳定的 `st.empty()` 主内容占位容器承载每个业务页面，切页时先替换主内容区域。
+  - `_sync_active_page(page)` 在切页时写入 `_page_switch_pending` 标记；目标页首轮渲染完成后立即返回，跳过大盘温度、自选股摘要、数据源说明等较慢侧边栏刷新，避免旧 DOM 拖尾。
+  - 保留原有 `_clear_inactive_page_state(active_page)`，继续清理个股分析、热门板块、智能推荐等页面结果态，避免旧业务数据跨页面复用。
+- 覆盖测试：
+  - `tests/test_app_navigation.py` 新增主页面稳定容器测试。
+  - `tests/test_app_navigation.py` 新增切页后第二轮跳过慢侧边栏测试。
+- 已验证：
+  - `py -m compileall app.py tests\test_app_navigation.py`
+  - `py -m pytest tests\test_app_navigation.py -q` → 10 passed
+  - `py -m pytest tests\test_app_navigation.py tests\test_hot_stocks_page.py tests\test_ui_enhancements.py tests\test_loading_ui.py -q` → 23 passed
+
+## 追加记录：股票对比价格走势信息增强
+- 问题现象：股票对比页的“价格走势对比”只有标准化价格线，能看出谁涨跌更多，但缺少回撤、波动、胜率、趋势和相对强弱等决策信息。
+- 修复方式：
+  - `ui/compare_page.py` 新增 `build_trend_metrics()`，计算近 20/60/120 日/1 年收益、最大回撤、年化波动率、上涨天数占比、近 20 日趋势斜率和 MA20/MA60 状态。
+  - 新增 `build_compare_insights()`，输出“近20日最强、趋势斜率最强、波动最低、回撤最小”等结论卡片。
+  - 新增 `build_trend_dashboard_figure()`，把图表升级为三层：标准化价格、区间回撤、相对第一只股票的强弱差。
+  - README 和 CLAUDE 同步更新股票对比功能说明。
+- 覆盖测试：
+  - `tests/test_ui_enhancements.py` 新增走势指标、结论卡片和三层图表结构测试。
+- 已验证：
+  - `py -m compileall ui\compare_page.py tests\test_ui_enhancements.py`
+  - `py -m pytest tests\test_ui_enhancements.py tests\test_app_navigation.py -q` → 21 passed
+
+## 追加记录：Windows 一键启动与开机自启
+- 目标：用户希望自己打开电脑就能直接使用；别人下载项目后也能尽量双击启动。
+- 落地方式：
+  - `start.bat` 作为英文/ASCII 主入口，避免 Windows cmd 编码导致中文批处理内容被误解析。
+  - `启动.bat` 和 `股票分析系统.bat` 保留为中文入口，但只转发到 `start.bat`。
+  - `start.bat` 自动检测 `py -3` / `python`，自动创建 `.venv`，自动安装 `requirements.txt`，启动 Streamlit 并打开 `http://localhost:8501`。
+  - `创建桌面快捷方式.vbs` 改为使用脚本所在目录，不再硬编码本机路径。
+  - 新增 `install_startup.bat` / `uninstall_startup.bat`，通过 Windows 启动文件夹快捷方式启用/取消登录后自动启动。
+  - 新增 `docs/WINDOWS_QUICK_START.md`，说明自用开机即用、别人下载即用、依赖安装慢、端口占用等常见问题。
+- 注意：
+  - 脚本不写入 token、webhook、API key。
+  - 开机自启只是本机 Windows 登录后启动 Web 服务；若要电脑关机也能定时推送，应使用 GitHub Actions/服务器方案。
+- 已验证：
+  - 检查脚本无项目绝对路径硬编码。
+  - `py -m pytest tests\test_ui_enhancements.py tests\test_app_navigation.py tests\test_loading_ui.py -q` → 23 passed

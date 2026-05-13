@@ -25,7 +25,7 @@
 | `ui/analyze_page.py` | 个股分析页面 | 输入表单 + 股票名称搜索 + Enter键搜索 + 信号/指标卡片 + 图表渲染 |
 | `ui/hot_stocks_page.py` | 热门板块页面 | 行业/概念排行 + 涨跌幅榜 |
 | `ui/recommend_page.py` | 智能推荐页面 | 短线/长线龙头股推荐 |
-| `ui/compare_page.py` | 股票对比页面 | 多股票指标对比 + 标准化走势 |
+| `ui/compare_page.py` | 股票对比页面 | 多股票指标对比 + 收益/回撤/波动/相对强弱走势仪表盘 |
 | `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
 | `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护、全量A股名称索引 |
 | `data/` | 分层数据服务 | providers/services/cache/health/models/runtime；已接入 A股基础资料/估值、行情服务接缝、财务摘要/资金流/新闻扩展信息 |
@@ -314,5 +314,8 @@ pip-audit
 
 根目录的 `.bat` / `.vbs` / `.ps1` 脚本是给 Windows 小白用户的一键启动方案。注意：
 - 这些脚本只封装 `python main.py` 或 `streamlit run`，不包含敏感操作
+- `启动.bat` / `start.bat` 必须使用 `%~dp0` 相对项目目录，不允许硬编码本机路径
+- 一键启动脚本会自动创建 `.venv` 并安装 `requirements.txt`，供别人下载后直接双击使用
+- `install_startup.bat` 只创建 Windows 启动文件夹快捷方式；`uninstall_startup.bat` 只删除该快捷方式
 - 如需推送脚本，确认 token 从安全的途径获取，不要硬编码
 - 用户间共享这些脚本时，告知不要包含私有信息
