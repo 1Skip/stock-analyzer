@@ -219,7 +219,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
-GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`。配置仓库 Secrets（`NOTIFY_CHANNELS`、`WECHAT_WEBHOOK_URL` 或 `FEISHU_WEBHOOK_URL`）后，不需要本地电脑常开。
+GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 
 ## 指标说明
 

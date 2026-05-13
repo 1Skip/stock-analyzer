@@ -1,4 +1,4 @@
-name: 每日股票分析
+name: 飞书每日股票分析推送
 
 on:
   schedule:
@@ -23,10 +23,18 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
-      - name: 运行定时分析并推送日报
+      - name: 检查飞书 Webhook Secret
         env:
-          NOTIFY_CHANNELS: ${{ secrets.NOTIFY_CHANNELS }}
-          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+        run: |
+          if [ -z "$FEISHU_WEBHOOK_URL" ]; then
+            echo "::error::请先在 GitHub 仓库 Settings > Secrets and variables > Actions 中配置 FEISHU_WEBHOOK_URL"
+            exit 1
+          fi
+
+      - name: 运行定时分析并推送到飞书
+        env:
+          NOTIFY_CHANNELS: feishu
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           DAILY_REPORT_ENABLED: "true"

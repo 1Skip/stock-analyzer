@@ -204,3 +204,16 @@ python main.py --schedule
   - `py -m compileall api_server.py tests\test_api_server.py`
   - `py -m pytest tests\test_api_server.py -q` → 16 passed
   - `py -m pytest tests\test_data_fetcher.py::TestGetStockName tests\test_ui_enhancements.py -q` → 14 passed
+
+## 追加记录：GitHub Actions + 飞书 Webhook 云端推送
+- 目标：电脑关机后仍能在工作日收盘后自动推送飞书日报。
+- 落地方式：
+  - `.github/workflows/daily_analysis.yml` 改为飞书每日股票分析推送工作流，工作日北京时间 15:30 自动运行，仍支持手动 `workflow_dispatch`。
+  - workflow 默认设置 `NOTIFY_CHANNELS=feishu`，仓库只需要配置 `FEISHU_WEBHOOK_URL` Secret，减少误配。
+  - 新增 Secret 自检步骤，未配置 `FEISHU_WEBHOOK_URL` 时在 Actions 日志中明确报错。
+  - 新增 `docs/FEISHU_GITHUB_ACTIONS.md`，说明飞书机器人 Webhook、GitHub Secrets、手动测试、推送内容和常见问题。
+  - README 和 CLAUDE 同步更新云端飞书推送说明。
+- 推送内容：
+  - 自选股摘要 → 四板块推荐（算力租赁、电力、苹果概念、特斯拉概念）→ 每日完整 Markdown 决策日报。
+- 注意：
+  - 这是主动推送方案，不是飞书实时对话；实时对话仍需要事件订阅和公网回调服务。
