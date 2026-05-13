@@ -93,6 +93,29 @@ def _normalize_query(value: str) -> str:
     return _CN_QUERY_ALIASES.get(normalized, normalized)
 
 
+def _query_similarity(query: str, candidate: str) -> float:
+    """Return fuzzy similarity, boosting same-character transposition typos."""
+    normalized = _normalize_query(query)
+    normalized_candidate = _normalize_query(candidate)
+    if not normalized or not normalized_candidate:
+        return 0.0
+    similarity = SequenceMatcher(None, normalized, normalized_candidate).ratio()
+    if len(normalized) >= 3 and len(normalized_candidate) >= 3 and sorted(normalized) == sorted(normalized_candidate):
+        similarity = max(similarity, 0.95)
+    return similarity
+
+
+def _is_same_char_transposition(query: str, candidate: str) -> bool:
+    normalized = _normalize_query(query)
+    normalized_candidate = _normalize_query(candidate)
+    return (
+        len(normalized) >= 3
+        and len(normalized) == len(normalized_candidate)
+        and normalized != normalized_candidate
+        and sorted(normalized) == sorted(normalized_candidate)
+    )
+
+
 def _project_root() -> str:
     return os.path.dirname(os.path.dirname(__file__))
 
@@ -163,14 +186,16 @@ def suggest_stock_inputs(query: str, market: str = "CN", limit: int = 8) -> list
                 score = 0
             elif normalized_name == normalized:
                 score = 1
-            elif normalized_code.startswith(normalized):
+            elif _is_same_char_transposition(normalized, normalized_name):
                 score = 2
-            elif normalized_name.startswith(normalized):
+            elif normalized_code.startswith(normalized):
                 score = 3
-            elif normalized in normalized_name:
+            elif normalized_name.startswith(normalized):
                 score = 4
-            elif normalized in normalized_code:
+            elif normalized in normalized_name:
                 score = 5
+            elif normalized in normalized_code:
+                score = 6
             else:
                 continue
             scored.append((score, len(name), code, name))
@@ -180,9 +205,10 @@ def suggest_stock_inputs(query: str, market: str = "CN", limit: int = 8) -> list
                 normalized_name = _normalize_query(name)
                 if not normalized_name:
                     continue
-                similarity = SequenceMatcher(None, normalized, normalized_name).ratio()
-                if normalized_name.startswith(normalized[:1]) and similarity >= 0.30:
-                    scored.append((6, len(name), code, name))
+                similarity = _query_similarity(normalized, normalized_name)
+                if similarity >= 0.72 or (normalized_name.startswith(normalized[:1]) and similarity >= 0.30):
+                    score = 7 if similarity >= 0.72 else 8
+                    scored.append((score, len(name), code, name))
 
         matches = [(code, name) for _, _, code, name in sorted(scored)[:limit]]
 

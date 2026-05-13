@@ -637,6 +637,26 @@ class TestResolveStockInput:
         assert fetcher.resolve_stock_input('报喜鸟', market='CN') == ('002154', '报喜鸟')
         assert fetcher.resolve_stock_input('万科A', market='CN') == ('000002', '万科A')
 
+    def test_cn_name_fuzzy_match_handles_transposed_chars(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_load_stock_name_index',
+            classmethod(lambda cls, max_age_hours=24: [
+                {'code': '002609', 'name': '捷顺科技'},
+                {'code': '002997', 'name': '瑞鹄模具'},
+            ]),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            'get_main_board_stocks',
+            classmethod(lambda cls: []),
+        )
+
+        fetcher = StockDataFetcher()
+        assert fetcher.resolve_stock_input('顺捷科技', market='CN') == ('002609', '捷顺科技')
+
 
 # ============================================================
 # TestGetRealtimeQuote

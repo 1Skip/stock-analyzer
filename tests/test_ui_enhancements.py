@@ -21,6 +21,21 @@ def test_stock_search_tolerates_common_near_match():
     assert result[0]["name"] == "\u745e\u9e44\u6a21\u5177"
 
 
+def test_stock_search_tolerates_transposed_name(monkeypatch):
+    import ui.stock_search as stock_search
+
+    monkeypatch.setattr(
+        stock_search,
+        "_cn_stock_pool",
+        lambda: (("002609", "\u6377\u987a\u79d1\u6280"), ("600021", "\u4e0a\u6d77\u7535\u529b")),
+    )
+
+    result = suggest_stock_inputs("\u987a\u6377\u79d1\u6280", "CN", limit=3)
+
+    assert result[0]["symbol"] == "002609"
+    assert result[0]["name"] == "\u6377\u987a\u79d1\u6280"
+
+
 def test_compare_inputs_accept_names_and_codes(monkeypatch):
     monkeypatch.setattr(
         "ui.compare_page.resolve_cached_stock_input",
@@ -39,6 +54,19 @@ def test_compare_inputs_accept_names_and_codes(monkeypatch):
     assert [item["symbol"] for item in resolved] == ["600519", "000858", "600036"]
     assert resolved[0]["name"] == "\u8d35\u5dde\u8305\u53f0"
     assert any("\u91cd\u590d" in warning for warning in warnings)
+
+
+def test_compare_inputs_accept_fuzzy_corrected_names(monkeypatch):
+    monkeypatch.setattr(
+        "ui.compare_page.resolve_cached_stock_input",
+        lambda text, market: {"\u987a\u6377\u79d1\u6280": ("002609", "\u6377\u987a\u79d1\u6280")}.get(text),
+    )
+
+    resolved, warnings = resolve_compare_inputs(["\u987a\u6377\u79d1\u6280", "600021"], "CN")
+
+    assert [item["symbol"] for item in resolved] == ["002609", "600021"]
+    assert resolved[0]["name"] == "\u6377\u987a\u79d1\u6280"
+    assert warnings == []
 
 
 def test_history_reports_hide_latest_alias(tmp_path, monkeypatch):

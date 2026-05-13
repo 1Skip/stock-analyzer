@@ -30,7 +30,12 @@ def resolve_compare_inputs(raw_inputs, market, limit=5):
         else:
             match = resolve_cached_stock_input(query, market)
             if not match:
-                warnings.append(f"{_u(r'\u8df3\u8fc7\u65e0\u6cd5\u8bc6\u522b\u7684\u8f93\u5165\u300c')}{query}{_u(r'\u300d\uff1a')}{err or _u(r'\u672a\u627e\u5230\u5339\u914d\u80a1\u7968')}")
+                reason = err or _u(r'\u672a\u627e\u5230\u5339\u914d\u80a1\u7968')
+                warnings.append(
+                    f"{_u(r'\u8df3\u8fc7\u65e0\u6cd5\u8bc6\u522b\u7684\u8f93\u5165\u300c')}{query}"
+                    f"{_u(r'\u300d\uff1a')}{reason}"
+                    f"{_u(r'\uff1b\u8bf7\u68c0\u67e5\u7b80\u79f0\u662f\u5426\u6709\u9519\u5b57\u6216\u987a\u5e8f\u98a0\u5012\uff0c\u4e5f\u53ef\u76f4\u63a5\u8f93\u51656\u4f4d\u4ee3\u7801\u3002')}"
+                )
                 continue
             symbol, name = match
 
@@ -75,7 +80,10 @@ def compare_stocks_page():
         if resolved_stocks:
             st.caption(
                 _u(r"\u5df2\u8bc6\u522b\uff1a") + _u(r"\uff0c").join(
-                    f"{item['name']} ({item['symbol']})" for item in resolved_stocks
+                    f"{item['query']} → {item['name']} ({item['symbol']})"
+                    if item["query"] != item["name"] and item["query"] != item["symbol"]
+                    else f"{item['name']} ({item['symbol']})"
+                    for item in resolved_stocks
                 )
             )
 

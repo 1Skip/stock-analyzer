@@ -132,3 +132,16 @@ python main.py --schedule
 - 已验证：
   - `py -m pytest tests\test_app_navigation.py tests\test_app_plotly.py tests\test_hot_stocks_page.py tests\test_ui_enhancements.py tests\test_loading_ui.py tests\test_main.py -q`
   - `py -m pytest -q` → 599 passed
+
+## 追加记录：A股名称错序模糊匹配
+
+- 问题现象：股票对比中输入“顺捷科技”提示无法识别，但用户实际想查 A 股“捷顺科技”(002609)。
+- 原因定位：A股名称索引只支持精确、前缀、包含匹配；“顺捷科技”和“捷顺科技”属于相邻字顺序颠倒，不满足原有规则。
+- 修复方式：
+  - `data_fetcher.py` 新增 `_stock_name_similarity()`，对同字符错序的中文简称提高相似度，`resolve_stock_input()` 可返回 `002609 · 捷顺科技`。
+  - `ui/stock_search.py` 快速匹配同样支持同字错序，并让这类候选优先于普通包含匹配。
+  - `ui/compare_page.py` 对无法识别的名称给出更明确提示，提醒检查错字/顺序，也可直接输入 6 位代码。
+- 已验证：
+  - `StockDataFetcher().resolve_stock_input("顺捷科技", "CN") == ("002609", "捷顺科技")`
+  - `suggest_stock_inputs("顺捷科技", "CN", 3)` 首位返回 `002609 · 捷顺科技`
+  - `py -m pytest tests\test_data_fetcher.py tests\test_ui_enhancements.py tests\test_app_navigation.py -q` → 88 passed

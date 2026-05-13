@@ -22,6 +22,7 @@ import json
 import os
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from threading import Lock
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,18 @@ def _normalize_stock_name(name):
 def _clean_stock_name(name):
     """清理展示用股票名称，去掉异常空格并转半角。"""
     return re.sub(r'\s+', '', unicodedata.normalize('NFKC', str(name)))
+
+
+def _stock_name_similarity(query, candidate):
+    """计算股票名称近似度，兼容相邻字颠倒等常见输入错误。"""
+    query = _normalize_stock_name(query)
+    candidate = _normalize_stock_name(candidate)
+    if not query or not candidate:
+        return 0.0
+    ratio = SequenceMatcher(None, query, candidate).ratio()
+    if len(query) >= 3 and len(candidate) >= 3 and sorted(query) == sorted(candidate):
+        ratio = max(ratio, 0.95)
+    return ratio
 
 
 class StockDataFetcher:
@@ -917,6 +930,18 @@ class StockDataFetcher:
             return (match['code'], _clean_stock_name(match['name']))
         if contains_matches:
             match = sorted(contains_matches, key=lambda item: len(item.get('name', '')))[0]
+            return (match['code'], _clean_stock_name(match['name']))
+
+        fuzzy_matches = []
+        if len(normalized_text) >= 3:
+            for item in all_stocks:
+                normalized_name = _normalize_stock_name(item.get('name', ''))
+                similarity = _stock_name_similarity(normalized_text, normalized_name)
+                if similarity >= 0.72:
+                    fuzzy_matches.append((similarity, len(normalized_name), item))
+
+        if fuzzy_matches:
+            _, _, match = sorted(fuzzy_matches, key=lambda item: (-item[0], item[1]))[0]
             return (match['code'], _clean_stock_name(match['name']))
 
         # 兼容老缓存或轻量索引临时失败时的最后兜底
