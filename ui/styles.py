@@ -195,6 +195,244 @@ CUSTOM_CSS = """
     .compact-select [data-baseweb="select"] {
         font-size: var(--font-caption) !important;
     }
+    .select-row-button-spacer {
+        height: 1.75rem;
+        margin: 0;
+        padding: 0;
+    }
+    .select-row-button-spacer + div [data-testid="stButton"] button,
+    .select-row-button-spacer + div button {
+        min-height: 2.55rem;
+    }
+
+    /* ===== 分析中占位卡片 ===== */
+    .analysis-loading-card {
+        border: 1px solid rgba(0,113,227,0.16);
+        background: linear-gradient(135deg, rgba(0,113,227,0.10), rgba(0,113,227,0.03));
+        border-radius: 18px;
+        padding: 18px 20px;
+        margin: 18px 0 14px 0;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.04);
+    }
+    .analysis-loading-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+    }
+    .analysis-loading-kicker {
+        font-size: 0.78rem;
+        opacity: 0.62;
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .analysis-loading-title {
+        font-size: 1.25rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+    .analysis-loading-percent {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: var(--color-primary);
+    }
+    .analysis-loading-bar {
+        width: 100%;
+        height: 8px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(0,113,227,0.12);
+        margin: 16px 0 10px 0;
+    }
+    .analysis-loading-bar > div {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--color-primary), #5ac8fa);
+        transition: width 0.24s ease;
+    }
+    .analysis-loading-step {
+        font-weight: 700;
+        margin-bottom: 4px;
+    }
+    .analysis-loading-hint {
+        font-size: 0.84rem;
+        opacity: 0.62;
+    }
+    .hot-loading-strip {
+        border: 1px solid rgba(0,113,227,0.12);
+        background: rgba(0,113,227,0.045);
+        border-radius: 14px;
+        padding: 10px 12px 9px 12px;
+        margin: 8px 0 14px 0;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.025);
+    }
+    .hot-loading-main {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .hot-loading-dot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 8px;
+        border-radius: 999px;
+        background: var(--color-primary);
+        box-shadow: 0 0 0 5px rgba(0,113,227,0.10);
+        animation: hotPulse 1.35s ease-in-out infinite;
+    }
+    .hot-loading-copy {
+        min-width: 0;
+        flex: 1 1 auto;
+    }
+    .hot-loading-title {
+        font-size: 0.92rem;
+        font-weight: 700;
+        line-height: 1.35;
+    }
+    .hot-loading-step {
+        margin-top: 1px;
+        color: rgba(49, 58, 70, 0.62);
+        font-size: 0.8rem;
+        line-height: 1.4;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .hot-loading-percent {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: rgba(0,113,227,0.10);
+        color: var(--color-primary);
+        font-size: 0.78rem;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+    }
+    .hot-loading-bar {
+        width: 100%;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(0,113,227,0.10);
+        margin-top: 9px;
+    }
+    .hot-loading-bar > div {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--color-primary), #5ac8fa);
+        transition: width 0.24s ease;
+    }
+    .status-loading-strip {
+        border: 1px solid rgba(0,113,227,0.12);
+        background: rgba(0,113,227,0.045);
+        border-radius: 14px;
+        padding: 10px 12px;
+        margin: 8px 0 12px 0;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.025);
+    }
+    .status-loading-main {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    .status-loading-dot {
+        width: 8px;
+        height: 8px;
+        flex: 0 0 8px;
+        border-radius: 999px;
+        background: var(--color-primary);
+        box-shadow: 0 0 0 5px rgba(0,113,227,0.10);
+        animation: hotPulse 1.35s ease-in-out infinite;
+    }
+    .status-loading-copy {
+        min-width: 0;
+        flex: 1 1 auto;
+        color: rgba(49, 58, 70, 0.76);
+        font-size: 0.88rem;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .status-loading-percent {
+        flex: 0 0 auto;
+        border-radius: 999px;
+        padding: 3px 8px;
+        background: rgba(0,113,227,0.10);
+        color: var(--color-primary);
+        font-size: 0.78rem;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+    }
+    .status-loading-bar {
+        width: 100%;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgba(0,113,227,0.10);
+        margin-top: 9px;
+    }
+    .status-loading-bar > div {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--color-primary), #5ac8fa);
+        transition: width 0.24s ease;
+    }
+    [data-testid="stSpinner"] {
+        display: none !important;
+    }
+    @keyframes hotPulse {
+        0%, 100% { transform: scale(1); opacity: 0.75; }
+        50% { transform: scale(1.25); opacity: 1; }
+    }
+    .analysis-inline-note {
+        margin: 18px 0 22px 0;
+        padding: 13px 16px;
+        border-radius: 14px;
+        border: 1px solid rgba(0,113,227,0.14);
+        background: rgba(0,113,227,0.08);
+        color: inherit;
+        font-size: 0.92rem;
+        line-height: 1.5;
+    }
+    .chart-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 10px 0 6px 0;
+        min-height: 28px;
+    }
+    .chart-header-row .chart-section-title {
+        margin: 0 !important;
+        flex: 0 0 auto;
+    }
+    .chart-value-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        justify-content: flex-end;
+        margin: 0;
+        min-height: 22px;
+        pointer-events: none;
+        flex: 1 1 auto;
+    }
+    .chart-value-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: rgba(128,128,128,0.06);
+        border: 1px solid rgba(128,128,128,0.10);
+        color: rgba(49, 58, 70, 0.78);
+        font-size: 0.75rem;
+        line-height: 1.3;
+        white-space: nowrap;
+    }
+    .quick-match-row {
+        margin: 6px 0 12px 0;
+    }
 
     /* ===== Divider ===== */
     hr {
@@ -210,6 +448,34 @@ CUSTOM_CSS = """
         text-transform: uppercase;
         letter-spacing: 0.06em;
         margin: 20px 0 6px 0;
+    }
+
+    /* ===== 决策仪表盘 ===== */
+    .decision-card {
+        border-left: 4px solid var(--color-primary);
+        border-radius: 14px;
+        padding: 14px 16px;
+        min-height: 132px;
+        box-shadow: 0 8px 22px rgba(0,0,0,0.04);
+        border-top: 1px solid rgba(128,128,128,0.08);
+        border-right: 1px solid rgba(128,128,128,0.08);
+        border-bottom: 1px solid rgba(128,128,128,0.08);
+    }
+    .decision-card-title {
+        font-size: 0.82rem;
+        font-weight: 800;
+        opacity: 0.68;
+        margin-bottom: 8px;
+    }
+    .decision-card-body {
+        font-size: 0.94rem;
+        line-height: 1.55;
+    }
+    .decision-score {
+        font-size: 2.45rem;
+        line-height: 1;
+        font-weight: 800;
+        letter-spacing: -0.04em;
     }
 </style>
 """.lstrip()

@@ -3,8 +3,45 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 from technical_indicators import TechnicalIndicators
-from ui.cached_data import quote_service
+from ui.cached_data import quote_service, resolve_cached_stock_input
+from ui.loading import status_loading
 from ui.analyze_page import _validate_symbol
+
+
+def _u(text):
+    return text.encode("ascii").decode("unicode_escape")
+
+
+def resolve_compare_inputs(raw_inputs, market, limit=5):
+    """Resolve compare inputs into stock codes and display names."""
+    resolved = []
+    warnings = []
+    seen = set()
+
+    for raw_input in raw_inputs[:limit]:
+        query = str(raw_input or "").strip()
+        if not query:
+            continue
+
+        ok, err = _validate_symbol(query, market)
+        if ok:
+            symbol = query.upper() if market != "CN" else query
+            name = quote_service.get_stock_name(symbol, market)
+        else:
+            match = resolve_cached_stock_input(query, market)
+            if not match:
+                warnings.append(f"{_u(r'\u8df3\u8fc7\u65e0\u6cd5\u8bc6\u522b\u7684\u8f93\u5165\u300c')}{query}{_u(r'\u300d\uff1a')}{err or _u(r'\u672a\u627e\u5230\u5339\u914d\u80a1\u7968')}")
+                continue
+            symbol, name = match
+
+        if symbol in seen:
+            warnings.append(f"{_u(r'\u8df3\u8fc7\u91cd\u590d\u80a1\u7968\u300c')}{query}{_u(r'\u300d\uff1a\u5df2\u52a0\u5165')} {symbol}")
+            continue
+
+        seen.add(symbol)
+        resolved.append({"symbol": symbol, "name": name or symbol, "query": query})
+
+    return resolved, warnings
 
 
 def compare_stocks_page():
@@ -17,34 +54,40 @@ def compare_stocks_page():
 
     with col1:
         symbols_input = st.text_area(
-            "输入股票代码（每行一个，最多5个）",
-            value="600519\n000858\n600036",
-            help="输入A股股票代码，每行一个"
+            _u(r"\u80a1\u7968\u4ee3\u7801\u6216\u540d\u79f0\uff08\u6bcf\u884c\u4e00\u4e2a\uff0c\u6700\u591a5\u4e2a\uff09"),
+            value=_u(r"\u8d35\u5dde\u8305\u53f0\n\u4e94\u7cae\u6db2\n\u62db\u5546\u94f6\u884c"),
+            help=_u(r"\u652f\u6301\u8f93\u5165\u80a1\u7968\u540d\u79f0\u3001\u7b80\u79f0\u6216\u4ee3\u7801\uff0c\u4f8b\u5982\uff1a\u8305\u53f0\u3001600519\u3001\u62db\u5546\u94f6\u884c")
         )
 
     with col2:
         market = st.selectbox("市场", ["CN"], index=0, format_func=lambda x: "A股")
 
     if st.button("开始对比", type="primary"):
-        raw_symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()][:5]
+        raw_symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()]
+        resolved_stocks, warnings = resolve_compare_inputs(raw_symbols, market, limit=5)
 
-        symbols = []
-        for s in raw_symbols:
-            ok, err = _validate_symbol(s, market)
-            if ok:
-                symbols.append(s)
-            else:
-                st.warning(f"跳过无效代码「{s}」：{err}")
+        for warning in warnings:
+            st.warning(warning)
+
+        symbols = [item["symbol"] for item in resolved_stocks]
+        names_by_symbol = {item["symbol"]: item["name"] for item in resolved_stocks}
+
+        if resolved_stocks:
+            st.caption(
+                _u(r"\u5df2\u8bc6\u522b\uff1a") + _u(r"\uff0c").join(
+                    f"{item['name']} ({item['symbol']})" for item in resolved_stocks
+                )
+            )
 
         if len(symbols) < 2:
             st.warning("请至少输入2只有效股票进行对比")
             return
 
-        with st.spinner(f"正在并发获取 {len(symbols)} 只股票数据..."):
+        with status_loading(f"\u6b63\u5728\u5e76\u53d1\u83b7\u53d6 {len(symbols)} \u53ea\u80a1\u7968\u6570\u636e...", 20):
             progress_bar = st.progress(0)
             status_text = st.empty()
 
-            stocks_to_fetch = [{'code': s, 'name': s} for s in symbols]
+            stocks_to_fetch = [{'code': s, 'name': names_by_symbol.get(s, s)} for s in symbols]
 
             status_text.text("并发获取股票数据...")
             results = quote_service.fetch_multiple_stocks(
@@ -72,7 +115,7 @@ def compare_stocks_page():
 
                         comparison_data.append({
                             '代码': symbol,
-                            '名称': quote_service.get_stock_name(symbol, market),
+                            _u(r'\u540d\u79f0'): names_by_symbol.get(symbol) or quote_service.get_stock_name(symbol, market),
                             '最新价': f"{price:.2f}",
                             '涨跌幅': f"{change_pct:+.2f}%",
                             '成交量': (
@@ -111,7 +154,7 @@ def compare_stocks_page():
                             fig.add_trace(go.Scatter(
                                 x=data.index,
                                 y=normalized_price,
-                                name=f"{symbol} ({quote_service.get_stock_name(symbol, market)})",
+                                name=f"{symbol} ({names_by_symbol.get(symbol) or quote_service.get_stock_name(symbol, market)})",
                                 mode='lines'
                             ))
                         except Exception:

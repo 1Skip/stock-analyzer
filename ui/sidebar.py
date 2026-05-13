@@ -2,6 +2,7 @@
 import json as _json_for_hash
 import html
 import streamlit as st
+from ui.loading import status_loading
 from config import (
     MARKET_INDEX_ENABLED,
     INDEX_WATCHLIST,
@@ -80,7 +81,7 @@ def display_watchlist_sidebar():
             sort_keys=True
         )
 
-        with st.spinner(""):
+        with status_loading("\u6b63\u5728\u66f4\u65b0\u81ea\u9009\u80a1\u6458\u8981...", 15):
             summaries = _cached_watchlist_summary(watchlist_hash)
 
         if not summaries:
@@ -262,18 +263,19 @@ def display_watchlist_mini_panel(summaries):
 
 
 def display_data_source_selector():
-    """数据源设置（含简要说明）"""
+    """数据源设置（含当前分层说明）。"""
     with st.expander("数据源"):
         current_source = quote_service.get_preferred_source()
 
         source_options = {
             'auto': '自动选择（推荐）',
-            'akshare': 'AKShare（腾讯财经）',
-            'sina': '新浪财经',
+            'akshare_em': '东方财富（A股历史行情）',
+            'akshare': '腾讯财经（A股备选行情）',
+            'sina': '新浪财经（A股/美股实时兜底）',
         }
 
         selected = st.selectbox(
-            "优先数据源（A股）",
+            "A股行情优先源",
             options=list(source_options.keys()),
             index=list(source_options.keys()).index(current_source) if current_source in source_options else 0,
             format_func=lambda x: source_options[x]
@@ -285,12 +287,18 @@ def display_data_source_selector():
             st.info("请重新获取数据以生效")
 
         with st.expander("查看详情"):
-            st.markdown("""
-            **A股** — AKShare（腾讯财经）→ 新浪财经 → 离线缓存
+            st.markdown(
+                """
+                **A股行情优先源** — 上面的选择框只影响 A股历史K线/行情 获取顺序：东方财富 → 腾讯财经 → 新浪财经 → Yahoo Finance → 离线缓存。
 
-            **美股** — 新浪财经（实时 + 日K）
+                **其他模块自动使用** — 热门板块/排行走同花顺行业/概念/全市场涨跌幅优先，新浪财经作为个股排行兜底；港股/美股仍按模块自动使用 Yahoo 和新浪。
 
-            **港股** — 新浪（实时）+ Yahoo（日K）
+                **个股扩展信息** — AKShare 聚合东方财富/同花顺/巨潮等接口，覆盖财务摘要、资金流、新闻、研报、EPS 一致预期、龙虎榜、限售解禁、公告、行业/概念归因。
 
-            实时行情延迟 3~5 秒，历史日K收盘后更新
-            """)
+                **基础资料/估值** — AKShare/东方财富为主，腾讯行情补充 PE、PB、换手率、市值等字段，巨潮补充公司行业和上市信息。
+
+                **名称搜索** — 本地股票名称索引 + 缓存快照，避免每次输入名称都请求远程接口。
+
+                实时行情通常存在 3~5 秒延迟，盘后和非交易时段以数据源最近更新时间为准。
+                """
+            )

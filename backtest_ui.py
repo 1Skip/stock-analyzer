@@ -3,6 +3,7 @@
 """
 import streamlit as st
 import pandas as pd
+from ui.loading import status_loading
 
 from config import (
     BACKTEST_EVAL_WINDOW, BACKTEST_STOP_LOSS, BACKTEST_TAKE_PROFIT,
@@ -51,7 +52,7 @@ def backtest_page():
 
     # ---- 运行 ----
     if st.button("开始回测", type="primary", use_container_width=True):
-        with st.spinner(f"正在回测 {symbol}，可能需要 5-30 秒..."):
+        with status_loading(f"\u6b63\u5728\u56de\u6d4b {symbol}\uff0c\u53ef\u80fd\u9700\u8981 5-30 \u79d2...", 20):
             from backtest_adapter import BacktestAdapter
             adapter = BacktestAdapter()
             output = adapter.run(

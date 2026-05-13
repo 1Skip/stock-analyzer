@@ -3,6 +3,7 @@ import re
 import streamlit as st
 from config import AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE
 from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
+from ui.loading import status_loading
 
 
 AI_MODEL_OPTIONS = {
@@ -36,34 +37,43 @@ def _detect_provider(api_key):
         return ("gemini", "gemini/gemini-2.5-flash")
     if key.startswith("sk-ant"):
         return ("claude", "claude-sonnet-4-6")
+    if key.startswith("sk-or-"):
+        return ("openrouter", AI_MODEL)
+    if key.startswith("sk-proj-") or key.startswith("sk-svcacct-"):
+        return ("openai", "openai/gpt-4o")
+    if key.startswith("sk-"):
+        return ("deepseek", AI_MODEL)
     if "." in key and len(key) > 30 and not key.startswith("sk-"):
         return ("zhipuai", "zhipuai/glm-4-flash")
     return None
 
 
+def _resolve_setup_model(api_key):
+    """返回设置页应使用的模型与识别说明。"""
+    detected = _detect_provider(api_key)
+    if detected:
+        provider_name, model_key = detected
+        return provider_name, model_key, False
+
+    model_key = st.session_state.get("ai_model") or AI_MODEL
+    return "默认配置", model_key, True
+
+
 def _show_setup_form(symbol="", period=""):
-    """显示 API Key 和模型配置表单"""
+    """显示 API Key 配置表单，并根据 Key 自动匹配模型。"""
     st.markdown("#### 设置 API Key")
     api_key = st.text_input("API Key", type="password", key="ai_setup_key",
                             placeholder="输入你的 API Key")
 
-    detected = _detect_provider(api_key)
-    if detected:
-        provider_name, default_model_key = detected
-        if st.session_state.get("ai_model") != default_model_key:
-            st.session_state.ai_model = default_model_key
-            st.session_state.ai_setup_model = default_model_key
-            st.toast(f"检测到 {provider_name.upper()} API Key，已自动匹配模型")
-
-    default_model = st.session_state.get("ai_model") or AI_MODEL
-    model_keys = list(AI_MODEL_OPTIONS.keys())
-    default_index = model_keys.index(default_model) if default_model in model_keys else 0
+    provider_name, model, is_default = _resolve_setup_model(api_key)
+    model_label = AI_MODEL_OPTIONS.get(model, model)
+    if api_key.strip():
+        if is_default:
+            st.caption(f"当前模型：{model_label}（未识别到明确厂商，使用项目默认配置）")
+        else:
+            st.caption(f"已识别：{provider_name.upper()} · {model_label}")
 
     with st.form(key="ai_setup_form"):
-        model = st.selectbox("模型", options=model_keys,
-                             format_func=lambda x: AI_MODEL_OPTIONS[x],
-                             index=default_index,
-                             key="ai_setup_model")
         if st.form_submit_button("保存配置", type="primary"):
             if not api_key.strip():
                 st.error("API Key 不能为空")
@@ -96,14 +106,14 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
             try:
                 snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
                 if use_multi:
-                    with st.spinner("多Agent协作分析中（技术分析+风险评估+综合决策）..."):
+                    with status_loading("\u591aAgent\u534f\u4f5c\u5206\u6790\u4e2d\uff08\u6280\u672f\u5206\u6790+\u98ce\u9669\u8bc4\u4f30+\u7efc\u5408\u51b3\u7b56\uff09...", 25):
                         result = run_multi_agent_analysis(
                             snapshot, model, api_key, AI_BASE_URL
                         )
                     st.session_state[multi_cache_key] = result
                     st.session_state[cache_key] = None
                 else:
-                    with st.spinner("AI 正在分析技术指标..."):
+                    with status_loading("AI \u6b63\u5728\u5206\u6790\u6280\u672f\u6307\u6807...", 25):
                         result = call_ai_analysis(
                             snapshot, model, api_key, AI_BASE_URL, AI_TEMPERATURE
                         )

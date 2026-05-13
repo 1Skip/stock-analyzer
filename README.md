@@ -30,8 +30,8 @@
 - **基础资料/估值** — A股接入分层数据服务，AKShare 个股资料 + 腾讯行情估值补充，展示行业、上市日期、市值、PE/PB、换手率
 
 ### 其他功能
-- **热门股票** — 涨幅榜/跌幅榜/成交量榜 + 行业板块排行 + 概念板块排行
-- **推荐股票** — 多因子技术分析评分（0-100），含短线/长线/板块推荐
+- **热门股票** — 涨幅榜/跌幅榜/成交量榜 + 行业板块排行 + 概念板块排行，保留全市场热度观察
+- **推荐股票** — 多因子技术分析评分（0-100），含短线/长线/板块推荐；A股推荐池仅包含沪深主板股票
 - **股票对比** — 多只股票技术指标横向对比
 - **回测引擎** — 信号→交易模拟，含止损/止盈/中性区间
 - **大盘温度** — 上证/深证/沪深300/北证50 实时跟踪
@@ -41,6 +41,13 @@
 - **飞书机器人** — 对话式股票查询（默认关闭）
 - **三种配色** — A股传统（红涨绿跌）/ 国际惯例（绿涨红跌）/ 色盲友好（蓝涨橙跌）
 - **离线缓存** — 所有在线源失败时使用 24h 缓存兜底
+
+### 当前推荐与推送规则
+
+- 热门板块页用于观察市场热度：行业板块排行、概念板块排行、个股涨幅榜/跌幅榜均保留全市场，不做主板过滤。
+- 智能推荐和定时推荐股推送用于辅助决策：仅推荐沪深主板股票，创业板、科创板、北交所不进入推荐池。
+- 定时推送顺序为：自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报；四板块固定为算力租赁、电力、苹果概念、特斯拉概念。
+- 四板块推荐默认每个板块短线 2 只 + 长线 1 只，可通过 `SECTOR_PUSH_SHORT_TOP_N` / `SECTOR_PUSH_LONG_TOP_N` 调整。
 
 ## 快速开始
 
@@ -104,6 +111,8 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
 - `SCHEDULE_TIME`：定时任务执行时间，默认 `15:30`。
 - `NOTIFY_CHANNELS`：推送渠道，逗号分隔，可选 `wechat`, `feishu`。
+- `SECTOR_PUSH_ENABLED`：定时推送是否包含固定四板块推荐，默认 `true`。
+- `SECTOR_PUSH_SHORT_TOP_N` / `SECTOR_PUSH_LONG_TOP_N`：每个板块短线/长线推荐数量，默认 `2` / `1`。
 - `DAILY_REPORT_ENABLED`：定时任务是否生成每日报告，默认 `true`。
 - `DAILY_REPORT_PUSH_ENABLED`：定时任务是否推送完整 Markdown 日报，默认 `true`。
 - `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描推荐股，默认 `false`，避免定时推送过慢。
@@ -168,7 +177,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - 决策面板：输出决策评分、买卖点、风险警报、催化因素和操作检查清单。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
-定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会先推送原有选股摘要，再生成并推送完整 Markdown 日报。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
+定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
 GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`。配置仓库 Secrets（`NOTIFY_CHANNELS`、`WECHAT_WEBHOOK_URL` 或 `FEISHU_WEBHOOK_URL`）后，不需要本地电脑常开。
 

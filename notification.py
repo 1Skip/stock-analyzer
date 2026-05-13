@@ -99,16 +99,16 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         (title, body) 元组
     """
     SECTOR_ICONS = {
+        "算力租赁": "💻",
+        "电力": "⚡",
         "苹果概念": "🍎",
         "特斯拉概念": "🚗",
-        "电力": "⚡",
-        "算力租赁": "💻",
     }
 
     title = "📊 板块龙头推荐 — 短线/长线"
 
     body_lines = []
-    for sector_name in ["苹果概念", "特斯拉概念", "电力", "算力租赁"]:
+    for sector_name in ["算力租赁", "电力", "苹果概念", "特斯拉概念"]:
         data = sector_data.get(sector_name)
         if not data:
             continue

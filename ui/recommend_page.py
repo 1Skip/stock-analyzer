@@ -4,6 +4,7 @@ import concurrent.futures
 import streamlit as st
 from stock_recommendation import StockRecommender
 from ui.cached_data import quote_service
+from ui.loading import status_loading
 
 
 def display_recommendation_list(recommended, strategy_name):
@@ -72,13 +73,17 @@ def recommended_stocks_page():
     def on_sector_change():
         st.session_state.rec_sector = st.session_state.rec_sector_select
         st.session_state.rec_data_loaded = False
+        st.session_state.rec_results = None
 
     def on_num_stocks_change():
         st.session_state.rec_num_stocks = st.session_state.rec_num_slider
+        st.session_state.rec_data_loaded = False
+        st.session_state.rec_results = None
 
     def on_strategy_change():
         st.session_state.rec_strategy = st.session_state.rec_strategy_radio
         st.session_state.rec_data_loaded = False
+        st.session_state.rec_results = None
 
     strategy = st.session_state.rec_strategy
     sector = st.session_state.rec_sector
@@ -90,9 +95,9 @@ def recommended_stocks_page():
              horizontal=True, key="rec_strategy_radio", on_change=on_strategy_change)
 
     if strategy == "短线":
-        st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选各板块短线龙头股（侧重短期动量与波动率）")
+        st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选沪深主板短线龙头股；创业板、科创板、北交所不进入推荐池。")
     else:
-        st.info("基于MA60趋势、MACD趋势等长线指标，筛选各板块长线龙头股（侧重中长期趋势与估值合理性）")
+        st.info("基于MA60趋势、MACD趋势等长线指标，筛选沪深主板长线龙头股；创业板、科创板、北交所不进入推荐池。")
 
     sector_options = ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
     sector_index = sector_options.index(st.session_state.rec_sector)
@@ -111,15 +116,20 @@ def recommended_stocks_page():
 
     if 'rec_data_loaded' not in st.session_state:
         st.session_state.rec_data_loaded = False
+    if 'rec_results' not in st.session_state:
+        st.session_state.rec_results = None
 
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("刷新数据", type="secondary"):
             st.session_state.rec_data_loaded = False
+            st.session_state.rec_results = None
             st.success("数据已刷新")
 
-    if st.button("生成推荐", type="primary") or not st.session_state.rec_data_loaded:
-        with st.spinner(f"正在分析{sector}板块（{strategy}），请稍候..."):
+    generate_clicked = st.button("生成推荐", type="primary")
+
+    if generate_clicked:
+        with status_loading(f"\u6b63\u5728\u5206\u6790{sector}\u677f\u5757\uff08{strategy}\uff09\uff0c\u8bf7\u7a0d\u5019...", 20):
             recommender = StockRecommender()
             if strategy == "短线":
                 if sector == "全部":
@@ -152,5 +162,16 @@ def recommended_stocks_page():
                 except Exception:
                     pass
 
-            display_recommendation_list(recommended, title)
+            st.session_state.rec_results = {
+                "recommended": recommended,
+                "title": title,
+            }
             st.session_state.rec_data_loaded = True
+    elif not st.session_state.rec_data_loaded:
+        st.info("选择策略和板块后，点击“生成推荐”开始分析。")
+
+    if st.session_state.rec_results:
+        display_recommendation_list(
+            st.session_state.rec_results["recommended"],
+            st.session_state.rec_results["title"],
+        )

@@ -14,6 +14,7 @@ from config import (
     SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY, NOTIFY_ENABLED, NOTIFY_CHANNELS,
     SECTOR_PUSH_ENABLED, DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
     DAILY_REPORT_INCLUDE_RECOMMENDATIONS, DAILY_REPORT_DIR,
+    SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N,
 )
 from notification import send_push, build_analysis_report, build_sector_report
 from reports.exporter import save_markdown_report
@@ -54,21 +55,17 @@ def _generate_daily_report():
 
 
 def run_scheduled_analysis():
-    """执行一次定时分析：自选股优先 → 推荐股补充 → 推送通知"""
+    """执行定时分析：自选股摘要 → 四板块推荐 → 每日报告。"""
     logger.info(f"定时分析开始 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-        from data_fetcher import StockDataFetcher
-        from technical_indicators import TechnicalIndicators
         from stock_recommendation import StockRecommender
 
-        fetcher = StockDataFetcher()
         recommender = StockRecommender()
         reports = []
 
         # 优先分析自选股
         watchlist = _load_watchlist_from_file()
-        analyzed_symbols = set()
 
         if watchlist:
             logger.info(f"自选股模式：{len(watchlist)} 只")
@@ -82,7 +79,6 @@ def run_scheduled_analysis():
                 name = item['name']
                 price = item['price'] or 0
                 change_pct = item.get('change_pct', 0) or 0
-                analyzed_symbols.add((symbol, item['market']))
 
                 title, body = build_analysis_report(
                     symbol, name, price, change_pct,
@@ -91,57 +87,13 @@ def run_scheduled_analysis():
                 )
                 reports.append((title, body))
 
-        # 推荐股补充（跳过已在自选股中的）
-        for market, market_name in [("CN", "A股"), ("HK", "港股"), ("US", "美股")]:
-            try:
-                if market == "CN":
-                    stocks = recommender.get_recommended_stocks_cn(num_stocks=5)
-                elif market == "HK":
-                    stocks = recommender.get_recommended_stocks_hk(num_stocks=5)
-                else:
-                    stocks = recommender.get_recommended_stocks_us(num_stocks=5)
-            except Exception:
-                logger.warning(f"{market_name} 推荐列表获取失败，跳过")
-                continue
-
-            added = 0
-            for s in stocks:
-                if (s["symbol"], market) in analyzed_symbols:
-                    continue
-                try:
-                    symbol = s["symbol"]
-                    name = s["name"]
-
-                    # 优先获取实时行情（更准确的价格和涨跌幅）
-                    quote = fetcher.get_realtime_quote(symbol, market=market)
-                    if quote and quote.get('price') and quote['price'] > 0:
-                        price = quote['price']
-                        change_pct = quote.get('change', 0)
-                    else:
-                        price = s["latest_price"]
-                        change_pct = s.get("change_pct", 0)
-
-                    signals = s.get("signals", {})
-                    if not signals:
-                        data = fetcher.get_stock_data(symbol, period="3mo", market=market)
-                        if data is not None and not data.empty:
-                            data = TechnicalIndicators.calculate_all(data)
-                            signals = TechnicalIndicators.get_signals(data)
-
-                    title, body = build_analysis_report(
-                        symbol, name, price, change_pct, signals
-                    )
-                    reports.append((title, body))
-                    added += 1
-                    if added >= 3:
-                        break
-                except Exception as e:
-                    logger.warning(f"{s.get('symbol', '?')} 分析失败: {e}")
-
-        # 板块龙头推荐（短线+长线），默认关闭，失败不影响主推送
+        # 固定四板块推荐：每个板块短线 2 只 + 长线 1 只（可通过环境变量覆盖）
         if SECTOR_PUSH_ENABLED:
             try:
-                sector_data = recommender.get_all_sector_recommendations()
+                sector_data = recommender.get_all_sector_recommendations(
+                    short_top_n=SECTOR_PUSH_SHORT_TOP_N,
+                    long_top_n=SECTOR_PUSH_LONG_TOP_N,
+                )
                 if sector_data:
                     sector_title, sector_body = build_sector_report(sector_data)
                     reports.append((sector_title, sector_body))

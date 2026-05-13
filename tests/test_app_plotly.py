@@ -90,6 +90,27 @@ class TestPlotCandlestickChart:
 
 
 # ============================================================
+# TestPlotMACDChart
+# ============================================================
+
+class TestPlotMACDChart:
+
+    def test_returns_figure(self, sample_data):
+        from app import plot_macd_chart
+        fig = plot_macd_chart(sample_data)
+        from plotly.graph_objects import Figure
+        assert isinstance(fig, Figure)
+
+    def test_has_macd_traces(self, sample_data):
+        from app import plot_macd_chart
+        fig = plot_macd_chart(sample_data)
+        names = [t.name for t in fig.data]
+        assert 'DIF (快线)' in names
+        assert 'DEA (慢线)' in names
+        assert 'MACD柱' in names
+
+
+# ============================================================
 # TestPlotRSIChart
 # ============================================================
 

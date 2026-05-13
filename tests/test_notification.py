@@ -243,6 +243,14 @@ class TestBuildSectorReport:
         assert "苹果概念" in body
         assert "电力" in body
 
+    def test_sector_order_matches_push_plan(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert body.index("算力租赁") < body.index("电力")
+        assert body.index("电力") < body.index("苹果概念")
+        assert body.index("苹果概念") < body.index("特斯拉概念")
+
     def test_includes_strategy_labels(self):
         from notification import build_sector_report
         data = self._make_sector_data()

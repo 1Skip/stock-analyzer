@@ -78,3 +78,43 @@ python main.py --schedule
 - 推荐股扫描依赖全市场数据，网络慢时可能耗时较长；快速验证时建议加 `--no-report-recommendations`。
 - 定时日报默认不扫描推荐股，避免收盘后自动推送变慢；如确实需要可设置 `DAILY_REPORT_INCLUDE_RECOMMENDATIONS=true`。
 - `reports/history/` 属于运行产物，不提交到 Git。
+
+## 追加记录：UI、推荐推送与数据边界
+
+### 1. Web UI 体验优化
+
+- `app.py` 和 `ui/styles.py` 继续收敛 Apple × Tesla 风格，补充卡片、加载态、导航和页面视觉一致性。
+- 新增 `ui/loading.py`，替换业务页面中的 `st.spinner`，统一为自定义加载条/状态卡，减少传统转圈等待感。
+- `ui/hot_stocks_page.py` 改为点击后再获取数据，不再进入页面自动请求；并发获取行业、概念、个股涨跌幅榜，单个源失败不拖垮整页。
+- `ui/recommend_page.py` 改为点击“生成推荐”后才分析，切换策略/板块/数量会清空旧结果，避免页面延迟显示旧数据。
+- `ui/compare_page.py` 接入股票名称/代码解析，股票对比支持输入中文名称或代码。
+- 新增 `ui/report_history_page.py`、`ui/settings_page.py`、`ui/stock_search.py`、`ui/decision_dashboard.py`，用于报告历史、设置页、统一搜索和决策仪表盘展示。
+
+### 2. 个股分析与图表改进
+
+- 个股分析页支持更友好的搜索等待态，输入后保留页面结构，不再长时间空白。
+- 图表指标补充实时数值显示，MACD/RSI/KDJ/BOLL 折叠区和标识位置继续统一。
+- AI 配置区域支持根据 API Key 自动识别模型厂商，减少手动选择下拉框依赖。
+- 数据源选择说明改为“A股行情优先源”，强调研报、公告、风险事件等模块会自动调用各自数据源。
+
+### 3. 推荐与推送规则定稿
+
+- 定时推送顺序固定为：自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报。
+- 四板块固定为：算力租赁、电力、苹果概念、特斯拉概念。
+- 每个板块默认推送短线 2 只 + 长线 1 只，可通过 `SECTOR_PUSH_SHORT_TOP_N` / `SECTOR_PUSH_LONG_TOP_N` 调整。
+- 定时推送不再使用 A/HK/US 全市场推荐股作为补充内容。
+- 智能推荐和推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池。
+- 热门板块页用于市场热度观察：行业板块排行、概念板块排行、个股涨幅榜/跌幅榜全部保留全市场，不做主板过滤。
+
+### 4. 数据源与板块排行
+
+- A股个股涨跌幅榜优先使用同花顺公开页，失败时回退新浪财经。
+- 行业/概念板块排行继续使用同花顺公开页，并增加分页/limit 控制，避免无意义多页请求。
+- A股基础资料和扩展信息继续通过分层数据服务非阻塞加载，失败时返回空结构，不影响 K 线和技术分析主流程。
+
+### 5. 测试与验证
+
+- 新增/扩展测试覆盖页面导航、加载 UI、热门板块首屏不自动请求、智能推荐主板过滤、热门涨跌幅榜全市场保留、定时推送四板块规则、通知格式顺序等。
+- 已验证命令：
+  - `py -m compileall stock_recommendation.py ui\hot_stocks_page.py tests\test_stock_recommendation.py`
+  - `py -m pytest tests\test_stock_recommendation.py tests\test_hot_stocks_page.py tests\test_scheduler.py tests\test_notification.py -q`

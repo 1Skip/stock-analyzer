@@ -18,10 +18,13 @@ from ui.cached_data import (
     resolve_cached_stock_input,
 )
 from ui.charts import (
-    plot_candlestick_chart, plot_rsi_chart, plot_kdj_chart,
+    latest_indicator_values,
+    plot_candlestick_chart, plot_macd_chart, plot_rsi_chart, plot_kdj_chart,
     plot_boll_chart, plot_intraday_chart,
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
+from ui.decision_dashboard import render_decision_dashboard
+from ui.stock_search import suggest_stock_inputs
 
 
 def _validate_symbol(sym, mkt):
@@ -171,6 +174,31 @@ def _render_extended_info(extended_info):
 
         if extended_info.get("source") or extended_info.get("updated_at"):
             st.caption(f"来源：{extended_info.get('source') or '未知'} · 更新：{extended_info.get('updated_at') or '--'}")
+
+
+def _render_inline_note(message):
+    """渲染与上方仪表盘保持距离的轻提示。"""
+    st.markdown(
+        f'<div class="analysis-inline-note">{html.escape(message)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_chart_header(title, values=None):
+    """渲染统一的图表标题与右侧实时值标签。"""
+    chips = "".join(
+        f'<span class="chart-value-chip"><b>{html.escape(str(label))}</b> {html.escape(str(value))}</span>'
+        for label, value in (values or [])
+    )
+    st.markdown(
+        f'''
+        <div class="chart-header-row">
+          <p class="chart-section-title">{html.escape(str(title))}</p>
+          <div class="chart-value-row">{chips}</div>
+        </div>
+        ''',
+        unsafe_allow_html=True,
+    )
 
 
 def display_signals(signals):
@@ -372,6 +400,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     _render_stock_profile(profile)
     _render_extended_info(extended_info)
+    render_decision_dashboard(data, signals, quote, extended_info)
 
     # ③ 分时图（仅A股）
     if market == "CN":
@@ -386,9 +415,9 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
             now = pd.Timestamp.now()
             weekday = now.dayofweek
             if weekday >= 5:
-                st.info("📌 今日非交易日，暂无分时数据")
+                _render_inline_note("📌 今日非交易日，暂无分时数据")
             else:
-                st.info("📌 分时数据暂不可用，请稍后刷新")
+                _render_inline_note("📌 分时数据暂不可用，请稍后刷新")
 
     # ③ 技术指标实时数值卡片
     _display_indicator_values(data)
@@ -406,26 +435,61 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     st.divider()
     plot_candlestick_chart(data)
 
-    # ⑦ RSI + KDJ 并排
+    # ⑦ MACD
+    with st.expander("MACD 指标", expanded=False):
+        _render_chart_header("MACD", latest_indicator_values(data, "macd"))
+        fig = plot_macd_chart(data)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    # ⑧ RSI + KDJ 并排
     with st.expander("RSI & KDJ 指标", expanded=False):
         col_rsi, col_kdj = st.columns(2)
         with col_rsi:
-            st.markdown('<p class="chart-section-title">RSI</p>', unsafe_allow_html=True)
+            _render_chart_header("RSI", latest_indicator_values(data, "rsi"))
             fig = plot_rsi_chart(data)
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
         with col_kdj:
-            st.markdown('<p class="chart-section-title">KDJ</p>', unsafe_allow_html=True)
+            _render_chart_header("KDJ", latest_indicator_values(data, "kdj"))
             fig = plot_kdj_chart(data)
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑧ 布林带
+    # ⑨ 布林带
     with st.expander("布林带", expanded=False):
+        _render_chart_header("BOLL", latest_indicator_values(data, "boll"))
         fig = plot_boll_chart(data)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑨ 原始数据
+    # ⑩ 原始数据
     with st.expander("查看原始数据"):
         st.dataframe(data.tail(20))
+
+
+def _render_analysis_loading(container, symbol, market, step, percent):
+    """渲染分析中的友好占位卡片，避免搜索后页面空白。"""
+    market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+    safe_symbol = html.escape(str(symbol or "--"))
+    safe_step = html.escape(str(step or "准备分析"))
+    percent = max(0, min(100, int(percent)))
+    with container.container():
+        st.markdown(
+            f"""
+            <div class="analysis-loading-card">
+              <div class="analysis-loading-header">
+                <div>
+                  <div class="analysis-loading-kicker">正在分析 · {html.escape(market_label)}</div>
+                  <div class="analysis-loading-title">{safe_symbol}</div>
+                </div>
+                <div class="analysis-loading-percent">{percent}%</div>
+              </div>
+              <div class="analysis-loading-bar">
+                <div style="width:{percent}%"></div>
+              </div>
+              <div class="analysis-loading-step">{safe_step}</div>
+              <div class="analysis-loading-hint">正在并发获取行情、基础资料和扩展信息。慢的时候通常是外部数据源响应较慢，不是页面卡住。</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def analyze_stock_page():
@@ -440,6 +504,19 @@ def analyze_stock_page():
         st.session_state.analyze_market = "CN"
     if 'analyze_period' not in st.session_state:
         st.session_state.analyze_period = "1y"
+    if 'analyze_selected_suggestion' not in st.session_state:
+        st.session_state.analyze_selected_suggestion = ""
+    if 'quick_stock_query' not in st.session_state:
+        st.session_state.quick_stock_query = ""
+    pending_quick_match = st.session_state.pop("pending_quick_match", None)
+    if pending_quick_match:
+        st.session_state.analyze_symbol = pending_quick_match["symbol"]
+        st.session_state.analyze_symbol_input = pending_quick_match["symbol"]
+        st.session_state.quick_stock_query = ""
+        st.session_state.trigger_analysis = True
+        st.session_state.quick_match_caption = (
+            f"已选择：{pending_quick_match['name']} ({pending_quick_match['symbol']})"
+        )
 
     def on_market_change():
         st.session_state.analyze_market = st.session_state.analyze_market_select
@@ -470,6 +547,35 @@ def analyze_stock_page():
     if submitted:
         st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
         st.session_state.trigger_analysis = True
+
+    quick_match_caption = st.session_state.pop("quick_match_caption", None)
+    if quick_match_caption:
+        st.caption(quick_match_caption)
+
+    st.text_input(
+        "快速匹配",
+        placeholder="输入股票名称、简称或代码，例如：瑞鹄、茅台、002997",
+        key="quick_stock_query",
+    )
+    quick_query = st.session_state.get("quick_stock_query", "").strip()
+    suggestions = suggest_stock_inputs(
+        quick_query or st.session_state.get("analyze_symbol_input", ""),
+        st.session_state.get("analyze_market", "CN"),
+    )
+    if quick_query and suggestions:
+        st.markdown('<div class="quick-match-row">', unsafe_allow_html=True)
+        columns = st.columns(min(4, len(suggestions)))
+        for index, item in enumerate(suggestions):
+            with columns[index % len(columns)]:
+                if st.button(item["label"], key=f"quick_match_{item['symbol']}", use_container_width=True):
+                    st.session_state.pending_quick_match = {
+                        "symbol": item["symbol"],
+                        "name": item["name"],
+                    }
+                    st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    elif quick_query:
+        st.caption("没有找到本地候选；可以直接点「开始分析」，系统会尝试联网解析。")
 
     # 第2行：市场 | 周期 | 配色 | 刷新 — 总宽6份，对齐上行 input(5)+btn(1)
     col_mkt, col_period, col_pref, col_refresh = st.columns([2, 2, 1, 1])
@@ -528,10 +634,7 @@ def analyze_stock_page():
 
     with col_refresh:
         # 占位高度 = selectbox 标签高度，让按钮与下拉框对齐
-        st.markdown(
-            '<span style="visibility:hidden;font-size:10px">.</span>',
-            unsafe_allow_html=True,
-        )
+        st.markdown('<div class="select-row-button-spacer"></div>', unsafe_allow_html=True)
         if st.button("刷新缓存", type="secondary", use_container_width=True):
             get_cached_stock_data.clear()
             get_cached_realtime_quote.clear()
@@ -547,13 +650,16 @@ def analyze_stock_page():
     analyze_clicked = st.session_state.pop('trigger_analysis', False)
 
     if analyze_clicked:
+        loading_panel = st.empty()
+        _render_analysis_loading(loading_panel, symbol, market, "正在识别输入并准备分析...", 2)
+
         # 名称→代码解析（A股支持输入中文名称）
         resolved_name = None
         has_chinese = any('一' <= c <= '鿿' for c in symbol)
         if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
             if has_chinese:
-                with st.spinner("正在搜索股票..."):
-                    result = resolve_cached_stock_input(symbol, market)
+                _render_analysis_loading(loading_panel, symbol, market, "正在按股票名称匹配代码...", 8)
+                result = resolve_cached_stock_input(symbol, market)
                 if result:
                     resolved_name = result[1]
                     symbol = result[0]
@@ -561,8 +667,10 @@ def analyze_stock_page():
                     st.caption(f"已识别: {resolved_name} ({symbol})")
                 else:
                     st.error(f"未找到匹配「{symbol}」的股票，请使用6位代码搜索或检查名称是否正确")
+                    loading_panel.empty()
                     st.stop()
             else:
+                _render_analysis_loading(loading_panel, symbol, market, "正在解析股票代码...", 8)
                 result = resolve_cached_stock_input(symbol, market)
                 if result:
                     resolved_name = result[1]
@@ -573,13 +681,11 @@ def analyze_stock_page():
         is_valid, err_msg = _validate_symbol(symbol, market)
         if not is_valid:
             st.error(f"输入的股票代码格式有误，{err_msg}")
+            loading_panel.empty()
             st.stop()
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+        _render_analysis_loading(loading_panel, symbol, market, "正在并发获取股票数据...", 12)
 
-        status_text.text("正在并行获取股票数据...")
-        progress_bar.progress(5)
         info = {'shortName': symbol, 'symbol': symbol}
         data = None
         quote = None
@@ -604,7 +710,7 @@ def analyze_stock_page():
                 data = futures['data'].result(timeout=20)
             except Exception:
                 data = None
-            progress_bar.progress(45)
+            _render_analysis_loading(loading_panel, symbol, market, "历史行情已返回，正在读取股票资料...", 45)
 
             try:
                 info_result = futures['info'].result(timeout=0.2)
@@ -612,13 +718,13 @@ def analyze_stock_page():
                     info = info_result
             except Exception:
                 info = {'shortName': symbol, 'symbol': symbol}
-            progress_bar.progress(50)
+            _render_analysis_loading(loading_panel, symbol, market, "正在获取实时行情...", 50)
 
             try:
                 quote = futures['quote'].result(timeout=0.2)
             except Exception:
                 quote = None
-            progress_bar.progress(55)
+            _render_analysis_loading(loading_panel, symbol, market, "正在补充基础资料、分时和扩展信息...", 55)
 
             try:
                 if 'intraday' in futures:
@@ -642,12 +748,9 @@ def analyze_stock_page():
                 if not future.done():
                     future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
-        progress_bar.progress(60)
-
         if data is None or data.empty:
             st.error(f"未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
-            progress_bar.empty()
-            status_text.empty()
+            loading_panel.empty()
             return
 
         data_source = data.attrs.get('data_source', '未知')
@@ -661,8 +764,7 @@ def analyze_stock_page():
         else:
             st.caption(f"数据源 · {data_source}")
 
-        status_text.text("正在合并实时行情...")
-
+        _render_analysis_loading(loading_panel, symbol, market, "正在合并实时行情...", 65)
         if quote and data is not None and not data.empty:
             today = pd.Timestamp.now().normalize()
             if data.index[-1].normalize() == today:
@@ -680,8 +782,7 @@ def analyze_stock_page():
                     'volume': [quote['volume']]
                 }, index=[pd.Timestamp.now()])
                 data = pd.concat([data, realtime_row])
-        progress_bar.progress(75)
-
+        _render_analysis_loading(loading_panel, symbol, market, "正在识别股票名称和检查数据完整性...", 75)
         stock_name = resolved_name or symbol
         if isinstance(info, dict):
             stock_name = info.get('shortName') or info.get('longName') or stock_name
@@ -691,27 +792,21 @@ def analyze_stock_page():
                 stock_name = name_result[1]
         elif stock_name == symbol:
             stock_name = symbol
-        progress_bar.progress(78)
 
         short_history_notice = _build_short_history_notice(symbol, stock_name, len(data), period)
         if short_history_notice:
             st.info(short_history_notice)
 
-        progress_bar.progress(82)
-
-        status_text.text("正在计算技术指标 (MACD/RSI/KDJ/BOLL/MA)...")
+        _render_analysis_loading(loading_panel, symbol, market, "正在计算技术指标（MACD/RSI/KDJ/BOLL/MA）...", 82)
         data = TechnicalIndicators.calculate_all(data)
-        progress_bar.progress(92)
 
-        status_text.text("正在生成交易信号...")
+        _render_analysis_loading(loading_panel, symbol, market, "正在生成交易信号和决策仪表盘...", 92)
         signals = TechnicalIndicators.get_signals(data)
-        progress_bar.progress(97)
 
         if 'error' in signals:
             st.warning(f"指标计算问题：{signals['error']}")
 
-        status_text.text("正在渲染图表...")
-        progress_bar.progress(99)
+        _render_analysis_loading(loading_panel, symbol, market, "正在渲染图表...", 99)
 
         st.session_state.analyzed_data = data
         st.session_state.analyzed_signals = signals
@@ -726,8 +821,7 @@ def analyze_stock_page():
 
         _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data, profile=profile, extended_info=extended_info)
 
-        progress_bar.empty()
-        status_text.empty()
+        loading_panel.empty()
 
     # rerun 恢复
     if not analyze_clicked:

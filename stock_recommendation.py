@@ -1,6 +1,6 @@
 """
 热门股票和推荐股票模块
-涨跌幅榜使用新浪财经实时排行（沪深京全市场），行业/概念板块使用同花顺HTML抓取，港股美股使用yfinance
+涨跌幅榜/行业/概念板块优先使用同花顺公开页，个股排行失败时回退新浪财经，港股美股使用yfinance
 """
 import requests
 import re
@@ -158,8 +158,7 @@ class StockRecommender:
         获取A股热门股票（使用新浪财经批量行情，一次请求全部获取）
         """
         results = []
-        stocks = [s for s in get_popular_cn_stocks()[:max(limit, 30)]
-                  if self._is_main_board(s['code'])]  # 排除创业板/科创板
+        stocks = self._get_main_board_popular_cn_stocks(max(limit, 30))
 
         try:
             # 为每只股票构造新浪代码（优先上海，尝试深圳）
@@ -315,6 +314,8 @@ class StockRecommender:
                     total_pages = int(match.group(1))
 
             for page in range(1, total_pages + 1):
+                if len(concepts) >= limit:
+                    break
                 if page > 1:
                     url = f'https://data.10jqka.com.cn/funds/gnzjl/order/desc/page/{page}/'
                     resp = requests.get(url, headers=headers, timeout=10)
@@ -356,6 +357,15 @@ class StockRecommender:
         """判断是否为沪深主板股票（排除创业板/科创板/北交所）"""
         return code.startswith(('600', '601', '603', '605',     # 沪市主板
                                 '000', '001', '002', '003'))    # 深市主板
+
+    def _get_main_board_popular_cn_stocks(self, limit=None):
+        """获取主板推荐股票池，过滤创业板、科创板和北交所。"""
+        stocks = [s for s in get_popular_cn_stocks() if self._is_main_board(s['code'])]
+        return stocks[:limit] if limit else stocks
+
+    def _get_main_board_sector_stocks(self, sector_name):
+        """获取指定板块的主板股票池，过滤创业板、科创板和北交所。"""
+        return [s for s in SECTOR_STOCKS.get(sector_name, []) if self._is_main_board(s['code'])]
 
     # 行业缓存（东方财富F10 API，首次查询后复用）
     _sector_cache = {}
@@ -400,8 +410,52 @@ class StockRecommender:
         cls._sector_cache[code] = fallback
         return fallback
 
-    def _get_market_ranking(self, sort_asc=False, limit=10):
-        """获取全市场涨跌幅榜（新浪财经实时排行，沪深京全市场含北交所）"""
+    def _get_market_ranking_ths(self, sort_asc=False, limit=10, enrich_sector=True):
+        """获取同花顺全市场涨跌幅榜（公开页，含沪深京）。"""
+        try:
+            order = "asc" if sort_asc else "desc"
+            url = f'https://q.10jqka.com.cn/index/index/board/all/field/zdf/order/{order}/page/1/ajax/1/'
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://q.10jqka.com.cn/',
+            }
+            resp = requests.get(url, params=None, headers=headers, timeout=10)
+            if resp.status_code != 200:
+                return []
+            resp.encoding = 'gbk'
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            table = soup.find('table')
+            if not table:
+                return []
+            results = []
+            for row in table.find_all('tr')[1:]:
+                cols = row.find_all('td')
+                if len(cols) < 6:
+                    continue
+                try:
+                    code = cols[1].get_text(strip=True)
+                    name = cols[2].get_text(strip=True)
+                    if not code or not name:
+                        continue
+                    results.append({
+                        '代码': code,
+                        '名称': name,
+                        '最新价': round(float(cols[3].get_text(strip=True)), 2),
+                        '涨跌幅': round(float(cols[4].get_text(strip=True).replace('%', '')), 2),
+                        '换手率': round(float(cols[8].get_text(strip=True).replace('%', '')), 2) if len(cols) > 8 and cols[8].get_text(strip=True) else None,
+                    })
+                except (ValueError, TypeError, IndexError):
+                    continue
+                if len(results) >= limit:
+                    break
+            for item in results:
+                item['所属板块'] = self._get_stock_sector(item['代码']) if enrich_sector else item.get('所属板块', '')
+            return results
+        except Exception:
+            return []
+
+    def _get_market_ranking_sina(self, sort_asc=False, limit=10, enrich_sector=True):
+        """获取新浪财经全市场涨跌幅榜（兜底源，沪深京全市场）。"""
         try:
             url = 'https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/Market_Center.getHQNodeData'
             params = {
@@ -443,20 +497,27 @@ class StockRecommender:
                 if len(results) >= limit:
                     break
             for s in results:
-                s['所属板块'] = self._get_stock_sector(s['代码'])
+                s['所属板块'] = self._get_stock_sector(s['代码']) if enrich_sector else s.get('所属板块', '')
             return results
         except Exception:
             return []
 
+    def _get_market_ranking(self, sort_asc=False, limit=10, enrich_sector=True):
+        """获取全市场涨跌幅榜：同花顺优先，新浪兜底。"""
+        ranking = self._get_market_ranking_ths(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
+        if ranking:
+            return ranking
+        return self._get_market_ranking_sina(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
+
     def get_top_gainers_cn(self, limit=10):
         """获取A股全市场涨幅榜（同花顺实时排行）"""
-        ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5)
+        ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5, enrich_sector=False)
         gainers = [s for s in ranking if s['涨跌幅'] > 0]
         return gainers[:limit]
 
     def get_top_losers_cn(self, limit=10):
         """获取A股全市场跌幅榜（同花顺实时排行）"""
-        ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5)
+        ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5, enrich_sector=False)
         losers = [s for s in ranking if s['涨跌幅'] < 0]
         return losers[:limit]
 
@@ -675,8 +736,10 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:20]
-                       if self._is_main_board(s['code'])}
+            futures = {
+                executor.submit(analyze_one, s): s
+                for s in self._get_main_board_popular_cn_stocks(20)
+            }
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -702,8 +765,10 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:25]
-                       if self._is_main_board(s['code'])}
+            futures = {
+                executor.submit(analyze_one, s): s
+                for s in self._get_main_board_popular_cn_stocks(25)
+            }
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -729,8 +794,10 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in get_popular_cn_stocks()[:25]
-                       if self._is_main_board(s['code'])}
+            futures = {
+                executor.submit(analyze_one, s): s
+                for s in self._get_main_board_popular_cn_stocks(25)
+            }
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -747,7 +814,7 @@ class StockRecommender:
             return []
 
         results = []
-        sector_stocks = SECTOR_STOCKS[sector_name]
+        sector_stocks = self._get_main_board_sector_stocks(sector_name)
 
         def analyze_one(stock):
             try:
@@ -761,8 +828,7 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in sector_stocks
-                       if self._is_main_board(s['code'])}
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -837,7 +903,7 @@ class StockRecommender:
             return []
 
         results = []
-        sector_stocks = SECTOR_STOCKS[sector_name]
+        sector_stocks = self._get_main_board_sector_stocks(sector_name)
 
         def analyze_one(stock):
             try:
@@ -851,8 +917,7 @@ class StockRecommender:
             return None
 
         with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in sector_stocks
-                       if self._is_main_board(s['code'])}
+            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
             for future in as_completed(futures):
                 result = future.result()
                 if result:
@@ -915,19 +980,20 @@ class StockRecommender:
             'indicators': self._build_indicators_dict(latest)
         }
 
-    def get_all_sector_recommendations(self):
+    def get_all_sector_recommendations(self, short_top_n=None, long_top_n=None):
         """
         获取全部4个板块的短线+长线推荐，并发分析加速
         返回 {板块名: {'短线': [...], '长线': [...]}}
         """
-        from config import SECTOR_PUSH_TOP_N
+        from config import SECTOR_PUSH_TOP_N, SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N
 
         result = {}
-        top_n = SECTOR_PUSH_TOP_N
+        short_top_n = short_top_n or SECTOR_PUSH_SHORT_TOP_N or SECTOR_PUSH_TOP_N
+        long_top_n = long_top_n or SECTOR_PUSH_LONG_TOP_N or SECTOR_PUSH_TOP_N
 
         def analyze_sector(sector_name):
-            short = self.get_sector_short_term_recommendations(sector_name, num_stocks=top_n)
-            long = self.get_sector_long_term_recommendations(sector_name, num_stocks=top_n)
+            short = self.get_sector_short_term_recommendations(sector_name, num_stocks=short_top_n)
+            long = self.get_sector_long_term_recommendations(sector_name, num_stocks=long_top_n)
             return sector_name, {'短线': short, '长线': long}
 
         with ThreadPoolExecutor(max_workers=4) as executor:

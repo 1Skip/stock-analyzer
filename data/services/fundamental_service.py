@@ -28,13 +28,16 @@ class FundamentalDataService:
         cache_key = f"{market}:{symbol}:profile"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
-            return cached
+            source = str(cached.get("source") or "")
+            if cached.get("industry") and cached.get("listing_date"):
+                return cached
+            if "腾讯行情" not in source:
+                return cached
 
         profile = self.provider.get_stock_profile(symbol)
         if profile is None:
-            return None
+            return cached if isinstance(cached, dict) else None
 
         payload = profile.to_dict() if isinstance(profile, StockProfile) else profile
         self.cache.set(cache_key, payload)
         return payload
-

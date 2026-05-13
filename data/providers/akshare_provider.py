@@ -39,6 +39,10 @@ def _safe_float(value: Any) -> float | None:
 
 def _format_listing_date(value: Any) -> str | None:
     text = str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+    if re.fullmatch(r"\d{4}/\d{2}/\d{2}", text):
+        return text.replace("/", "-")
     if not re.fullmatch(r"\d{8}", text):
         return None
     return f"{text[:4]}-{text[4:6]}-{text[6:]}"
@@ -102,7 +106,7 @@ class AkShareProvider:
             float_shares = _safe_float(parts[72]) if len(parts) > 72 else None
             float_market_cap = _safe_float(parts[44])
             market_cap = _safe_float(parts[45])
-            return StockProfile(
+            profile = StockProfile(
                 symbol=symbol,
                 name=parts[1].replace(" ", "") or None,
                 market="CN",
@@ -117,6 +121,7 @@ class AkShareProvider:
                 source="腾讯行情",
                 updated_at=utc_now_iso(),
             )
+            return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
         except Exception:
             logger.warning("腾讯行情 fallback 获取基础资料失败 symbol=%s", symbol, exc_info=True)
             return None
@@ -136,10 +141,10 @@ class AkShareProvider:
                 return profile
             parts = response.text.split("~")
             if len(parts) < 47:
-                return profile
+                return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
             float_market_cap = _safe_float(parts[44])
             market_cap = _safe_float(parts[45])
-            return StockProfile(
+            enriched = StockProfile(
                 **{
                     **profile.to_dict(),
                     "latest_price": _safe_float(parts[3]) or profile.latest_price,
@@ -152,8 +157,43 @@ class AkShareProvider:
                     "updated_at": utc_now_iso(),
                 }
             )
+            return self._enrich_profile_from_cninfo(enriched, timeout_seconds=timeout_seconds)
         except Exception:
             logger.debug("腾讯估值补充失败 symbol=%s", profile.symbol, exc_info=True)
+            return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
+
+    def _enrich_profile_from_cninfo(self, profile: StockProfile | None, timeout_seconds: float = 2) -> StockProfile | None:
+        """用巨潮 profile 补充行业、上市日期等腾讯快行情没有的字段。"""
+        if profile is None or (profile.industry and profile.listing_date) or not AKSHARE_AVAILABLE:
+            return profile
+        try:
+            df = _run_with_timeout(
+                lambda: ak.stock_profile_cninfo(symbol=profile.symbol),
+                timeout_seconds,
+            )
+            if df is None or df.empty:
+                return profile
+            row = df.iloc[0]
+            industry = str(row.get("所属行业") or "").strip() or profile.industry
+            listing_date = _format_listing_date(row.get("上市日期")) or profile.listing_date
+            name = str(row.get("A股简称") or "").replace(" ", "").strip() or profile.name
+            company_name = str(row.get("公司名称") or "").strip()
+            source_suffix = " + 巨潮资讯"
+            source = profile.source or ""
+            if "巨潮资讯" not in source:
+                source = f"{source}{source_suffix}" if source else "巨潮资讯"
+            return StockProfile(
+                **{
+                    **profile.to_dict(),
+                    "name": name,
+                    "industry": industry,
+                    "listing_date": listing_date,
+                    "source": source,
+                    "updated_at": utc_now_iso(),
+                }
+            )
+        except Exception as exc:
+            logger.debug("巨潮资料补充失败 symbol=%s error=%s", profile.symbol, _brief_error(exc), exc_info=True)
             return profile
 
     def _normalize_stock_profile(self, symbol: str, df: pd.DataFrame) -> StockProfile | None:

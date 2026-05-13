@@ -38,7 +38,17 @@ if 'streamlit' not in sys.modules:
     _mock_st.warning = lambda *args, **kw: None
     _mock_st.error = lambda *args, **kw: None
     _mock_st.success = lambda *args, **kw: None
-    _mock_st.empty = lambda: type(sys)('empty')
+    class _MockContainer:
+        def container(self):
+            return self
+        def empty(self):
+            return None
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    _mock_st.empty = lambda: _MockContainer()
     _mock_st.spinner = lambda text: type(sys)('spinner')
     _mock_st.form = lambda key: type(sys)('form')
     _mock_st.form_submit_button = lambda label, **kw: False

@@ -1,4 +1,4 @@
-"""图表函数 — Plotly K线/RSI/KDJ/BOLL/分时图"""
+"""图表函数 — Plotly K线/RSI/KDJ/MACD/BOLL/分时图"""
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -25,8 +25,29 @@ def _indicator_layout(title, height=280, **extra):
     return layout
 
 
+def _latest_number(data, column, precision=2):
+    """安全读取最后一条实时指标值。"""
+    if column not in data.columns or data.empty:
+        return "--"
+    value = data[column].iloc[-1]
+    if pd.isna(value):
+        return "--"
+    return f"{float(value):.{precision}f}"
+
+
+def latest_indicator_values(data, indicator):
+    """返回图表外展示用的最新指标值。"""
+    mapping = {
+        "macd": [("DIF", "macd"), ("DEA", "macd_signal"), ("柱", "macd_hist")],
+        "rsi": [("RSI6", "rsi_6"), ("RSI12", "rsi_12"), ("RSI24", "rsi_24")],
+        "kdj": [("K", "kdj_k"), ("D", "kdj_d"), ("J", "kdj_j")],
+        "boll": [("价格", "close"), ("上轨", "boll_upper"), ("中轨", "boll_mid"), ("下轨", "boll_lower")],
+    }
+    return [(label, _latest_number(data, column)) for label, column in mapping.get(indicator, [])]
+
+
 def plot_candlestick_chart(data, title=""):
-    """使用 Plotly 绘制 K 线 + 成交量 + MACD 三合一图"""
+    """使用 Plotly 绘制 K 线 + 成交量图"""
 
     scheme_name = st.session_state.get('color_scheme')
     market = st.session_state.get('analyze_market', 'CN')
@@ -37,11 +58,11 @@ def plot_candlestick_chart(data, title=""):
     from plotly.subplots import make_subplots
 
     fig = make_subplots(
-        rows=3, cols=1,
+        rows=2, cols=1,
         shared_xaxes=True,
         vertical_spacing=0.04,
-        row_heights=[0.55, 0.15, 0.30],
-        subplot_titles=("K线 + 均线", "成交量", ""),
+        row_heights=[0.72, 0.28],
+        subplot_titles=("K线 + 均线", "成交量"),
     )
 
     # --- Row 1: K线 + 均线 ---
@@ -75,40 +96,9 @@ def plot_candlestick_chart(data, title=""):
             showlegend=False,
         ), row=2, col=1)
 
-    # --- Row 3: MACD ---
-    if 'macd' in data.columns and 'macd_signal' in data.columns and 'macd_hist' in data.columns:
-        fig.add_trace(go.Scatter(
-            x=data.index, y=data['macd'],
-            mode='lines', name='DIF (快线)',
-            line=dict(color='#42a5f5', width=1),
-        ), row=3, col=1)
-        fig.add_trace(go.Scatter(
-            x=data.index, y=data['macd_signal'],
-            mode='lines', name='DEA (慢线)',
-            line=dict(color='#ff7043', width=1),
-        ), row=3, col=1)
-        macd_hist_colors = [inc_color if v >= 0 else dec_color
-                           for v in data['macd_hist'].fillna(0)]
-        fig.add_trace(go.Bar(
-            x=data.index, y=data['macd_hist'],
-            name='MACD柱',
-            marker_color=macd_hist_colors,
-            showlegend=True,
-        ), row=3, col=1)
-
-        # MACD 零轴参考线 + 标识
-        fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5, row=3, col=1)
-        fig.add_annotation(
-            xref="x3 domain", yref="y3 domain", x=0.01, y=0.95,
-            text="<b>MACD</b>",
-            showarrow=False,
-            font=dict(size=12, color="gray"),
-            bgcolor="rgba(0,0,0,0)",
-        )
-
     # 布局
     fig.update_layout(
-        height=650,
+        height=520,
         hovermode='x unified',
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
@@ -126,6 +116,38 @@ def plot_candlestick_chart(data, title=""):
         annotation.font.color = '#8e8e93'
 
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
+
+
+def plot_macd_chart(data):
+    """绘制独立 MACD 图表。"""
+    scheme_name = st.session_state.get('color_scheme')
+    market = st.session_state.get('analyze_market', 'CN')
+    colors = resolve_color_scheme(scheme_name, market)
+    inc_color = colors['increasing']
+    dec_color = colors['decreasing']
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=data.index, y=data['macd'],
+        mode='lines', name='DIF (快线)',
+        line=dict(color='#42a5f5', width=1.4),
+    ))
+    fig.add_trace(go.Scatter(
+        x=data.index, y=data['macd_signal'],
+        mode='lines', name='DEA (慢线)',
+        line=dict(color='#ff7043', width=1.4),
+    ))
+    macd_hist_colors = [inc_color if value >= 0 else dec_color for value in data['macd_hist'].fillna(0)]
+    fig.add_trace(go.Bar(
+        x=data.index, y=data['macd_hist'],
+        name='MACD柱',
+        marker_color=macd_hist_colors,
+    ))
+    fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5)
+    fig.update_layout(**_indicator_layout("MACD", height=300))
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
+    return fig
 
 
 def plot_rsi_chart(data):
@@ -218,7 +240,12 @@ def plot_boll_chart(data):
         name='布林带区间'
     ))
 
-    fig.update_layout(**_indicator_layout("BOLL", height=300))
+    fig.update_layout(**_indicator_layout(
+        "BOLL",
+        height=300,
+        margin=dict(l=20, r=20, t=52, b=20),
+        legend=dict(font=dict(size=10), orientation='h', yanchor='top', y=1.02, xanchor='left', x=0.06),
+    ))
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 

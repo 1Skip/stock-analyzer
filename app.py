@@ -1,72 +1,47 @@
-"""
-股票分析系统 - Web版本
-Streamlit 入口：页面配置 + CSS + 路由
-"""
+"""股票分析系统 Streamlit 入口。"""
 import streamlit as st
 
-# 页面配置（必须在最前面）
+
 st.set_page_config(
     page_title="股票分析系统",
-    page_icon="",
+    page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
 from ui.styles import CUSTOM_CSS
 
-# 自定义CSS样式 — Apple × Tesla 设计体系
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-# ============================================================
-# 模块导入
-# ============================================================
 from config import MARKET_INDEX_ENABLED
 from ui.analyze_page import analyze_stock_page
+from ui.compare_page import compare_stocks_page
 from ui.hot_stocks_page import hot_stocks_page
 from ui.recommend_page import recommended_stocks_page
-from ui.compare_page import compare_stocks_page
+from ui.report_history_page import report_history_page
+from ui.settings_page import settings_page
 from ui.sidebar import (
-    display_market_temperature,
-    display_watchlist_sidebar,
-    display_watchlist_mini_panel,
     display_data_source_selector,
+    display_market_temperature,
+    display_watchlist_mini_panel,
+    display_watchlist_sidebar,
 )
 
-# ============================================================
-# Re-export — 测试兼容（test_app_plotly.py 用 from app import xxx）
-# ============================================================
 from ui.charts import (  # noqa: F401
-    plot_candlestick_chart, plot_rsi_chart, plot_kdj_chart,
-    plot_boll_chart, plot_intraday_chart, _indicator_layout,
+    _indicator_layout,
+    plot_boll_chart,
+    plot_candlestick_chart,
+    plot_intraday_chart,
+    plot_kdj_chart,
+    plot_macd_chart,
+    plot_rsi_chart,
 )
-from ui.ai_analysis_ui import _detect_provider, AI_MODEL_OPTIONS  # noqa: F401
-from ui.analyze_page import display_signals, _validate_symbol  # noqa: F401
+from ui.ai_analysis_ui import AI_MODEL_OPTIONS, _detect_provider  # noqa: F401
+from ui.analyze_page import _validate_symbol, display_signals  # noqa: F401
 
 
-def main():
-    """主函数"""
-    with st.sidebar:
-        st.title("股票分析系统")
-        st.markdown("---")
-
-        _nav_emoji = {"个股分析": "📈", "热门板块": "🔥", "智能推荐": "💡", "股票对比": "📊", "回测验证": "⏮"}
-        page = st.radio(
-            "功能菜单",
-            options=["个股分析", "热门板块", "智能推荐", "股票对比", "回测验证"],
-            format_func=lambda x: f"{_nav_emoji.get(x, '')} {x}"
-        )
-
-        if MARKET_INDEX_ENABLED:
-            display_market_temperature()
-
-        summaries = display_watchlist_sidebar()
-
-        display_watchlist_mini_panel(summaries)
-
-        display_data_source_selector()
-
-        st.caption("风险提示：本系统仅供参考，不构成投资建议")
-
+def _render_selected_page(page):
+    """渲染当前选中的主页面，避免各页面输出逻辑散落在入口中。"""
     if page == "个股分析":
         analyze_stock_page()
     elif page == "热门板块":
@@ -77,7 +52,73 @@ def main():
         compare_stocks_page()
     elif page == "回测验证":
         from backtest_ui import backtest_page
+
         backtest_page()
+    elif page == "历史日报":
+        report_history_page()
+    elif page == "配置推送":
+        settings_page()
+
+
+def main():
+    """渲染主应用。"""
+    nav_items = [
+        "个股分析",
+        "热门板块",
+        "智能推荐",
+        "股票对比",
+        "回测验证",
+        "历史日报",
+        "配置推送",
+    ]
+    nav_emoji = {
+        "个股分析": "📈",
+        "热门板块": "🔥",
+        "智能推荐": "💡",
+        "股票对比": "📊",
+        "回测验证": "⏱️",
+        "历史日报": "📄",
+        "配置推送": "⚙️",
+    }
+
+    if "main_page" not in st.session_state:
+        st.session_state.main_page = nav_items[0]
+
+    with st.sidebar:
+        st.title("股票分析系统")
+        st.markdown("---")
+
+        page = st.radio(
+            "功能菜单",
+            options=nav_items,
+            key="main_page",
+            format_func=lambda item: f"{nav_emoji.get(item, '')} {item}",
+        )
+
+    page_container = st.empty()
+    page_changed = st.session_state.get("_active_page") != page
+    if page_changed:
+        st.session_state["_active_page"] = page
+        with page_container.container():
+            st.markdown(
+                f'<h1 class="main-header">{nav_emoji.get(page, "")} {page}</h1>',
+                unsafe_allow_html=True,
+            )
+            st.info("正在切换页面...")
+
+    with page_container.container():
+        _render_selected_page(page)
+
+    with st.sidebar:
+        if MARKET_INDEX_ENABLED:
+            display_market_temperature()
+
+        summaries = display_watchlist_sidebar()
+        display_watchlist_mini_panel(summaries)
+        display_data_source_selector()
+
+        st.caption("风险提示：本系统仅供参考，不构成投资建议")
+
 
 if __name__ == "__main__":
     main()

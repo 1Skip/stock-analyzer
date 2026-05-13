@@ -92,7 +92,43 @@ class TestAkShareProvider:
         assert profile.pb == 1.40
         assert profile.float_shares == 1179687317
         assert profile.total_shares == 1459333729
-        assert profile.source == "腾讯行情"
+        assert "腾讯行情" in profile.source
+
+    def test_tencent_fallback_enriches_cninfo_profile(self, monkeypatch):
+        from data.providers import akshare_provider
+
+        provider = AkShareProvider()
+        parts = [""] * 74
+        parts[1] = "深圳能源"
+        parts[3] = "7.32"
+        parts[38] = "1.34"
+        parts[39] = "17.40"
+        parts[44] = "348.24"
+        parts[45] = "348.24"
+        parts[46] = "1.04"
+        parts[72] = "4757389916"
+        parts[73] = "4757389916"
+
+        class FakeResponse:
+            status_code = 200
+            text = "~".join(parts)
+
+        def fake_cninfo(symbol):
+            assert symbol == "000027"
+            return pd.DataFrame([{
+                "A股简称": "深圳能源",
+                "所属行业": "电力、热力生产和供应业",
+                "上市日期": "1993-09-03",
+            }])
+
+        monkeypatch.setattr("data.providers.akshare_provider.requests.get", lambda *args, **kwargs: FakeResponse())
+        monkeypatch.setattr(akshare_provider.ak, "stock_profile_cninfo", fake_cninfo)
+
+        profile = provider._get_stock_profile_from_tencent("000027")
+
+        assert profile.industry == "电力、热力生产和供应业"
+        assert profile.listing_date == "1993-09-03"
+        assert profile.source == "腾讯行情 + 巨潮资讯"
 
     def test_health_registry_marks_unhealthy_after_threshold(self):
         registry = SourceHealthRegistry(fail_threshold=2)

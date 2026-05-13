@@ -184,7 +184,7 @@ class TestGetTopGainersCN:
 
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=False, limit=10: _make_mock_ranking(10, False))
+                            lambda self, sort_asc=False, limit=10, enrich_sector=True: _make_mock_ranking(10, False))
         result = recommender.get_top_gainers_cn(limit=5)
         assert isinstance(result, list)
         assert len(result) <= 5
@@ -192,7 +192,7 @@ class TestGetTopGainersCN:
     def test_sorted_descending(self, recommender, monkeypatch):
         """涨幅榜应该从高到低排列"""
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=False, limit=10: _make_mock_ranking(10, False))
+                            lambda self, sort_asc=False, limit=10, enrich_sector=True: _make_mock_ranking(10, False))
         result = recommender.get_top_gainers_cn(limit=10)
         if len(result) >= 2:
             assert result[0]['涨跌幅'] >= result[-1]['涨跌幅']
@@ -208,12 +208,27 @@ class TestGetTopGainersCN:
             {'代码': '000005', '名称': '跌股1', '最新价': 9.0, '涨跌幅': -2.0, '换手率': 0.6, '成交量': 600, '成交额': 5400},
         ]
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=False, limit=10: mock_data)
+                            lambda self, sort_asc=False, limit=10, enrich_sector=True: mock_data)
         result = recommender.get_top_gainers_cn(limit=5)
         # 只应包含涨跌幅>0的股票
         for stock in result:
             assert stock['涨跌幅'] > 0, f"{stock['名称']} 涨跌幅={stock['涨跌幅']}，不应出现在涨幅榜"
         assert len(result) == 3  # 只有3只涨的
+
+    def test_keeps_non_main_board_for_market_heat(self, recommender, monkeypatch):
+        """热门涨幅榜用于全市场观察，不做主板过滤"""
+        mock_data = [
+            {'代码': '920469', '名称': '北交所股', '最新价': 8.0, '涨跌幅': 29.89, '换手率': 12.0},
+            {'代码': '300210', '名称': '创业板股', '最新价': 12.0, '涨跌幅': 20.02, '换手率': 16.1},
+            {'代码': '688981', '名称': '科创板股', '最新价': 50.0, '涨跌幅': 10.0, '换手率': 3.2},
+            {'代码': '600519', '名称': '主板股', '最新价': 1500.0, '涨跌幅': 2.0, '换手率': 0.8},
+        ]
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_market_ranking',
+            lambda self, sort_asc=False, limit=10, enrich_sector=True: mock_data,
+        )
+        result = recommender.get_top_gainers_cn(limit=10)
+        assert [stock['代码'] for stock in result] == ['920469', '300210', '688981', '600519']
 
     def test_all_zero_returns_empty(self, recommender, monkeypatch):
         """全部平盘时涨幅榜应为空"""
@@ -222,7 +237,7 @@ class TestGetTopGainersCN:
             {'代码': '000002', '名称': '平盘2', '最新价': 12.0, '涨跌幅': 0.0, '换手率': 0.2, '成交量': 200, '成交额': 2400},
         ]
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=False, limit=10: mock_data)
+                            lambda self, sort_asc=False, limit=10, enrich_sector=True: mock_data)
         result = recommender.get_top_gainers_cn(limit=5)
         assert result == []
 
@@ -231,14 +246,14 @@ class TestGetTopLosersCN:
 
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=True, limit=10: _make_mock_ranking(10, True))
+                            lambda self, sort_asc=True, limit=10, enrich_sector=True: _make_mock_ranking(10, True))
         result = recommender.get_top_losers_cn(limit=5)
         assert isinstance(result, list)
 
     def test_calls_with_asc(self, recommender, monkeypatch):
         called_with = {}
 
-        def mock_ranking(self, sort_asc=False, limit=10):
+        def mock_ranking(self, sort_asc=False, limit=10, enrich_sector=True):
             called_with['asc'] = sort_asc
             called_with['limit'] = limit
             return _make_mock_ranking(limit, sort_asc)
@@ -258,11 +273,26 @@ class TestGetTopLosersCN:
             {'代码': '000005', '名称': '跌股3', '最新价': 7.0, '涨跌幅': -1.0, '换手率': 0.6, '成交量': 600, '成交额': 4200},
         ]
         monkeypatch.setattr('stock_recommendation.StockRecommender._get_market_ranking',
-                            lambda self, sort_asc=True, limit=10: mock_data)
+                            lambda self, sort_asc=True, limit=10, enrich_sector=True: mock_data)
         result = recommender.get_top_losers_cn(limit=5)
         for stock in result:
             assert stock['涨跌幅'] < 0, f"{stock['名称']} 涨跌幅={stock['涨跌幅']}，不应出现在跌幅榜"
         assert len(result) == 3  # 只有3只跌的
+
+    def test_keeps_non_main_board_for_market_heat(self, recommender, monkeypatch):
+        """热门跌幅榜用于全市场观察，不做主板过滤"""
+        mock_data = [
+            {'代码': '920469', '名称': '北交所股', '最新价': 8.0, '涨跌幅': -18.0, '换手率': 12.0},
+            {'代码': '300210', '名称': '创业板股', '最新价': 12.0, '涨跌幅': -10.5, '换手率': 16.1},
+            {'代码': '688981', '名称': '科创板股', '最新价': 50.0, '涨跌幅': -5.2, '换手率': 3.2},
+            {'代码': '600519', '名称': '主板股', '最新价': 1500.0, '涨跌幅': -2.0, '换手率': 0.8},
+        ]
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_market_ranking',
+            lambda self, sort_asc=True, limit=10, enrich_sector=True: mock_data,
+        )
+        result = recommender.get_top_losers_cn(limit=10)
+        assert [stock['代码'] for stock in result] == ['920469', '300210', '688981', '600519']
 
 
 # ============================================================
@@ -497,6 +527,26 @@ class TestAnalyzeShortTerm:
 
 class TestGetRecommendedStocksCN:
 
+    def test_uses_main_board_pool_before_limit(self, recommender, monkeypatch):
+        pool = [
+            {'code': '300750', 'name': '宁德时代'},
+            {'code': '688981', 'name': '中芯国际'},
+            {'code': '835185', 'name': '贝特瑞'},
+            {'code': '000001', 'name': '平安银行'},
+            {'code': '600519', 'name': '贵州茅台'},
+        ]
+        analyzed = []
+        monkeypatch.setattr('stock_recommendation.get_popular_cn_stocks', lambda: pool)
+
+        def mock_analyze(self, code, market='CN', period='3mo'):
+            analyzed.append(code)
+            return _mock_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender.analyze_stock', mock_analyze)
+        result = recommender.get_recommended_stocks_cn(num_stocks=5)
+        assert analyzed == ['000001', '600519']
+        assert [r['symbol'] for r in result] == ['600519', '000001']
+
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender.analyze_stock',
                             lambda self, code, market='CN', period='3mo': _mock_analysis(code))
@@ -531,6 +581,25 @@ class TestGetRecommendedStocksCN:
 
 class TestGetShortTermRecommendations:
 
+    def test_filters_non_main_board(self, recommender, monkeypatch):
+        pool = [
+            {'code': '300750', 'name': '宁德时代'},
+            {'code': '688981', 'name': '中芯国际'},
+            {'code': '000001', 'name': '平安银行'},
+            {'code': '600519', 'name': '贵州茅台'},
+        ]
+        analyzed = []
+        monkeypatch.setattr('stock_recommendation.get_popular_cn_stocks', lambda: pool)
+
+        def mock_short(self, code, market='CN'):
+            analyzed.append(code)
+            return _mock_short_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', mock_short)
+        result = recommender.get_short_term_recommendations(num_stocks=5)
+        assert analyzed == ['000001', '600519']
+        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
+
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
                             lambda self, code, market='CN': _mock_short_analysis(code))
@@ -550,6 +619,25 @@ class TestGetShortTermRecommendations:
 # ============================================================
 
 class TestGetLongTermRecommendations:
+
+    def test_filters_non_main_board(self, recommender, monkeypatch):
+        pool = [
+            {'code': '300750', 'name': '宁德时代'},
+            {'code': '688981', 'name': '中芯国际'},
+            {'code': '000001', 'name': '平安银行'},
+            {'code': '600519', 'name': '贵州茅台'},
+        ]
+        analyzed = []
+        monkeypatch.setattr('stock_recommendation.get_popular_cn_stocks', lambda: pool)
+
+        def mock_long(self, code, market='CN'):
+            analyzed.append(code)
+            return _mock_long_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term', mock_long)
+        result = recommender.get_long_term_recommendations(num_stocks=5)
+        assert analyzed == ['000001', '600519']
+        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
 
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
@@ -591,6 +679,27 @@ class TestGetSectorShortTerm:
         if result:
             assert result[0]['sector'] == '电力'
 
+    def test_filters_non_main_board_sector_stocks(self, recommender, monkeypatch):
+        sector_pool = {
+            '测试板块': [
+                {'code': '300750', 'name': '宁德时代'},
+                {'code': '688981', 'name': '中芯国际'},
+                {'code': '000001', 'name': '平安银行'},
+                {'code': '600519', 'name': '贵州茅台'},
+            ]
+        }
+        analyzed = []
+        monkeypatch.setattr('stock_recommendation.SECTOR_STOCKS', sector_pool)
+
+        def mock_short(self, code, market='CN'):
+            analyzed.append(code)
+            return _mock_short_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', mock_short)
+        result = recommender.get_sector_short_term_recommendations('测试板块', num_stocks=5)
+        assert analyzed == ['000001', '600519']
+        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
+
 
 # ============================================================
 # TestMarketRanking
@@ -624,6 +733,28 @@ class TestMarketRanking:
             item = result[0]
             for key in ['代码', '名称', '最新价', '涨跌幅']:
                 assert key in item
+
+    def test_ths_ranking_parser(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.requests.get',
+                            lambda url, params, headers, timeout: _make_mock_response(_mock_ths_ranking_html()))
+        result = recommender._get_market_ranking_ths(sort_asc=False, limit=2)
+
+        assert result[0]['代码'] == '920469'
+        assert result[0]['名称'] == '富恒新材'
+        assert result[0]['涨跌幅'] == 29.89
+        assert result[0]['换手率'] == 14.96
+
+    def test_falls_back_to_sina_when_ths_blocked(self, recommender, monkeypatch):
+        def mock_get(url, params, headers, timeout):
+            if '10jqka' in url:
+                return _make_mock_response('<html>blocked</html>', status_code=401)
+            return _mock_ranking_resp()
+
+        monkeypatch.setattr('stock_recommendation.requests.get', mock_get)
+        result = recommender._get_market_ranking(sort_asc=False, limit=3)
+
+        assert result
+        assert result[0]['代码'] == '000001'
 
 
 # ============================================================
@@ -696,6 +827,16 @@ def _mock_ranking_resp():
                  'turnoverratio': 2.1, 'volume': 70000000, 'amount': 620000000},
             ]
     return MockResponse()
+
+
+def _mock_ths_ranking_html():
+    return '''
+    <html><body><table class="m-table m-pager-table">
+    <tr><th>序号</th><th>代码</th><th>名称</th><th>现价</th><th>涨跌幅</th><th>涨跌</th><th>涨速</th><th>换手</th><th>换手率</th></tr>
+    <tr><td>1</td><td>920469</td><td>富恒新材</td><td>8.17</td><td>29.89</td><td>1.88</td><td>0.00</td><td>--</td><td>14.96</td></tr>
+    <tr><td>2</td><td>300210</td><td>森远股份</td><td>12.05</td><td>20.02</td><td>2.01</td><td>0.00</td><td>--</td><td>16.11</td></tr>
+    </table></body></html>
+    '''
 
 
 class MockResponse:
@@ -1056,6 +1197,27 @@ class TestGetSectorLongTerm:
                             lambda self, code, market='CN': _mock_long_analysis(code))
         result = recommender.get_sector_long_term_recommendations('特斯拉概念', num_stocks=2)
         assert len(result) <= 2
+
+    def test_filters_non_main_board_sector_stocks(self, recommender, monkeypatch):
+        sector_pool = {
+            '测试板块': [
+                {'code': '300750', 'name': '宁德时代'},
+                {'code': '688981', 'name': '中芯国际'},
+                {'code': '000001', 'name': '平安银行'},
+                {'code': '600519', 'name': '贵州茅台'},
+            ]
+        }
+        analyzed = []
+        monkeypatch.setattr('stock_recommendation.SECTOR_STOCKS', sector_pool)
+
+        def mock_long(self, code, market='CN'):
+            analyzed.append(code)
+            return _mock_long_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term', mock_long)
+        result = recommender.get_sector_long_term_recommendations('测试板块', num_stocks=5)
+        assert analyzed == ['000001', '600519']
+        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
 
 
 # ============================================================

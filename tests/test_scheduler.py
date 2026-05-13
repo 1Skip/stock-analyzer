@@ -1,12 +1,32 @@
 """定时调度模块测试"""
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture(autouse=True)
-def disable_daily_report_by_default(monkeypatch):
-    """调度单元测试默认关闭日报，涉及日报的测试显式打开。"""
+def scheduler_defaults(monkeypatch):
+    """调度单元测试默认关闭日报，并清空自选股。"""
     monkeypatch.setattr("scheduler.DAILY_REPORT_ENABLED", False)
+    monkeypatch.setattr("scheduler._load_watchlist_from_file", lambda: [])
+
+
+@pytest.fixture
+def sector_data():
+    return {
+        "算力租赁": {
+            "短线": [
+                {"symbol": "000977", "name": "浪潮信息", "latest_price": 45.12, "change_pct": 2.3},
+                {"symbol": "603019", "name": "中科曙光", "latest_price": 39.88, "change_pct": 1.1},
+            ],
+            "长线": [
+                {"symbol": "601138", "name": "工业富联", "latest_price": 28.66, "change_pct": -0.4},
+            ],
+        },
+        "电力": {"短线": [], "长线": []},
+        "苹果概念": {"短线": [], "长线": []},
+        "特斯拉概念": {"短线": [], "长线": []},
+    }
 
 
 class TestSchedulerImport:
@@ -20,166 +40,130 @@ class TestSchedulerImport:
 
 class TestRunScheduledAnalysis:
 
-    def test_no_notify_channels_skips_push(self):
+    def test_no_notify_channels_skips_push(self, sector_data):
         """通知未开启时不调用发送"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
              patch("scheduler.NOTIFY_ENABLED", False), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.send_push") as mock_push:
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = []
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+            mock_rec.return_value.get_all_sector_recommendations.return_value = sector_data
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
-            mock_push.assert_not_called()
 
-    def test_all_markets_fail_gracefully(self):
-        """所有市场获取失败不崩溃"""
+            mock_push.assert_not_called()
+            mock_rec.return_value.get_all_sector_recommendations.assert_called_once_with(
+                short_top_n=2,
+                long_top_n=1,
+            )
+
+    def test_sector_failure_gracefully_skips_push(self):
+        """板块推荐失败不崩溃"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.logger") as mock_logger:
-            mock_rec.return_value.get_recommended_stocks_cn.side_effect = Exception("fail")
-            mock_rec.return_value.get_recommended_stocks_hk.side_effect = Exception("fail")
-            mock_rec.return_value.get_recommended_stocks_us.side_effect = Exception("fail")
+            mock_rec.return_value.get_all_sector_recommendations.side_effect = Exception("fail")
 
             from scheduler import run_scheduled_analysis
-            run_scheduled_analysis()  # 不抛异常
+            run_scheduled_analysis()
+
             assert mock_logger.warning.called
 
-    def test_sends_push_when_enabled(self):
-        """通知开启且有分析结果时调用推送"""
-        sample_stock = {
-            "symbol": "000001",
-            "name": "平安银行",
-            "latest_price": 12.50,
-            "change_pct": 2.35,
-            "signals": {"macd": "偏多", "rsi": "偏多", "kdj": "偏多", "boll": "偏多"},
-        }
-
+    def test_sends_sector_push_when_enabled(self, sector_data):
+        """通知开启且有板块推荐时调用推送"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.NOTIFY_ENABLED", True), \
-             patch("scheduler.send_push", return_value={"wechat": True}) as mock_push:
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
+             patch("scheduler.send_push", return_value={"feishu": True}) as mock_push:
+            mock_rec.return_value.get_all_sector_recommendations.return_value = sector_data
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
 
             mock_push.assert_called_once()
+            title, body = mock_push.call_args.args
+            assert title.startswith("📊 每日选股报告")
+            assert "板块龙头推荐" in body
+            assert "浪潮信息" in body
+
+    def test_generic_recommendations_are_not_used(self, sector_data):
+        """定时推送不再使用全市场推荐股补充内容"""
+        with patch("stock_recommendation.StockRecommender") as mock_rec, \
+             patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
+             patch("scheduler.send_push", return_value={"feishu": True}):
+            instance = mock_rec.return_value
+            instance.get_all_sector_recommendations.return_value = sector_data
+
+            from scheduler import run_scheduled_analysis
+            run_scheduled_analysis()
+
+            instance.get_recommended_stocks_cn.assert_not_called()
+            instance.get_recommended_stocks_hk.assert_not_called()
+            instance.get_recommended_stocks_us.assert_not_called()
 
     def test_daily_report_generated_and_pushed_when_enabled(self):
         """定时任务开启日报时生成并推送完整 Markdown 报告"""
-        sample_stock = {
-            "symbol": "000001",
-            "name": "平安银行",
-            "latest_price": 12.50,
-            "change_pct": 2.35,
-            "signals": {"macd": "偏多"},
-        }
-
-        with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
+        with patch("stock_recommendation.StockRecommender"), \
              patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", False), \
              patch("scheduler.DAILY_REPORT_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_PUSH_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_DIR", "tmp_reports"), \
              patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
              patch("scheduler.save_markdown_report", return_value={"dated": "tmp_reports/2026-05-13.md", "latest": "tmp_reports/latest.md"}):
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
             mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
 
-            assert mock_push.call_count == 2
-            assert mock_push.call_args_list[1].args[0].startswith("📄 每日完整分析报告")
-            assert "报告文件" in mock_push.call_args_list[1].args[1]
+            mock_push.assert_called_once()
+            assert mock_push.call_args.args[0].startswith("📄 每日完整分析报告")
+            assert "报告文件" in mock_push.call_args.args[1]
 
     def test_daily_report_generate_only_when_push_disabled(self):
         """关闭日报推送时仍生成 Markdown 文件但不额外推送"""
-        sample_stock = {
-            "symbol": "000001",
-            "name": "平安银行",
-            "latest_price": 12.50,
-            "change_pct": 2.35,
-            "signals": {"macd": "偏多"},
-        }
-
-        with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
+        with patch("stock_recommendation.StockRecommender"), \
              patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", False), \
              patch("scheduler.DAILY_REPORT_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_PUSH_ENABLED", False), \
              patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
              patch("scheduler.save_markdown_report", return_value={"dated": "tmp.md", "latest": "latest.md"}) as mock_save:
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
             mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
 
             mock_save.assert_called_once()
-            mock_push.assert_called_once()
+            mock_push.assert_not_called()
 
-    def test_daily_report_disabled_skips_generation(self):
+    def test_daily_report_disabled_skips_generation(self, sector_data):
         """关闭每日报告时不生成报告"""
-        sample_stock = {
-            "symbol": "000001",
-            "name": "平安银行",
-            "latest_price": 12.50,
-            "change_pct": 2.35,
-            "signals": {"macd": "偏多"},
-        }
-
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_ENABLED", False), \
-             patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
+             patch("scheduler.send_push", return_value={"wechat": True}), \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service:
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+            mock_rec.return_value.get_all_sector_recommendations.return_value = sector_data
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
 
             mock_report_service.assert_not_called()
-            mock_push.assert_called_once()
 
-    def test_daily_report_failure_does_not_block_main_push(self):
-        """日报生成失败不影响原有摘要推送"""
-        sample_stock = {
-            "symbol": "000001",
-            "name": "平安银行",
-            "latest_price": 12.50,
-            "change_pct": 2.35,
-            "signals": {"macd": "偏多"},
-        }
-
+    def test_daily_report_failure_does_not_block_sector_push(self, sector_data):
+        """日报生成失败不影响板块摘要推送"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.NOTIFY_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_ENABLED", True), \
              patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service:
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample_stock]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+            mock_rec.return_value.get_all_sector_recommendations.return_value = sector_data
             mock_report_service.return_value.generate_markdown.side_effect = Exception("boom")
 
             from scheduler import run_scheduled_analysis
@@ -189,8 +173,7 @@ class TestRunScheduledAnalysis:
 
     def test_daily_report_runs_even_without_stock_reports(self):
         """没有选股摘要时仍生成并推送日报"""
-        with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
+        with patch("stock_recommendation.StockRecommender"), \
              patch("scheduler.NOTIFY_ENABLED", True), \
              patch("scheduler.SECTOR_PUSH_ENABLED", False), \
              patch("scheduler.DAILY_REPORT_ENABLED", True), \
@@ -198,9 +181,6 @@ class TestRunScheduledAnalysis:
              patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
              patch("scheduler.save_markdown_report", return_value={"dated": "tmp.md", "latest": "latest.md"}):
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = []
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
             mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
 
             from scheduler import run_scheduled_analysis
@@ -208,29 +188,6 @@ class TestRunScheduledAnalysis:
 
             mock_push.assert_called_once()
             assert mock_push.call_args.args[0].startswith("📄 每日完整分析报告")
-
-    def test_individual_stock_failure_doesnt_block_others(self):
-        """单只股票分析失败不影响其他"""
-        good = {
-            "symbol": "000001", "name": "平安银行",
-            "latest_price": 12.50, "change_pct": 2.35,
-            "signals": {"macd": "偏多"},
-        }
-        bad = {
-            "symbol": "BAD", "name": "坏股票",
-            "latest_price": 1.00, "change_pct": 0,
-        }
-
-        with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetch, \
-             patch("scheduler.NOTIFY_ENABLED", False):
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [bad, good]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
-            mock_fetch.return_value.get_stock_data.return_value = None
-
-            from scheduler import run_scheduled_analysis
-            run_scheduled_analysis()  # 不抛异常
 
 
 class TestStartScheduler:
@@ -264,21 +221,15 @@ class TestStartScheduler:
             mock_schedule.every.return_value.day.at.assert_called_with("15:30")
 
 
-# ============================================================
-# TestWatchlistPriority
-# ============================================================
-
 class TestWatchlistPriority:
 
-    def test_load_watchlist_empty(self, tmp_path, monkeypatch):
+    def test_load_watchlist_empty(self, monkeypatch):
         """无 watchlist.json → 返回空列表"""
-        watchlist_file = tmp_path / 'watchlist.json'
         monkeypatch.setattr('scheduler._load_watchlist_from_file', lambda: [])
         from scheduler import _load_watchlist_from_file
-        # 直接替换函数后验证返回空
         assert _load_watchlist_from_file() == []
 
-    def test_load_watchlist_with_data(self, tmp_path, monkeypatch):
+    def test_load_watchlist_with_data(self, monkeypatch):
         """有 watchlist.json → 返回列表"""
         mock_data = [{'symbol': '000001', 'name': '平安银行', 'market': 'CN'}]
         monkeypatch.setattr('scheduler._load_watchlist_from_file', lambda: mock_data)
@@ -286,108 +237,90 @@ class TestWatchlistPriority:
         assert len(_load_watchlist_from_file()) == 1
 
     def test_run_with_watchlist(self, monkeypatch):
-        """有自选股时 → 优先分析自选股并推送"""
-        from unittest.mock import MagicMock
-        import pandas as pd
-
+        """有自选股时 → 自选股摘要和板块推荐一起推送"""
         watchlist_data = [{'symbol': '000001', 'name': '平安银行', 'market': 'CN'}]
         monkeypatch.setattr('scheduler._load_watchlist_from_file', lambda: watchlist_data)
         monkeypatch.setattr('scheduler.NOTIFY_ENABLED', True)
+        monkeypatch.setattr('scheduler.SECTOR_PUSH_ENABLED', True)
         mock_push = MagicMock(return_value={'feishu': True})
         monkeypatch.setattr('scheduler.send_push', mock_push)
 
-        # Mock 推荐列表返回空（自选股已覆盖）
         mock_rec = MagicMock()
-        mock_rec.get_recommended_stocks_cn.return_value = []
-        mock_rec.get_recommended_stocks_hk.return_value = []
-        mock_rec.get_recommended_stocks_us.return_value = []
-        # StockRecommender is imported inside the function, patch original module
+        mock_rec.get_all_sector_recommendations.return_value = {
+            "算力租赁": {"短线": [], "长线": []},
+            "电力": {"短线": [], "长线": []},
+            "苹果概念": {"短线": [], "长线": []},
+            "特斯拉概念": {"短线": [], "长线": []},
+        }
         monkeypatch.setattr('stock_recommendation.StockRecommender', lambda: mock_rec)
 
-        # Mock 数据获取
-        dates = pd.date_range('2025-06-01', periods=30, freq='B')
-        n = 30
-        mock_df = pd.DataFrame({
-            'open': [10]*n, 'high': [10.5]*n, 'low': [9.5]*n, 'close': [10]*n,
-            'volume': [1000000]*n,
-        }, index=dates)
-
-        from data_fetcher import StockDataFetcher
-        monkeypatch.setattr(StockDataFetcher, 'get_stock_data',
-                           lambda self, symbol, period, market: mock_df)
+        monkeypatch.setattr(
+            'watchlist.get_watchlist_summary',
+            lambda watchlist: [{
+                'symbol': '000001',
+                'name': '平安银行',
+                'price': 12.5,
+                'change_pct': 1.2,
+                'signal_summary': '偏多',
+                'entry_hint': '回踩关注',
+            }],
+        )
 
         from scheduler import run_scheduled_analysis
         run_scheduled_analysis()
 
         mock_push.assert_called_once()
+        body = mock_push.call_args.args[1]
+        assert "平安银行" in body
+        assert "板块龙头推荐" in body
 
-
-# ============================================================
-# TestSectorPushIntegration
-# ============================================================
 
 class TestSectorPushIntegration:
 
     def test_sector_disabled_skips_analysis(self):
         """SECTOR_PUSH_ENABLED=false 时不调用板块分析"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher"), \
              patch("scheduler.SECTOR_PUSH_ENABLED", False), \
              patch("scheduler.NOTIFY_ENABLED", False):
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = []
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
+
             mock_rec.return_value.get_all_sector_recommendations.assert_not_called()
 
-    def test_sector_enabled_calls_analysis(self):
-        """SECTOR_PUSH_ENABLED=true 时调用板块分析"""
+    def test_sector_enabled_calls_analysis_with_configured_counts(self, sector_data):
+        """SECTOR_PUSH_ENABLED=true 时按短线2/长线1调用板块分析"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.SECTOR_PUSH_ENABLED", True), \
+             patch("scheduler.SECTOR_PUSH_SHORT_TOP_N", 2), \
+             patch("scheduler.SECTOR_PUSH_LONG_TOP_N", 1), \
              patch("scheduler.NOTIFY_ENABLED", True), \
              patch("scheduler.send_push", return_value={"feishu": True}):
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            sample = {
-                "symbol": "000001", "name": "平安银行",
-                "latest_price": 12.50, "change_pct": 2.35,
-                "signals": {"macd": "偏多"},
-            }
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
-            mock_rec.return_value.get_all_sector_recommendations.return_value = {
-                "苹果概念": {"短线": [], "长线": []},
-                "特斯拉概念": {"短线": [], "长线": []},
-                "电力": {"短线": [], "长线": []},
-                "算力租赁": {"短线": [], "长线": []},
-            }
+            mock_rec.return_value.get_all_sector_recommendations.return_value = sector_data
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
-            mock_rec.return_value.get_all_sector_recommendations.assert_called_once()
 
-    def test_sector_failure_does_not_block_main_push(self):
-        """板块分析失败时主推送不受影响"""
+            mock_rec.return_value.get_all_sector_recommendations.assert_called_once_with(
+                short_top_n=2,
+                long_top_n=1,
+            )
+
+    def test_sector_failure_does_not_block_daily_report(self):
+        """板块分析失败时每日报告仍继续处理"""
         with patch("stock_recommendation.StockRecommender") as mock_rec, \
-             patch("data_fetcher.StockDataFetcher") as mock_fetcher, \
              patch("scheduler.SECTOR_PUSH_ENABLED", True), \
              patch("scheduler.NOTIFY_ENABLED", True), \
-             patch("scheduler.send_push", return_value={"feishu": True}) as mock_push:
-            mock_fetcher.return_value.get_realtime_quote.return_value = None
-            sample = {
-                "symbol": "000001", "name": "平安银行",
-                "latest_price": 12.50, "change_pct": 2.35,
-                "signals": {"macd": "偏多"},
-            }
-            mock_rec.return_value.get_recommended_stocks_cn.return_value = [sample]
-            mock_rec.return_value.get_recommended_stocks_hk.return_value = []
-            mock_rec.return_value.get_recommended_stocks_us.return_value = []
+             patch("scheduler.DAILY_REPORT_ENABLED", True), \
+             patch("scheduler.DAILY_REPORT_PUSH_ENABLED", True), \
+             patch("scheduler.send_push", return_value={"feishu": True}) as mock_push, \
+             patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
+             patch("scheduler.save_markdown_report", return_value={"dated": "tmp.md", "latest": "latest.md"}):
             mock_rec.return_value.get_all_sector_recommendations.side_effect = Exception("板块分析崩溃")
+            mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
 
             from scheduler import run_scheduled_analysis
             run_scheduled_analysis()
 
-            mock_push.assert_called_once()  # 主推送仍然执行
+            mock_push.assert_called_once()
+            assert mock_push.call_args.args[0].startswith("📄 每日完整分析报告")

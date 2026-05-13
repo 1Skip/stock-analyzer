@@ -57,8 +57,10 @@ CACHE_TTL_WATCHLIST_SUMMARY = 300  # 自选股摘要（5分钟）
 CACHE_TTL_WATCHLIST_MINI = 300     # 自选股 mini 面板（5分钟）
 
 # 板块推送配置
-SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "false").lower() == "true"
+SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "true").lower() == "true"
 SECTOR_PUSH_TOP_N = int(os.getenv("SECTOR_PUSH_TOP_N", "3"))
+SECTOR_PUSH_SHORT_TOP_N = int(os.getenv("SECTOR_PUSH_SHORT_TOP_N", "2"))
+SECTOR_PUSH_LONG_TOP_N = int(os.getenv("SECTOR_PUSH_LONG_TOP_N", "1"))
 
 # 每日报告配置
 DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
