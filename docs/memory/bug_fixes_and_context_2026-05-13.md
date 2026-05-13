@@ -189,3 +189,18 @@ python main.py --schedule
 - 已验证：
   - 检查脚本无项目绝对路径硬编码。
   - `py -m pytest tests\test_ui_enhancements.py tests\test_app_navigation.py tests\test_loading_ui.py -q` → 23 passed
+
+## 追加记录：飞书对话机器人中文股票名称识别
+- 目标：为后续飞书实时对话 Agent 补强股票名称识别，避免只能输入股票代码。
+- 落地方式：
+  - `api_server.py` 新增 `_parse_analysis_command()`，支持 `/analysis 贵州茅台`、`分析贵州茅台`、`查询 招商银行`、`查 招商银行` 等自然语言格式。
+  - `api_server.py` 新增 `_resolve_analysis_target()`，复用 `StockDataFetcher.resolve_stock_input()` 的 A 股全量名称索引和错序/模糊匹配能力。
+  - A 股中文名称解析失败时不再直接请求行情接口，避免把“帮帮我”等普通文本误当股票代码查询。
+  - 飞书回复会在分析正文前补充“已识别：名称(代码)”。
+  - README 和 CLAUDE 同步更新飞书机器人支持中文名称输入说明。
+- 覆盖测试：
+  - `tests/test_api_server.py` 新增 `/analysis <中文名>`、`分析<中文名>`、`查 <中文名>` 用例。
+- 已验证：
+  - `py -m compileall api_server.py tests\test_api_server.py`
+  - `py -m pytest tests\test_api_server.py -q` → 16 passed
+  - `py -m pytest tests\test_data_fetcher.py::TestGetStockName tests\test_ui_enhancements.py -q` → 14 passed

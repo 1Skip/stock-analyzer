@@ -70,7 +70,7 @@
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
 - **定时调度**：默认关闭，通过 `SCHEDULE_ENABLED=true` 开启，`SCHEDULE_TIME` 设定执行时间
-- **飞书机器人**：默认关闭，通过 `FEISHU_BOT_ENABLED=true` 开启 FastAPI 回调服务
+- **飞书机器人**：默认关闭，通过 `FEISHU_BOT_ENABLED=true` 开启 FastAPI 回调服务；命令解析支持 `/analysis 600519`、`/analysis 贵州茅台`、`分析贵州茅台`、`查 招商银行` 等代码/中文名称输入
 
 ## 4. 技术指标细节
 

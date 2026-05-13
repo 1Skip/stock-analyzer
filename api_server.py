@@ -6,8 +6,20 @@ import json
 import logging
 import hashlib
 import sys
+import re
 
 logger = logging.getLogger(__name__)
+
+MARKET_ALIASES = {
+    "CN": "CN",
+    "A": "CN",
+    "A股": "CN",
+    "沪深": "CN",
+    "HK": "HK",
+    "港股": "HK",
+    "US": "US",
+    "美股": "US",
+}
 
 try:
     from fastapi import FastAPI, Request, HTTPException
@@ -239,6 +251,59 @@ def _get_analysis_text(symbol, market='CN'):
     return "\n".join(lines)
 
 
+def _resolve_analysis_target(query, market="CN"):
+    """把飞书文本中的股票代码/中文名称解析为 (symbol, name, market)。"""
+    query = str(query or "").strip()
+    market = MARKET_ALIASES.get(str(market or "CN").upper(), market or "CN")
+    if not query:
+        return None
+
+    if market == "CN":
+        from data_fetcher import StockDataFetcher
+
+        resolved = StockDataFetcher().resolve_stock_input(query, market="CN")
+        if resolved:
+            symbol, name = resolved
+            return symbol, name, "CN"
+        if re.fullmatch(r"\d{6}", query):
+            return query, None, "CN"
+        return None
+
+    return query.upper() if market != "CN" else query, None, market
+
+
+def _parse_analysis_command(text):
+    """解析飞书自然语言分析命令，支持“分析茅台”“查 招商银行”等口语输入。"""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+
+    tokens = raw.split()
+    market = "CN"
+    if tokens and tokens[-1].upper() in MARKET_ALIASES:
+        market = MARKET_ALIASES[tokens[-1].upper()]
+        raw = " ".join(tokens[:-1]).strip()
+    elif tokens and tokens[-1] in MARKET_ALIASES:
+        market = MARKET_ALIASES[tokens[-1]]
+        raw = " ".join(tokens[:-1]).strip()
+
+    normalized = re.sub(r"^(帮我|请|麻烦|帮忙)?(分析一下|分析|查询一下|查询|查一下|查|看看|看下)\s*", "", raw).strip()
+    normalized = re.sub(r"(股票|个股|走势|行情)$", "", normalized).strip()
+
+    if raw.startswith("/analysis") or raw.startswith("/分析"):
+        parts = raw.split()
+        if len(parts) < 2:
+            return None
+        normalized = parts[1]
+        if len(parts) > 2 and parts[2].upper() in MARKET_ALIASES:
+            market = MARKET_ALIASES[parts[2].upper()]
+
+    if not normalized:
+        return None
+
+    return _resolve_analysis_target(normalized, market)
+
+
 def _get_hot_text(market='CN'):
     """生成热门股票摘要文本"""
     from stock_recommendation import StockRecommender
@@ -282,23 +347,29 @@ def handle_command(text):
         market = parts[-1].upper() if len(parts) > 1 and parts[-1].upper() in ('CN', 'HK', 'US') else 'CN'
         return _get_hot_text(market)
 
-    # /analysis <symbol> — 个股分析
+    # /analysis <symbol|名称> — 个股分析
     if text.startswith('/analysis') or text.startswith('/分析'):
-        parts = text.split()
-        symbol = parts[1] if len(parts) > 1 else None
-        if not symbol:
-            return "请提供股票代码，例如: /analysis 000001"
-        # 可选市场
-        market = parts[2].upper() if len(parts) > 2 and parts[2].upper() in ('CN', 'HK', 'US') else 'CN'
-        return _get_analysis_text(symbol, market)
+        target = _parse_analysis_command(text)
+        if not target:
+            return "请提供股票代码或名称，例如: /analysis 000001、/analysis 贵州茅台"
+        symbol, name, market = target
+        prefix = f"已识别：{name}({symbol})\n" if name else ""
+        return prefix + _get_analysis_text(symbol, market)
 
     # 纯ASCII数字/字母 → 当作股票代码（排除中文等非ASCII字符）
     if text.isascii() and text.isalnum() and len(text) <= 8:
         return _get_analysis_text(text, 'CN')
 
+    target = _parse_analysis_command(text)
+    if target:
+        symbol, name, market = target
+        prefix = f"已识别：{name}({symbol})\n" if name else ""
+        return prefix + _get_analysis_text(symbol, market)
+
     return """支持以下命令:
 - /watchlist — 查看自选股信号
-- /analysis <代码> [市场] — 个股分析
+- /analysis <代码/名称> [市场] — 个股分析
+- 分析/查询/查 <股票名称> — 中文名称快捷分析
 - /hot [市场] — 热门推荐
 - 直接输入股票代码 — 快速分析"""
 

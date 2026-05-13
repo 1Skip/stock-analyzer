@@ -69,6 +69,34 @@ class TestHandleCommand:
         result = handle_command('/analysis AAPL US')
         assert 'AAPL' in result and 'US' in result
 
+    def test_analysis_accepts_cn_stock_name(self, monkeypatch):
+        """ /analysis <中文名> → 解析为A股代码"""
+        monkeypatch.setattr(
+            'api_server._resolve_analysis_target',
+            lambda query, market='CN': ('600519', '贵州茅台', 'CN') if query == '贵州茅台' else None,
+        )
+        monkeypatch.setattr('api_server._get_analysis_text',
+                           lambda symbol, market='CN': f'{symbol} [{market}] 分析')
+        from api_server import handle_command
+
+        result = handle_command('/analysis 贵州茅台')
+
+        assert '已识别：贵州茅台(600519)' in result
+        assert '600519 [CN] 分析' in result
+
+    def test_natural_language_analysis_accepts_cn_name(self, monkeypatch):
+        """ 分析/查询/查 <中文名> → 解析为A股代码"""
+        monkeypatch.setattr(
+            'api_server._resolve_analysis_target',
+            lambda query, market='CN': {'贵州茅台': ('600519', '贵州茅台', 'CN'), '招商银行': ('600036', '招商银行', 'CN')}.get(query),
+        )
+        monkeypatch.setattr('api_server._get_analysis_text',
+                           lambda symbol, market='CN': f'{symbol} [{market}] 分析')
+        from api_server import handle_command
+
+        assert '600519 [CN] 分析' in handle_command('分析贵州茅台')
+        assert '600036 [CN] 分析' in handle_command('查 招商银行')
+
     def test_symbol_as_command(self, mock_data_fetcher, monkeypatch):
         """ 直接输入代码 → 快速分析"""
         monkeypatch.setattr('api_server._get_analysis_text',
