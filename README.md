@@ -24,7 +24,7 @@
 - 默认关闭，通过环境变量 `NOTIFY_CHANNELS` 开启（可选值：`wechat`, `feishu`）
 
 ### 市场支持
-- **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退；中文名称搜索使用全量 A 股名称索引（5515+ 只，24h 本地缓存）
+- **A股** — AKShare → 新浪财经 → Yahoo Finance 三级回退；中文名称搜索使用全量 A 股名称索引（5515+ 只，内置兜底 + 24h 本地缓存）
 - **港股** — 新浪财经 → Yahoo Finance
 - **美股** — 新浪财经 → Yahoo Finance
 - **基础资料/估值** — A股接入分层数据服务，AKShare 个股资料 + 腾讯行情估值补充，展示行业、上市日期、市值、PE/PB、换手率
@@ -81,7 +81,7 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-个股分析页支持**股票代码/中文名称搜索**（如"平安银行"、"报喜鸟"、"茅台"），输入后按 **Enter 键**直接分析。A股名称索引会缓存到 `.cache/stock_name_index.json`，避免每次搜索都拉全市场行情。
+个股分析页支持**股票代码/中文名称搜索**（如"平安银行"、"报喜鸟"、"茅台"），输入后按 **Enter 键**直接分析。A股名称索引优先使用 24h 本地缓存 `.cache/stock_name_index.json`，并内置一份全量兜底索引，GitHub Actions/离线环境也能识别“捷顺科技、瑞鹄模具、上海电力”等中文名称。
 
 ### 下载后直接使用
 
@@ -219,7 +219,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
-GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需云端日报包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`）或高级格式 `WATCHLIST_JSON`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
+GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需云端日报包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 
 ## 指标说明
 

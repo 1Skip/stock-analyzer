@@ -86,6 +86,9 @@ jobs:
                   if resolved:
                       symbol, name = resolved
                       return {"symbol": symbol, "name": name, "market": "CN"}
+                  if re.search(r"[\u4e00-\u9fff]", token):
+                      print(f"::error::STOCK_LIST 未识别 A股名称：{token}。请改用 6 位股票代码，或检查名称是否完整。")
+                      sys.exit(1)
 
               return {
                   "symbol": token.upper() if market != "CN" else token,

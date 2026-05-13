@@ -657,6 +657,31 @@ class TestResolveStockInput:
         fetcher = StockDataFetcher()
         assert fetcher.resolve_stock_input('顺捷科技', market='CN') == ('002609', '捷顺科技')
 
+    def test_static_stock_name_index_works_when_network_unavailable(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_stock_name_index_file',
+            str(os.path.join('missing-cache-dir', 'stock_name_index.json')),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            'get_main_board_stocks',
+            classmethod(lambda cls: []),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_resolve_cn_stock_name_from_spot',
+            lambda self, text: None,
+        )
+
+        fetcher = StockDataFetcher()
+        assert fetcher.resolve_stock_input('捷顺科技', market='CN') == ('002609', '捷顺科技')
+        assert fetcher.resolve_stock_input('瑞鹄模具', market='CN') == ('002997', '瑞鹄模具')
+        assert fetcher.resolve_stock_input('上海电力', market='CN') == ('600021', '上海电力')
+
 
 # ============================================================
 # TestGetRealtimeQuote

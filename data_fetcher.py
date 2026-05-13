@@ -42,6 +42,10 @@ def _runtime_cache_path(filename):
     return os.path.join(cache_dir, filename)
 
 
+def _static_data_path(filename):
+    return os.path.join(os.path.dirname(__file__), 'data', 'static', filename)
+
+
 def _legacy_cache_path(filename):
     return os.path.join(os.path.dirname(__file__), filename)
 
@@ -879,6 +883,17 @@ class StockDataFetcher:
                     return stocks
             except Exception:
                 logger.warning("刷新股票名称索引失败", exc_info=True)
+
+        try:
+            static_file = _static_data_path('stock_name_index.json')
+            if os.path.exists(static_file):
+                with open(static_file, 'r', encoding='utf-8') as f:
+                    static_index = json.load(f)
+                stocks = static_index.get('stocks', [])
+                if stocks:
+                    return stocks
+        except Exception:
+            logger.warning("读取内置股票名称索引失败", exc_info=True)
 
         return [{'code': code, 'name': name} for code, name in CN_STOCK_NAMES_EXTENDED.items()]
 

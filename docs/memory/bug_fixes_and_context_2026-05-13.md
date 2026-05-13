@@ -238,3 +238,17 @@ python main.py --schedule
   - A 股支持代码或中文名称，例如 `600519,贵州茅台,招商银行`，运行时复用 `StockDataFetcher.resolve_stock_input()` 自动补全代码和名称。
   - 支持市场前缀：`CN:平安银行`、`HK:00700`、`US:AAPL`，也兼容 `HK00700`、`USAAPL`。
   - `docs/FEISHU_GITHUB_ACTIONS.md`、README、CLAUDE 同步改为推荐 `STOCK_LIST`，`WATCHLIST_JSON` 保留为高级格式。
+
+## 追加记录：GitHub Actions STOCK_LIST 中文名离线兜底
+- 问题现象：Actions 中配置 `STOCK_LIST=捷顺科技,瑞鹄模具,上海电力` 后，日志显示“未找到股票 捷顺科技 的数据”。
+- 原因定位：云端运行时中文名称解析依赖现场 AKShare 名称索引刷新；当接口连接中断或超时时，`STOCK_LIST` 解析 fallback 会把中文名称原样写入 `watchlist.json`，后续行情查询就拿 `捷顺科技` 当 symbol 请求。
+- 修复方式：
+  - 新增 `data/static/stock_name_index.json`，随仓库提交 5515 只 A 股名称索引，作为 GitHub Actions/离线环境兜底。
+  - `data_fetcher.py` 在运行缓存和 AKShare 刷新失败后读取内置索引，再退回精简静态表。
+  - `.github/workflows/daily_analysis.yml` 对未识别的 A 股中文名称直接 `::error::` 失败，提示改用 6 位代码，避免继续误查。
+  - README、CLAUDE、飞书 Actions 文档同步说明 `STOCK_LIST` 支持中文名但代码最稳。
+- 已验证：
+  - `StockDataFetcher().resolve_stock_input("捷顺科技", "CN") == ("002609", "捷顺科技")`
+  - `StockDataFetcher().resolve_stock_input("瑞鹄模具", "CN") == ("002997", "瑞鹄模具")`
+  - `StockDataFetcher().resolve_stock_input("上海电力", "CN") == ("600021", "上海电力")`
+  - `py -m pytest tests\test_data_fetcher.py::TestResolveStockInput -q` → 4 passed

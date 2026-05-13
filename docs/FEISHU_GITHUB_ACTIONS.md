@@ -46,6 +46,8 @@ Settings → Secrets and variables → Actions → New repository secret
 贵州茅台,招商银行,CN:平安银行,HK:00700,US:AAPL
 ```
 
+A 股中文名称会先用内置全量名称索引解析，再尝试在线刷新；如果仍未识别，Actions 会在“写入自选股 Secret”步骤直接报错并提示改用 6 位代码，避免把中文名称误当股票代码查询。
+
 如果同时配置 `WATCHLIST_JSON` 和 `STOCK_LIST`，优先使用 `WATCHLIST_JSON`。
 
 `WATCHLIST_JSON` 高级格式示例：
