@@ -27,7 +27,7 @@ def test_app_shell_uses_main_page_container():
     source = inspect.getsource(app.main)
 
     assert "main_page" in source
-    assert "page_container = st.empty()" in source
+    assert "_sync_active_page(page)" in source
     assert "_render_selected_page(page)" in source
     assert "options=nav_items" in source
     assert "key=\"main_page\"" in source
@@ -50,3 +50,89 @@ def test_main_page_renders_before_slow_sidebar_widgets():
 def test_custom_css_does_not_keep_stale_pages_visible():
     assert ".stale-element" not in CUSTOM_CSS
     assert "[data-stale=\"true\"]" not in CUSTOM_CSS
+
+
+def test_page_switch_clears_inactive_state_and_reruns(monkeypatch):
+    import app
+    import streamlit as st
+
+    st.session_state.clear()
+    st.session_state["_active_page"] = "配置推送"
+    st.session_state["hot_data"] = {"old": True}
+    st.session_state["hot_data_loaded"] = True
+    st.session_state["rec_results"] = {"old": True}
+    st.session_state["analyzed_data"] = object()
+    reruns = []
+
+    monkeypatch.setattr(st, "rerun", lambda: reruns.append(True))
+
+    changed = app._sync_active_page("股票对比")
+
+    assert changed is True
+    assert st.session_state["_active_page"] == "股票对比"
+    assert "hot_data" not in st.session_state
+    assert "hot_data_loaded" not in st.session_state
+    assert "rec_results" not in st.session_state
+    assert "analyzed_data" not in st.session_state
+    assert reruns == [True]
+
+
+def test_page_switch_keeps_current_page_state(monkeypatch):
+    import app
+    import streamlit as st
+
+    st.session_state.clear()
+    st.session_state["_active_page"] = "股票对比"
+    st.session_state["hot_data"] = {"current": True}
+    reruns = []
+
+    monkeypatch.setattr(st, "rerun", lambda: reruns.append(True))
+
+    changed = app._sync_active_page("热门板块")
+
+    assert changed is True
+    assert st.session_state["_active_page"] == "热门板块"
+    assert st.session_state["hot_data"] == {"current": True}
+    assert reruns == [True]
+
+
+def test_same_page_does_not_rerun(monkeypatch):
+    import app
+    import streamlit as st
+
+    st.session_state.clear()
+    st.session_state["_active_page"] = "股票对比"
+    reruns = []
+
+    monkeypatch.setattr(st, "rerun", lambda: reruns.append(True))
+
+    changed = app._sync_active_page("股票对比")
+
+    assert changed is False
+    assert reruns == []
+
+
+def test_main_returns_immediately_after_page_change(monkeypatch):
+    import app
+    import streamlit as st
+
+    class DummySidebar:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    st.session_state.clear()
+    st.session_state["main_page"] = "股票对比"
+    calls = []
+
+    monkeypatch.setattr(st, "sidebar", DummySidebar())
+    monkeypatch.setattr(st, "title", lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(st, "radio", lambda *args, **kwargs: "股票对比", raising=False)
+    monkeypatch.setattr(st, "rerun", lambda: calls.append("rerun"))
+    monkeypatch.setattr(app, "_render_selected_page", lambda page: calls.append(f"render:{page}"))
+
+    app.main()
+
+    assert calls == ["rerun"]

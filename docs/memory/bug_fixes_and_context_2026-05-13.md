@@ -118,3 +118,17 @@ python main.py --schedule
 - 已验证命令：
   - `py -m compileall stock_recommendation.py ui\hot_stocks_page.py tests\test_stock_recommendation.py`
   - `py -m pytest tests\test_stock_recommendation.py tests\test_hot_stocks_page.py tests\test_scheduler.py tests\test_notification.py -q`
+
+## 追加记录：切换页面残留修复
+
+- 问题现象：从配置推送等页面切换到股票对比时，旧页面内容会以淡化/蒙版形式残留在新页面下方。
+- 原因定位：`app.py` 使用同一个 `st.empty()` 页面容器，切页时先写入“正在切换页面...”再在同轮渲染目标页面；Streamlit 前端可能在同一次 rerun 中保留旧块，造成新旧 DOM 短暂并存。
+- 修复方式：
+  - 移除主页面的 `st.empty()` 双阶段占位渲染。
+  - 新增 `_sync_active_page(page)`，检测页面变化后先清理非当前页面的展示态，再调用 `st.rerun()` 并立即 `return`，确保下一轮只挂载目标页面。
+  - 新增 `_clear_inactive_page_state(active_page)`，清理个股分析、热门板块、智能推荐等页面的结果缓存展示态，避免跨模块复用旧结果。
+- 覆盖测试：
+  - `tests/test_app_navigation.py` 新增切页清理、当前页状态保留、同页不 rerun、切页后主函数立即返回等用例。
+- 已验证：
+  - `py -m pytest tests\test_app_navigation.py tests\test_app_plotly.py tests\test_hot_stocks_page.py tests\test_ui_enhancements.py tests\test_loading_ui.py tests\test_main.py -q`
+  - `py -m pytest -q` → 599 passed

@@ -38,6 +38,7 @@ if 'streamlit' not in sys.modules:
     _mock_st.warning = lambda *args, **kw: None
     _mock_st.error = lambda *args, **kw: None
     _mock_st.success = lambda *args, **kw: None
+    _mock_st.rerun = lambda: None
     class _MockContainer:
         def container(self):
             return self
