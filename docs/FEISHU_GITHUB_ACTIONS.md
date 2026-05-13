@@ -30,7 +30,27 @@ Settings → Secrets and variables → Actions → New repository secret
 
 | Secret 名称 | 值 |
 |------|------|
+| `WATCHLIST_JSON` | 云端日报使用的自选股 JSON |
 | `AI_API_KEY` | AI 解读所需 API Key，没有也可以不填 |
+
+`WATCHLIST_JSON` 示例：
+
+```json
+[
+  {
+    "symbol": "600519",
+    "name": "贵州茅台",
+    "market": "CN"
+  },
+  {
+    "symbol": "600036",
+    "name": "招商银行",
+    "market": "CN"
+  }
+]
+```
+
+如果不配置 `WATCHLIST_JSON`，云端日报会显示“暂无自选股”。本地网页里的 `watchlist.json` 默认不会提交到 GitHub，因此 GitHub Actions 不能自动读取你本地电脑的自选股。
 
 ## 3. 运行方式
 

@@ -32,6 +32,54 @@ jobs:
             exit 1
           fi
 
+      - name: 写入自选股 Secret
+        env:
+          WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}
+        run: |
+          if [ -n "$WATCHLIST_JSON" ]; then
+            python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          raw = os.environ.get("WATCHLIST_JSON", "").strip()
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              print(f"::error::WATCHLIST_JSON 不是合法 JSON: {exc}")
+              sys.exit(1)
+
+          if not isinstance(data, list):
+              print("::error::WATCHLIST_JSON 必须是数组，例如 [{\"symbol\":\"600519\",\"name\":\"贵州茅台\",\"market\":\"CN\"}]")
+              sys.exit(1)
+
+          normalized = []
+          for index, item in enumerate(data, start=1):
+              if not isinstance(item, dict):
+                  print(f"::error::WATCHLIST_JSON 第 {index} 项必须是对象")
+                  sys.exit(1)
+              symbol = str(item.get("symbol", "")).strip()
+              if not symbol:
+                  print(f"::error::WATCHLIST_JSON 第 {index} 项缺少 symbol")
+                  sys.exit(1)
+              normalized.append({
+                  "symbol": symbol,
+                  "name": str(item.get("name") or symbol).strip(),
+                  "market": str(item.get("market") or "CN").strip().upper(),
+              })
+
+          pathlib.Path("watchlist.json").write_text(
+              json.dumps(normalized, ensure_ascii=False, indent=2),
+              encoding="utf-8",
+          )
+          print(f"已从 WATCHLIST_JSON 写入 {len(normalized)} 只自选股")
+          PY
+          else
+            echo "未配置 WATCHLIST_JSON，本次日报自选股为空。"
+            echo "[]" > watchlist.json
+          fi
+
       - name: 运行定时分析并推送到飞书
         env:
           NOTIFY_CHANNELS: feishu

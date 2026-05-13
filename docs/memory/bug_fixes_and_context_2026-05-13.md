@@ -217,3 +217,14 @@ python main.py --schedule
   - 自选股摘要 → 四板块推荐（算力租赁、电力、苹果概念、特斯拉概念）→ 每日完整 Markdown 决策日报。
 - 注意：
   - 这是主动推送方案，不是飞书实时对话；实时对话仍需要事件订阅和公网回调服务。
+
+## 追加记录：GitHub Actions 支持 WATCHLIST_JSON 自选股 Secret
+- 问题现象：云端飞书日报中“自选股决策面板、研报/风险/板块归因”显示暂无，因为 GitHub Actions 不能读取用户本地未提交的 `watchlist.json`。
+- 落地方式：
+  - `.github/workflows/daily_analysis.yml` 新增“写入自选股 Secret”步骤。
+  - 如果配置 `WATCHLIST_JSON`，Actions 会校验 JSON 数组格式，标准化 `symbol/name/market` 字段，并在运行时写入 `watchlist.json`。
+  - 如果未配置 `WATCHLIST_JSON`，Actions 会写入空数组并提示“本次日报自选股为空”。
+  - `docs/FEISHU_GITHUB_ACTIONS.md` 新增 `WATCHLIST_JSON` 示例和说明。
+  - README/CLAUDE 同步注明云端自选股需要 `WATCHLIST_JSON`。
+- 推荐格式：
+  - `[{"symbol":"600519","name":"贵州茅台","market":"CN"},{"symbol":"600036","name":"招商银行","market":"CN"}]`
