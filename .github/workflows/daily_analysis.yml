@@ -35,50 +35,106 @@ jobs:
       - name: 写入自选股 Secret
         env:
           WATCHLIST_JSON: ${{ secrets.WATCHLIST_JSON }}
+          STOCK_LIST: ${{ secrets.STOCK_LIST }}
         run: |
-          if [ -n "$WATCHLIST_JSON" ]; then
-            python - <<'PY'
+          python - <<'PY'
           import json
           import os
           import pathlib
+          import re
           import sys
 
-          raw = os.environ.get("WATCHLIST_JSON", "").strip()
-          try:
-              data = json.loads(raw)
-          except json.JSONDecodeError as exc:
-              print(f"::error::WATCHLIST_JSON 不是合法 JSON: {exc}")
-              sys.exit(1)
+          from data_fetcher import StockDataFetcher
+          from stock_names import CN_STOCK_NAMES_EXTENDED
 
-          if not isinstance(data, list):
-              print("::error::WATCHLIST_JSON 必须是数组，例如 [{\"symbol\":\"600519\",\"name\":\"贵州茅台\",\"market\":\"CN\"}]")
-              sys.exit(1)
+          MARKET_ALIASES = {"A": "CN", "A股": "CN", "CN": "CN", "HK": "HK", "US": "US"}
+          raw_json = os.environ.get("WATCHLIST_JSON", "").strip()
+          stock_list = os.environ.get("STOCK_LIST", "").strip()
+          fetcher = StockDataFetcher()
+          data = []
+          source = "empty"
 
-          normalized = []
-          for index, item in enumerate(data, start=1):
-              if not isinstance(item, dict):
-                  print(f"::error::WATCHLIST_JSON 第 {index} 项必须是对象")
+
+          def item_from_text(text):
+              token = str(text or "").strip()
+              if not token:
+                  return None
+
+              market = "CN"
+              upper = token.upper()
+              if ":" in token:
+                  prefix, value = token.split(":", 1)
+                  if prefix.upper() in MARKET_ALIASES:
+                      market = MARKET_ALIASES[prefix.upper()]
+                      token = value.strip()
+                      upper = token.upper()
+              elif upper.startswith("HK") and len(upper) > 2:
+                  market = "HK"
+                  token = upper[2:].strip()
+              elif upper.startswith("US") and len(upper) > 2:
+                  market = "US"
+                  token = upper[2:].strip()
+
+              if not token:
+                  return None
+
+              if market == "CN":
+                  for code, name in CN_STOCK_NAMES_EXTENDED.items():
+                      if token == code or token == name:
+                          return {"symbol": code, "name": name, "market": "CN"}
+                  resolved = fetcher.resolve_stock_input(token, "CN")
+                  if resolved:
+                      symbol, name = resolved
+                      return {"symbol": symbol, "name": name, "market": "CN"}
+
+              return {
+                  "symbol": token.upper() if market != "CN" else token,
+                  "name": token,
+                  "market": market,
+              }
+
+
+          if raw_json:
+              try:
+                  parsed = json.loads(raw_json)
+              except json.JSONDecodeError as exc:
+                  print(f"::error::WATCHLIST_JSON 不是合法 JSON: {exc}")
                   sys.exit(1)
-              symbol = str(item.get("symbol", "")).strip()
-              if not symbol:
-                  print(f"::error::WATCHLIST_JSON 第 {index} 项缺少 symbol")
+
+              if not isinstance(parsed, list):
+                  print("::error::WATCHLIST_JSON 必须是数组")
                   sys.exit(1)
-              normalized.append({
-                  "symbol": symbol,
-                  "name": str(item.get("name") or symbol).strip(),
-                  "market": str(item.get("market") or "CN").strip().upper(),
-              })
+
+              for index, item in enumerate(parsed, start=1):
+                  if not isinstance(item, dict):
+                      print(f"::error::WATCHLIST_JSON 第 {index} 项必须是对象")
+                      sys.exit(1)
+                  symbol = str(item.get("symbol", "")).strip()
+                  if not symbol:
+                      print(f"::error::WATCHLIST_JSON 第 {index} 项缺少 symbol")
+                      sys.exit(1)
+                  data.append({
+                      "symbol": symbol,
+                      "name": str(item.get("name") or symbol).strip(),
+                      "market": str(item.get("market") or "CN").strip().upper(),
+                  })
+              source = "WATCHLIST_JSON"
+          elif stock_list:
+              for token in re.split(r"[,，\n]+", stock_list):
+                  item = item_from_text(token)
+                  if item:
+                      data.append(item)
+              source = "STOCK_LIST"
 
           pathlib.Path("watchlist.json").write_text(
-              json.dumps(normalized, ensure_ascii=False, indent=2),
+              json.dumps(data, ensure_ascii=False, indent=2),
               encoding="utf-8",
           )
-          print(f"已从 WATCHLIST_JSON 写入 {len(normalized)} 只自选股")
+          if data:
+              print(f"已从 {source} 写入 {len(data)} 只自选股")
+          else:
+              print("未配置 WATCHLIST_JSON/STOCK_LIST，本次日报自选股为空。")
           PY
-          else
-            echo "未配置 WATCHLIST_JSON，本次日报自选股为空。"
-            echo "[]" > watchlist.json
-          fi
 
       - name: 运行定时分析并推送到飞书
         env:

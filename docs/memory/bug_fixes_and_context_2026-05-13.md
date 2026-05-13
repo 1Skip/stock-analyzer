@@ -228,3 +228,13 @@ python main.py --schedule
   - README/CLAUDE 同步注明云端自选股需要 `WATCHLIST_JSON`。
 - 推荐格式：
   - `[{"symbol":"600519","name":"贵州茅台","market":"CN"},{"symbol":"600036","name":"招商银行","market":"CN"}]`
+
+## 追加记录：GitHub Actions 兼容 STOCK_LIST 简单自选股配置
+- 背景：用户提到 `daily_stock_analysis` 使用 `STOCK_LIST=600519,hk00700,AAPL` 更简单，本项目不应强制用户写复杂 JSON。
+- 落地方式：
+  - `.github/workflows/daily_analysis.yml` 的“写入自选股 Secret”步骤新增 `STOCK_LIST` 支持。
+  - 优先级：`WATCHLIST_JSON` > `STOCK_LIST` > 空自选股。
+  - `STOCK_LIST` 支持逗号/中文逗号/换行分隔。
+  - A 股支持代码或中文名称，例如 `600519,贵州茅台,招商银行`，运行时复用 `StockDataFetcher.resolve_stock_input()` 自动补全代码和名称。
+  - 支持市场前缀：`CN:平安银行`、`HK:00700`、`US:AAPL`，也兼容 `HK00700`、`USAAPL`。
+  - `docs/FEISHU_GITHUB_ACTIONS.md`、README、CLAUDE 同步改为推荐 `STOCK_LIST`，`WATCHLIST_JSON` 保留为高级格式。

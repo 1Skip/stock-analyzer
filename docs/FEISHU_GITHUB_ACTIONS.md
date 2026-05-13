@@ -30,10 +30,25 @@ Settings → Secrets and variables → Actions → New repository secret
 
 | Secret 名称 | 值 |
 |------|------|
-| `WATCHLIST_JSON` | 云端日报使用的自选股 JSON |
+| `STOCK_LIST` | 云端日报使用的自选股，逗号分隔，推荐 |
+| `WATCHLIST_JSON` | 云端日报使用的高级自选股 JSON |
 | `AI_API_KEY` | AI 解读所需 API Key，没有也可以不填 |
 
-`WATCHLIST_JSON` 示例：
+`STOCK_LIST` 示例：
+
+```text
+600519,600036,000001
+```
+
+也支持中文名称和市场前缀：
+
+```text
+贵州茅台,招商银行,CN:平安银行,HK:00700,US:AAPL
+```
+
+如果同时配置 `WATCHLIST_JSON` 和 `STOCK_LIST`，优先使用 `WATCHLIST_JSON`。
+
+`WATCHLIST_JSON` 高级格式示例：
 
 ```json
 [
@@ -50,7 +65,7 @@ Settings → Secrets and variables → Actions → New repository secret
 ]
 ```
 
-如果不配置 `WATCHLIST_JSON`，云端日报会显示“暂无自选股”。本地网页里的 `watchlist.json` 默认不会提交到 GitHub，因此 GitHub Actions 不能自动读取你本地电脑的自选股。
+如果不配置 `STOCK_LIST` 或 `WATCHLIST_JSON`，云端日报会显示“暂无自选股”。本地网页里的 `watchlist.json` 默认不会提交到 GitHub，因此 GitHub Actions 不能自动读取你本地电脑的自选股。
 
 ## 3. 运行方式
 
