@@ -56,14 +56,14 @@
 如果只是想直接使用 Web 页面：
 
 1. 安装 Python 3.10+，安装时勾选 **Add Python to PATH**。
-2. 双击项目根目录的 `启动.bat` 或 `start.bat`。
+2. 双击项目根目录的 `start.bat`。
 3. 首次运行会自动创建 `.venv` 并安装依赖，完成后自动打开浏览器。
 
 常用脚本：
 
 | 脚本 | 用途 |
 |------|------|
-| `启动.bat` / `start.bat` | 一键启动 Web 系统 |
+| `start.bat` | 一键启动 Web 系统 |
 | `创建桌面快捷方式.vbs` | 在桌面创建“股票分析系统”快捷方式 |
 | `install_startup.bat` | 设置 Windows 登录后自动启动 |
 | `uninstall_startup.bat` | 取消 Windows 开机自动启动 |

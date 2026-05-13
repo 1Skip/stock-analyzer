@@ -314,7 +314,7 @@ pip-audit
 
 根目录的 `.bat` / `.vbs` / `.ps1` 脚本是给 Windows 小白用户的一键启动方案。注意：
 - 这些脚本只封装 `python main.py` 或 `streamlit run`，不包含敏感操作
-- `启动.bat` / `start.bat` 必须使用 `%~dp0` 相对项目目录，不允许硬编码本机路径
+- `start.bat` 必须使用 `%~dp0` 相对项目目录，不允许硬编码本机路径
 - 一键启动脚本会自动创建 `.venv` 并安装 `requirements.txt`，供别人下载后直接双击使用
 - `install_startup.bat` 只创建 Windows 启动文件夹快捷方式；`uninstall_startup.bat` 只删除该快捷方式
 - 如需推送脚本，确认 token 从安全的途径获取，不要硬编码
