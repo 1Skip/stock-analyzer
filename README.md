@@ -161,7 +161,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `DAILY_REPORT_DIR`：日报输出目录，默认 `reports/history`。
 - `AI_DEBATE_ENABLED`：日报是否启用外部 LLM 多空辩论/风控经理层，默认 `false`；开启前需配置 `AI_API_KEY`。
 - `AI_DEBATE_MAX_SYMBOLS`：每次日报最多对前 N 只自选股做 LLM 辩论，默认 `3`，用于控制 Actions 耗时和费用。
-- 本机配置可复制 `.env.example` 为 `.env`，填入 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL`、`FEISHU_WEBHOOK_URL` 等私密配置；`.env` 已加入 `.gitignore`，不会提交到 GitHub。
+- 本机配置可复制 `.env.example` 为 `.env`，填入 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL`、`FEISHU_WEBHOOK_URL`、`WECHAT_WEBHOOK_URL` 等私密配置；`.env` 已加入 `.gitignore`，不会提交到 GitHub。
 
 ## 项目结构
 
@@ -228,7 +228,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
-GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需云端日报包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。如需云端 LLM 多空辩论，再配置 Secret `AI_API_KEY`，并把仓库 Variables 里的 `AI_DEBATE_ENABLED` 设为 `true`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
+GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需改为企业微信，把仓库 Variable `NOTIFY_CHANNELS` 设为 `wechat` 并配置 Secret `WECHAT_WEBHOOK_URL`；如需两个渠道同时推送，设为 `feishu,wechat` 并配置两个 Webhook。云端日报如需包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。如需云端 LLM 多空辩论，再配置 Secret `AI_API_KEY`，并把仓库 Variables 里的 `AI_DEBATE_ENABLED` 设为 `true`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 
 ## 指标说明
 

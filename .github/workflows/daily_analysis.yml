@@ -23,12 +23,28 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
-      - name: 检查飞书 Webhook Secret
+      - name: 检查通知 Webhook Secret
         env:
+          NOTIFY_CHANNELS: ${{ vars.NOTIFY_CHANNELS || 'feishu' }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
         run: |
-          if [ -z "$FEISHU_WEBHOOK_URL" ]; then
-            echo "::error::请先在 GitHub 仓库 Settings > Secrets and variables > Actions 中配置 FEISHU_WEBHOOK_URL"
+          python - <<'PY'
+          import os
+          import sys
+
+          channels = [item.strip().lower() for item in os.environ.get("NOTIFY_CHANNELS", "feishu").split(",") if item.strip()]
+          missing = []
+          if "feishu" in channels and not os.environ.get("FEISHU_WEBHOOK_URL"):
+              missing.append("FEISHU_WEBHOOK_URL")
+          if "wechat" in channels and not os.environ.get("WECHAT_WEBHOOK_URL"):
+              missing.append("WECHAT_WEBHOOK_URL")
+          if missing:
+              print(f"::error::请先在 GitHub 仓库 Settings > Secrets and variables > Actions 中配置：{', '.join(missing)}")
+              sys.exit(1)
+          print(f"通知通道：{','.join(channels) or 'feishu'}")
+          PY
+          if [ $? -ne 0 ]; then
             exit 1
           fi
 
@@ -139,10 +155,11 @@ jobs:
               print("未配置 WATCHLIST_JSON/STOCK_LIST，本次日报自选股为空。")
           PY
 
-      - name: 运行定时分析并推送到飞书
+      - name: 运行定时分析并推送
         env:
-          NOTIFY_CHANNELS: feishu
+          NOTIFY_CHANNELS: ${{ vars.NOTIFY_CHANNELS || 'feishu' }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
           AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-chat' }}
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}

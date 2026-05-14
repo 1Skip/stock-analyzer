@@ -368,6 +368,20 @@ def test_backtest_page_resolves_name_and_renders_target_header():
     assert "adapter.save_results(symbol, market, output)" in source
 
 
+def test_settings_page_documents_wechat_push_setup():
+    from pathlib import Path
+
+    source = Path("ui/settings_page.py").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/daily_analysis.yml").read_text(encoding="utf-8")
+
+    assert "企业微信" in source
+    assert 'setx NOTIFY_CHANNELS "wechat"' in source
+    assert 'setx WECHAT_WEBHOOK_URL "你的企业微信机器人Webhook"' in source
+    assert 'setx NOTIFY_CHANNELS "feishu,wechat"' in source
+    assert "WECHAT_WEBHOOK_URL" in workflow
+    assert "vars.NOTIFY_CHANNELS" in workflow
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 
