@@ -214,3 +214,23 @@ def test_decision_dashboard_stage2_css_classes_exist():
         "agent-score-pill",
     ]:
         assert class_name in CUSTOM_CSS
+
+
+def test_agent_card_html_is_not_markdown_code_block():
+    from ui.decision_dashboard import _render_agent_card
+
+    html = _render_agent_card({
+        "name": "技术分析 Agent",
+        "summary": "趋势判断：中性",
+        "stance": "中性",
+        "weight": 30,
+        "raw_score": 0,
+        "score_delta": 0,
+        "confidence": 55,
+        "evidence": ["MACD 中性"],
+        "warnings": [],
+    })
+
+    assert html.startswith("<div")
+    assert "\n    <div" not in html
+    assert 'class="agent-card neutral"' in html

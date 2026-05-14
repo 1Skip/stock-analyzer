@@ -164,27 +164,27 @@ def _render_agent_card(agent: dict[str, Any]) -> str:
     tone = _tone_from_delta(delta)
     evidence = _list_items(agent.get("evidence"), icon="证", empty="暂无明确证据", tone="bullish")
     warnings = _list_items(agent.get("warnings"), icon="险", empty="暂无额外警报", tone="bearish")
-    return f"""
-    <div class="agent-card {tone}">
-      <div class="agent-card-head">
-        <div>
-          <div class="agent-name">{_escape(agent.get("name"), "Agent")}</div>
-          <div class="agent-summary">{_escape(agent.get("summary"))}</div>
-        </div>
-        <span class="agent-score-pill {tone}">{delta:+}</span>
-      </div>
-      <div class="agent-meta-grid">
-        <span>立场 <b>{_escape(agent.get("stance"))}</b></span>
-        <span>权重 <b>{agent.get("weight", 0)}</b></span>
-        <span>原始分 <b>{raw_score:+}</b></span>
-      </div>
-      {_progress_bar(agent.get("confidence"), tone="watch")}
-      <div class="agent-detail-grid">
-        <div>{evidence}</div>
-        <div>{warnings}</div>
-      </div>
-    </div>
-    """
+    return (
+        f'<div class="agent-card {tone}">'
+        '<div class="agent-card-head">'
+        "<div>"
+        f'<div class="agent-name">{_escape(agent.get("name"), "Agent")}</div>'
+        f'<div class="agent-summary">{_escape(agent.get("summary"))}</div>'
+        "</div>"
+        f'<span class="agent-score-pill {tone}">{delta:+}</span>'
+        "</div>"
+        '<div class="agent-meta-grid">'
+        f'<span>立场 <b>{_escape(agent.get("stance"))}</b></span>'
+        f"<span>权重 <b>{agent.get('weight', 0)}</b></span>"
+        f"<span>原始分 <b>{raw_score:+}</b></span>"
+        "</div>"
+        f'{_progress_bar(agent.get("confidence"), tone="watch")}'
+        '<div class="agent-detail-grid">'
+        f"<div>{evidence}</div>"
+        f"<div>{warnings}</div>"
+        "</div>"
+        "</div>"
+    )
 
 
 def render_decision_dashboard(
