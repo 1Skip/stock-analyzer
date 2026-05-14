@@ -375,6 +375,44 @@ def _display_indicator_values(data):
         )
 
 
+def _resolve_watchlist_target(symbol: str, market: str) -> tuple[str, str] | None:
+    """尽量把当前输入解析成可加入自选的代码和名称。"""
+    symbol = str(symbol or "").strip()
+    if not symbol:
+        return None
+    if market == "CN":
+        result = resolve_cached_stock_input(symbol, market)
+        if result:
+            return result[0], result[1]
+        if symbol.isdigit() and len(symbol) == 6:
+            return symbol, symbol
+        return None
+    return symbol, symbol
+
+
+def _render_watchlist_quick_action(symbol: str, market: str) -> None:
+    """在搜索区直接显示加入/移除自选，避免结果加载前看不到入口。"""
+    target = _resolve_watchlist_target(symbol, market)
+    if not target:
+        st.caption("输入或选择股票后，可在这里加入自选。")
+        return
+
+    watch_symbol, watch_name = target
+    in_watchlist = is_in_watchlist(watch_symbol, market)
+    label = "移除自选" if in_watchlist else "加入自选"
+    button_type = "secondary" if in_watchlist else "primary"
+    if st.button(label, key=f"quick_watchlist_{market}_{watch_symbol}", type=button_type, use_container_width=True):
+        if in_watchlist:
+            success, msg = remove_from_watchlist(watch_symbol, market)
+        else:
+            success, msg = add_to_watchlist(watch_symbol, watch_name, market)
+        if success:
+            st.success(msg)
+            st.rerun()
+        else:
+            st.warning(msg)
+
+
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
@@ -399,6 +437,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
                     st.rerun()
                 else:
                     st.warning(msg)
+
 
     # ② 核心指标 — 最新价
     last_row = data.iloc[-1] if data is not None and not data.empty else None
@@ -630,8 +669,8 @@ def analyze_stock_page():
     elif quick_query:
         st.caption("没有找到本地候选；可以直接点「开始分析」，系统会尝试联网解析。")
 
-    # 第2行：市场 | 周期 | 配色 | 刷新 — 总宽6份，对齐上行 input(5)+btn(1)
-    col_mkt, col_period, col_pref, col_refresh = st.columns([2, 2, 1, 1])
+    # 第2行：市场 | 周期 | 配色 | 自选 | 刷新 — 总宽7份，保留结果加载前的自选入口
+    col_mkt, col_period, col_pref, col_watch_quick, col_refresh = st.columns([2, 2, 1, 1, 1])
 
     with col_mkt:
         market_index = ["CN", "US", "HK"].index(st.session_state.analyze_market)
@@ -683,6 +722,13 @@ def analyze_stock_page():
             format_func=lambda x: scheme_labels[x],
             key="color_scheme_select",
             on_change=on_color_scheme_change,
+        )
+
+    with col_watch_quick:
+        st.markdown('<div class="select-row-button-spacer"></div>', unsafe_allow_html=True)
+        _render_watchlist_quick_action(
+            st.session_state.get("analyze_symbol_input", st.session_state.analyze_symbol),
+            st.session_state.analyze_market,
         )
 
     with col_refresh:

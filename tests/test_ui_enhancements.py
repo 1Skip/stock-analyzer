@@ -277,6 +277,17 @@ def test_stock_profile_section_is_never_dropped_when_loading():
     assert "profile = futures['profile'].result(timeout=2.5)" in source
 
 
+def test_analyze_page_keeps_top_watchlist_action():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_watchlist_quick_action" in source
+    assert "_render_watchlist_quick_action(" in source
+    assert "quick_watchlist_" in source
+    assert "加入自选" in source
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 
