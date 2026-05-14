@@ -24,6 +24,7 @@ def _open_watchlist_stock_in_main(symbol, market, name=None):
     st.session_state.pending_main_page = "个股分析"
     st.session_state.wl_view_symbol = symbol
     st.session_state.wl_view_market = market
+    st.session_state.wl_view_name = name or symbol
     st.session_state.quick_match_caption = f"已从自选股打开：{name or symbol} ({symbol})"
 
 
@@ -95,10 +96,10 @@ def display_watchlist_sidebar():
 
 
 @st.cache_data(ttl=CACHE_TTL_WATCHLIST_MINI, show_spinner=False)
-def _cached_mini_analysis(symbol, market):
+def _cached_mini_analysis(symbol, market, name=None):
     """获取单只股票简要分析数据（侧边栏 mini 面板用，5分钟缓存）"""
     from watchlist import get_watchlist_summary
-    results = get_watchlist_summary([{'symbol': symbol, 'name': symbol, 'market': market}])
+    results = get_watchlist_summary([{'symbol': symbol, 'name': name or symbol, 'market': market}])
     return results[0] if results else None
 
 
@@ -106,11 +107,12 @@ def display_watchlist_mini_panel():
     """在侧边栏显示选中自选股的 mini 分析面板"""
     symbol = st.session_state.get('wl_view_symbol')
     market = st.session_state.get('wl_view_market')
+    selected_name = st.session_state.get('wl_view_name')
 
     if not symbol:
         return
 
-    result = _cached_mini_analysis(symbol, market)
+    result = _cached_mini_analysis(symbol, market, selected_name)
 
     if result is None:
         return
@@ -121,7 +123,7 @@ def display_watchlist_mini_panel():
     signal_text = result.get('signal_summary', '--')
     hint_text = result.get('entry_hint', '--')
     indicators = result.get('indicators', {})
-    name = result.get('name', symbol)
+    name = result.get('name') or selected_name or symbol
 
     st.caption("自选详情")
 
