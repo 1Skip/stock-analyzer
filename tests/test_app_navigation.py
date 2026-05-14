@@ -47,7 +47,7 @@ def test_light_sidebar_renders_before_main_page():
 
     assert watchlist_index < render_index
     assert source_index < render_index
-    assert render_index < market_index
+    assert market_index < render_index
 
 
 def test_custom_css_does_not_keep_stale_pages_visible():
@@ -233,5 +233,5 @@ def test_page_switch_second_run_keeps_light_sidebar(monkeypatch):
 
     app.main()
 
-    assert calls == ["watchlist", "source", "render:股票对比", "market"]
+    assert calls == ["watchlist", "source", "market", "render:股票对比"]
     assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

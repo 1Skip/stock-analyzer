@@ -398,6 +398,28 @@ def test_settings_page_documents_wechat_push_setup():
     assert "vars.NOTIFY_CHANNELS" in workflow
 
 
+def test_market_temperature_fetches_indices_concurrently():
+    from pathlib import Path
+
+    source = Path("ui/sidebar.py").read_text(encoding="utf-8")
+
+    assert "ThreadPoolExecutor" in source
+    assert "wait(futures, timeout=3)" in source
+    assert "executor.shutdown(wait=False, cancel_futures=True)" in source
+    assert "executor.submit(quote_service.get_index_realtime, code)" in source
+
+
+def test_index_realtime_uses_sina_fast_source_first():
+    from pathlib import Path
+
+    source = Path("data_fetcher.py").read_text(encoding="utf-8")
+    method = source.split("def get_index_realtime(self, symbol):", 1)[1].split("def _get_index_spot", 1)[0]
+
+    assert "def _get_index_realtime_sina" in method
+    assert "sina_result = self._get_index_realtime_sina(symbol, timeout=2)" in method
+    assert method.index("_get_index_realtime_sina") < method.index("AKSHARE_AVAILABLE")
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 

@@ -1182,6 +1182,10 @@ class StockDataFetcher:
             dict: {symbol, name, price, change_pct, prev_close} 或 None
         """
         try:
+            sina_result = self._get_index_realtime_sina(symbol, timeout=2)
+            if sina_result:
+                return sina_result
+
             if AKSHARE_AVAILABLE:
                 try:
                     spot_df = self._get_index_spot()
@@ -1198,35 +1202,6 @@ class StockDataFetcher:
                             }
                 except Exception as e:
                     print(f"AKShare指数行情失败 {symbol}: {e}")
-
-            # 新浪财经（使用全版格式，非简版 s_ 前缀）
-            if symbol.startswith('000') or symbol.startswith('600'):
-                sina_code = f"sh{symbol}"
-            elif symbol.startswith('899'):
-                sina_code = f"bj{symbol}"
-            else:
-                sina_code = f"sz{symbol}"
-            url = f"https://hq.sinajs.cn/list={sina_code}"
-            headers = {
-                'Referer': 'https://finance.sina.com.cn',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            resp = _session.get(url, headers=headers, timeout=5)
-            if resp.status_code == 200:
-                content = resp.text
-                match = re.search(r'"([^"]*)"', content)
-                if match:
-                    data = match.group(1).split(',')
-                    if len(data) >= 4:
-                        price = float(data[3]) if data[3] else 0
-                        prev_close = float(data[2]) if data[2] else 1
-                        return {
-                            'symbol': symbol,
-                            'name': data[0],
-                            'price': price,
-                            'change_pct': (price / prev_close - 1) * 100 if prev_close else 0,
-                            'prev_close': prev_close,
-                        }
 
             # yfinance
             yf_map = {'000001': '^SSEC', '399001': '399001.SZ', '399006': '399006.SZ'}
@@ -1251,6 +1226,42 @@ class StockDataFetcher:
         except Exception as e:
             print(f"获取指数行情失败 {symbol}: {e}")
         return None
+
+    def _get_index_realtime_sina(self, symbol, timeout=2):
+        """新浪财经指数实时行情，作为大盘温度快速源。"""
+        if symbol.startswith('000') or symbol.startswith('600'):
+            sina_code = f"sh{symbol}"
+        elif symbol.startswith('899'):
+            sina_code = f"bj{symbol}"
+        else:
+            sina_code = f"sz{symbol}"
+        url = f"https://hq.sinajs.cn/list={sina_code}"
+        headers = {
+            'Referer': 'https://finance.sina.com.cn',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        try:
+            resp = _session.get(url, headers=headers, timeout=timeout)
+            if resp.status_code != 200:
+                return None
+            match = re.search(r'"([^"]*)"', resp.text)
+            if not match:
+                return None
+            data = match.group(1).split(',')
+            if len(data) < 4:
+                return None
+            price = float(data[3]) if data[3] else 0
+            prev_close = float(data[2]) if data[2] else 1
+            return {
+                'symbol': symbol,
+                'name': data[0],
+                'price': price,
+                'change_pct': (price / prev_close - 1) * 100 if prev_close else 0,
+                'prev_close': prev_close,
+            }
+        except Exception:
+            return None
+
 
     @classmethod
     def _get_index_spot(cls):

@@ -998,6 +998,9 @@ class TestIndexRealtime:
         }])
         monkeypatch.setattr('data_fetcher.ak.stock_zh_index_spot_em',
                             lambda: mock_df)
+        monkeypatch.setattr(StockDataFetcher, '_get_index_realtime_sina', lambda self, symbol, timeout=2: None)
+        StockDataFetcher._index_spot_cache = None
+        StockDataFetcher._index_spot_cache_time = None
 
         fetcher = StockDataFetcher()
         result = fetcher.get_index_realtime('000001')

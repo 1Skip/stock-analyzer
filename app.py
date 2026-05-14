@@ -157,6 +157,8 @@ def main():
 
         display_watchlist_sidebar()
         display_data_source_selector()
+        if MARKET_INDEX_ENABLED:
+            display_market_temperature()
 
         st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
@@ -166,10 +168,6 @@ def main():
     page_switch_pending = st.session_state.pop(_PAGE_SWITCH_PENDING_KEY, False)
 
     _render_main_page(page)
-
-    with st.sidebar:
-        if MARKET_INDEX_ENABLED:
-            display_market_temperature()
 
     if page_switch_pending:
         return

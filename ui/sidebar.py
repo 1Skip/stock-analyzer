@@ -1,4 +1,5 @@
 """侧边栏组件 — 大盘温度、自选股列表、数据源选择"""
+from concurrent.futures import ThreadPoolExecutor, wait
 import html
 import streamlit as st
 from config import (
@@ -28,12 +29,28 @@ def display_market_temperature():
 
     @st.cache_data(ttl=INDEX_CACHE_TTL, show_spinner=False)
     def _fetch_indices():
-        results = []
-        for code, name in INDEX_WATCHLIST:
-            quote = quote_service.get_index_realtime(code)
-            if quote:
-                results.append(quote)
-        return results
+        results_map = {}
+        max_workers = min(len(INDEX_WATCHLIST), 4)
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        futures = {
+            executor.submit(quote_service.get_index_realtime, code): code
+            for code, _ in INDEX_WATCHLIST
+        }
+        try:
+            done, pending = wait(futures, timeout=3)
+            for future in done:
+                code = futures[future]
+                try:
+                    quote = future.result(timeout=0)
+                    if quote:
+                        results_map[code] = quote
+                except Exception:
+                    pass
+            for future in pending:
+                future.cancel()
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+        return [results_map[code] for code, _ in INDEX_WATCHLIST if code in results_map]
 
     indices = _fetch_indices()
     if not indices:
