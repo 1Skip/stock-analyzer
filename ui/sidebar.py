@@ -71,10 +71,27 @@ def display_watchlist_sidebar():
     """在侧边栏显示自选股列表 — 含实时信号和入场提示"""
     watchlist = get_watchlist()
 
-    with st.expander("自选股"):
+    with st.expander(f"自选股（{len(watchlist)}）"):
         if not watchlist:
             st.caption("暂无自选股")
             return None
+
+        st.caption("点击股票查看下方详情，点右侧 × 可移除。")
+        for index, raw_item in enumerate(watchlist):
+            symbol = raw_item.get('symbol', '')
+            name = raw_item.get('name') or symbol
+            market = raw_item.get('market', 'CN')
+            row = st.columns([4.6, 0.9], gap="small")
+            with row[0]:
+                label = f"{symbol} · {name[:6]}" if name and name != symbol else symbol
+                if st.button(label, key=f"wl_pick_{symbol}_{market}_{index}", use_container_width=True):
+                    st.session_state.wl_view_symbol = symbol
+                    st.session_state.wl_view_market = market
+                    st.rerun()
+            with row[1]:
+                if st.button("×", key=f"wl_remove_{symbol}_{market}_{index}", help="移除自选", use_container_width=True):
+                    remove_from_watchlist(symbol, market)
+                    st.rerun()
 
         watchlist_hash = _json_for_hash.dumps(
             [(item['symbol'], item['market']) for item in watchlist],
@@ -85,21 +102,9 @@ def display_watchlist_sidebar():
             summaries = _cached_watchlist_summary(watchlist_hash)
 
         if not summaries:
-            for item in watchlist:
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    display_text = f"{item['symbol']}"
-                    if item['name'] and item['name'] != item['symbol']:
-                        display_text += f" · {item['name'][:4]}"
-                    if st.button(display_text, key=f"wl_{item['symbol']}_{item['market']}", use_container_width=True):
-                        st.session_state.wl_view_symbol = item['symbol']
-                        st.session_state.wl_view_market = item['market']
-                with col2:
-                    if st.button("✕", key=f"del_{item['symbol']}_{item['market']}", help="移除"):
-                        remove_from_watchlist(item['symbol'], item['market'])
-                        st.rerun()
             return None
 
+        st.markdown("##### 摘要")
         for i, item in enumerate(summaries):
             symbol = item['symbol']
             name = item.get('name', symbol)
@@ -107,7 +112,7 @@ def display_watchlist_sidebar():
             error = item.get('error')
 
             with st.container(border=True):
-                col_title, col_price, col_del = st.columns([2.5, 2, 0.8])
+                col_title, col_price = st.columns([2.8, 2])
                 with col_title:
                     st.markdown(f'<span style="font-weight:600">{html.escape(symbol)}</span> · {html.escape(name[:6])}',
                                unsafe_allow_html=True)
@@ -119,11 +124,6 @@ def display_watchlist_sidebar():
                         st.markdown(f'<span style="color:{color};font-weight:600">{arrow}{change:.2f}%</span> '
                                    f'<span style="font-size:0.85rem">¥{item["price"]:.2f}</span>',
                                    unsafe_allow_html=True)
-
-                with col_del:
-                    if st.button("✕", key=f"wldel_{symbol}_{market}_{i}", help="移除"):
-                        remove_from_watchlist(symbol, market)
-                        st.rerun()
 
                 if error:
                     st.caption(f"⚠ {error}")
@@ -159,6 +159,10 @@ def display_watchlist_mini_panel(summaries):
     symbol = st.session_state.get('wl_view_symbol')
     market = st.session_state.get('wl_view_market')
 
+    if not symbol and summaries:
+        symbol = summaries[0].get('symbol')
+        market = summaries[0].get('market', 'CN')
+
     if not symbol:
         return
 
@@ -183,12 +187,7 @@ def display_watchlist_mini_panel(summaries):
     indicators = result.get('indicators', {})
     name = result.get('name', symbol)
 
-    col_close = st.columns([6, 1])
-    with col_close[1]:
-        if st.button("✕", key="wl_mini_close", help="关闭"):
-            st.session_state.wl_view_symbol = None
-            st.session_state.wl_view_market = None
-            st.rerun()
+    st.caption("自选详情")
 
     with st.container(border=True):
         if error:

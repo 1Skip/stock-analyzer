@@ -288,6 +288,18 @@ def test_analyze_page_keeps_top_watchlist_action():
     assert "加入自选" in source
 
 
+def test_sidebar_watchlist_shows_full_list_and_single_detail():
+    from pathlib import Path
+
+    source = Path("ui/sidebar.py").read_text(encoding="utf-8")
+
+    assert 'with st.expander(f"自选股（{len(watchlist)}）")' in source
+    assert "wl_pick_" in source
+    assert "wl_remove_" in source
+    assert 'st.markdown("##### 摘要")' in source
+    assert 'st.caption("自选详情")' in source
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 
