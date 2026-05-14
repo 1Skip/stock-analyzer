@@ -14,6 +14,19 @@ from chart_utils import classify_signal
 from ui.cached_data import quote_service
 
 
+def _open_watchlist_stock_in_main(symbol, market, name=None):
+    """打开自选股对应的个股分析主页面。"""
+    st.session_state.analyze_symbol = symbol
+    st.session_state.analyze_symbol_input = symbol
+    st.session_state.analyze_market = market
+    st.session_state.trigger_analysis = True
+    st.session_state.scroll_to_results = True
+    st.session_state.pending_main_page = "个股分析"
+    st.session_state.wl_view_symbol = symbol
+    st.session_state.wl_view_market = market
+    st.session_state.quick_match_caption = f"已从自选股打开：{name or symbol} ({symbol})"
+
+
 def display_market_temperature():
     """侧边栏大盘温度卡片 — 上证/深证/创业板实时涨跌"""
 
@@ -72,8 +85,7 @@ def display_watchlist_sidebar():
             with row[0]:
                 label = f"{symbol} · {name[:6]}" if name and name != symbol else symbol
                 if st.button(label, key=f"wl_pick_{symbol}_{market}_{index}", use_container_width=True):
-                    st.session_state.wl_view_symbol = symbol
-                    st.session_state.wl_view_market = market
+                    _open_watchlist_stock_in_main(symbol, market, name)
                     st.rerun()
             with row[1]:
                 if st.button("×", key=f"wl_remove_{symbol}_{market}_{index}", help="移除自选", use_container_width=True):
@@ -176,12 +188,7 @@ def display_watchlist_mini_panel():
             st.caption(f"入场: {hint_text}")
 
         if st.button("在主页查看完整分析 →", key="wl_mini_full", use_container_width=True):
-            st.session_state.analyze_symbol = symbol
-            st.session_state.analyze_market = market
-            st.session_state.trigger_analysis = True
-            st.session_state.scroll_to_results = True
-            st.session_state.wl_view_symbol = None
-            st.session_state.wl_view_market = None
+            _open_watchlist_stock_in_main(symbol, market, name)
             st.rerun()
 
 

@@ -140,6 +140,9 @@ def main():
 
     if "main_page" not in st.session_state:
         st.session_state.main_page = nav_items[0]
+    pending_main_page = st.session_state.pop("pending_main_page", None)
+    if pending_main_page in nav_items:
+        st.session_state.main_page = pending_main_page
 
     with st.sidebar:
         st.title("股票分析系统")

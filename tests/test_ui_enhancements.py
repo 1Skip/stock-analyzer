@@ -312,6 +312,29 @@ def test_sidebar_watchlist_shows_full_list_and_single_detail():
     assert 'st.caption("自选详情")' in source
 
 
+def test_sidebar_watchlist_click_opens_main_analysis():
+    from pathlib import Path
+
+    source = Path("ui/sidebar.py").read_text(encoding="utf-8")
+
+    assert "def _open_watchlist_stock_in_main" in source
+    assert "st.session_state.analyze_symbol = symbol" in source
+    assert "st.session_state.analyze_symbol_input = symbol" in source
+    assert "st.session_state.trigger_analysis = True" in source
+    assert 'st.session_state.pending_main_page = "个股分析"' in source
+    assert "_open_watchlist_stock_in_main(symbol, market, name)" in source
+
+
+def test_app_applies_pending_main_page_before_radio():
+    from pathlib import Path
+
+    source = Path("app.py").read_text(encoding="utf-8")
+
+    pending_index = source.index('pending_main_page = st.session_state.pop("pending_main_page", None)')
+    radio_index = source.index("page = st.radio(")
+    assert pending_index < radio_index
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 
