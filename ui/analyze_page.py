@@ -660,10 +660,10 @@ def analyze_stock_page():
     with st.form("search_form"):
         col_input, col_btn = st.columns([5, 1])
         with col_input:
+            st.caption("支持输入股票代码或名称，例如：000001、平安银行、贵州茅台、AAPL、00700")
             st.text_input(
                 "股票代码或名称",
                 placeholder="000001 或 平安银行 · AAPL · 00700",
-                label_visibility="collapsed",
                 key="analyze_symbol_input",
             )
         with col_btn:
