@@ -7,7 +7,13 @@ import re
 from config import CACHE_TTL_FUNDAMENTALS
 from data.cache import JsonFileCache
 from data.models import StockProfile
-from data.providers.akshare_provider import AkShareProvider, _find_profile_index_item, _is_missing_profile_value
+from data.providers.akshare_provider import (
+    AkShareProvider,
+    _find_profile_index_item,
+    _is_coarse_industry,
+    _is_missing_profile_value,
+    _prefer_industry,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -30,10 +36,14 @@ class FundamentalDataService:
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             cached = self._merge_profile_index_fields(cached)
-            if not _is_missing_profile_value(cached.get("industry")) and not _is_missing_profile_value(cached.get("listing_date")):
+            if (
+                not _is_missing_profile_value(cached.get("industry"))
+                and not _is_coarse_industry(cached.get("industry"))
+                and not _is_missing_profile_value(cached.get("listing_date"))
+            ):
                 return cached
             source = str(cached.get("source") or "")
-            if "腾讯行情" not in source:
+            if "腾讯行情" not in source and not _is_coarse_industry(cached.get("industry")):
                 return cached
 
         profile = self.provider.get_stock_profile(symbol)
@@ -66,7 +76,11 @@ class FundamentalDataService:
         symbol = str(payload.get("symbol") or "").zfill(6)
         if not re.fullmatch(r"\d{6}", symbol):
             return payload
-        if not _is_missing_profile_value(payload.get("industry")) and not _is_missing_profile_value(payload.get("listing_date")):
+        if (
+            not _is_missing_profile_value(payload.get("industry"))
+            and not _is_coarse_industry(payload.get("industry"))
+            and not _is_missing_profile_value(payload.get("listing_date"))
+        ):
             return payload
         index_item = _find_profile_index_item(self.get_stock_profile_index(), symbol, payload.get("name"))
         if not isinstance(index_item, dict):
@@ -75,6 +89,7 @@ class FundamentalDataService:
         for key in ("name", "industry", "listing_date", "total_shares", "float_shares", "market_cap", "float_market_cap", "pb"):
             if _is_missing_profile_value(merged.get(key)) and not _is_missing_profile_value(index_item.get(key)):
                 merged[key] = index_item[key]
+        merged["industry"] = _prefer_industry(merged.get("industry"), index_item.get("industry"))
         if "已切换" in str(payload.get("name") or "") and index_item.get("name"):
             merged["name"] = index_item["name"]
         source = str(merged.get("source") or "")

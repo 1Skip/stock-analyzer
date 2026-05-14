@@ -85,6 +85,21 @@ def _is_missing_profile_value(value: Any) -> bool:
         return False
 
 
+def _is_coarse_industry(value: Any) -> bool:
+    text = str(value or "").strip()
+    return re.sub(r"\s+", "", text) == "C制造业"
+
+
+def _prefer_industry(current: Any, candidate: Any) -> Any:
+    if _is_missing_profile_value(candidate):
+        return current
+    if _is_missing_profile_value(current) or _is_coarse_industry(current):
+        return candidate
+    if isinstance(current, str) and isinstance(candidate, str) and len(candidate.strip()) > len(current.strip()) + 2:
+        return candidate
+    return current
+
+
 def _find_profile_index_item(index: dict[str, dict[str, Any]], symbol: str, name: str | None = None) -> dict[str, Any] | None:
     item = index.get(symbol)
     if isinstance(item, dict):
@@ -332,7 +347,15 @@ class AkShareProvider:
 
     def _enrich_profile_from_cninfo(self, profile: StockProfile | None, timeout_seconds: float = 2) -> StockProfile | None:
         """用巨潮 profile 补充行业、上市日期等腾讯快行情没有的字段。"""
-        if profile is None or (profile.industry and profile.listing_date) or not AKSHARE_AVAILABLE:
+        if (
+            profile is None
+            or (
+                profile.industry
+                and profile.listing_date
+                and not _is_coarse_industry(profile.industry)
+            )
+            or not AKSHARE_AVAILABLE
+        ):
             return profile
         try:
             df = _run_with_timeout(
@@ -342,7 +365,7 @@ class AkShareProvider:
             if df is None or df.empty:
                 return profile
             row = df.iloc[0]
-            industry = str(row.get("所属行业") or "").strip() or profile.industry
+            industry = _prefer_industry(profile.industry, str(row.get("所属行业") or "").strip())
             listing_date = _format_listing_date(row.get("上市日期")) or profile.listing_date
             name = str(row.get("A股简称") or "").replace(" ", "").strip() or profile.name
             company_name = str(row.get("公司名称") or "").strip()
@@ -373,6 +396,7 @@ class AkShareProvider:
         if (
             profile is not None
             and not _is_missing_profile_value(profile.industry)
+            and not _is_coarse_industry(profile.industry)
             and not _is_missing_profile_value(profile.listing_date)
         ):
             return profile
@@ -405,7 +429,7 @@ class AkShareProvider:
                 **{
                     **profile.to_dict(),
                     "name": item_name if "已切换" in str(profile.name or "") else profile.name or item_name,
-                    "industry": item.get("industry") if _is_missing_profile_value(profile.industry) else profile.industry,
+                    "industry": _prefer_industry(profile.industry, item.get("industry")),
                     "listing_date": item.get("listing_date") if _is_missing_profile_value(profile.listing_date) else profile.listing_date,
                     "total_shares": item.get("total_shares") if _is_missing_profile_value(profile.total_shares) else profile.total_shares,
                     "float_shares": item.get("float_shares") if _is_missing_profile_value(profile.float_shares) else profile.float_shares,

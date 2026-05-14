@@ -131,6 +131,33 @@ class TestAkShareProvider:
         assert profile.listing_date == "1993-09-03"
         assert profile.source == "腾讯行情 + 巨潮资讯"
 
+    def test_cninfo_enrichment_replaces_coarse_industry(self, monkeypatch):
+        from data.providers import akshare_provider
+
+        provider = AkShareProvider()
+        base = StockProfile(
+            symbol="002066",
+            name="瑞泰科技",
+            industry="C 制造业",
+            listing_date="2006-08-23",
+            source="深交所A股",
+        )
+
+        def fake_cninfo(symbol):
+            assert symbol == "002066"
+            return pd.DataFrame([{
+                "A股简称": "瑞泰科技",
+                "所属行业": "非金属矿物制品业",
+                "上市日期": "2006-08-23",
+            }])
+
+        monkeypatch.setattr(akshare_provider.ak, "stock_profile_cninfo", fake_cninfo)
+
+        profile = provider._enrich_profile_from_cninfo(base)
+
+        assert profile.industry == "非金属矿物制品业"
+        assert profile.listing_date == "2006-08-23"
+
     def test_profile_index_merges_exchange_rows(self):
         provider = AkShareProvider()
         index = {}
@@ -319,6 +346,47 @@ class TestFundamentalDataService:
         assert result["industry"] == "电气机械和器材制造业"
         assert result["listing_date"] == "2024-01-26"
         assert "现代码920496" in result["source"]
+
+    def test_cached_coarse_industry_triggers_provider_refresh(self, tmp_path):
+        class FakeProvider:
+            def get_stock_profile(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "name": "瑞泰科技",
+                    "industry": "非金属矿物制品业",
+                    "listing_date": "2006-08-23",
+                    "source": "腾讯行情 + 巨潮资讯",
+                }
+
+            def get_stock_profile_index(self):
+                return {
+                    "002066": {
+                        "symbol": "002066",
+                        "name": "瑞泰科技",
+                        "industry": "C 制造业",
+                        "listing_date": "2006-08-23",
+                        "source": "深交所A股",
+                    }
+                }
+
+        cache = JsonFileCache("fundamentals_test_coarse_refresh", ttl_seconds=3600, cache_dir=tmp_path)
+        cache.set(
+            "CN:002066:profile",
+            {
+                "symbol": "002066",
+                "name": "瑞泰科技",
+                "industry": "C 制造业",
+                "listing_date": "2006-08-23",
+                "source": "深交所A股",
+            },
+        )
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_coarse_refresh", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("002066", "CN")
+
+        assert result["industry"] == "非金属矿物制品业"
+        assert result["listing_date"] == "2006-08-23"
 
     def test_missing_provider_profile_can_return_index_profile(self, tmp_path):
         class FakeProvider:
