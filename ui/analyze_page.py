@@ -112,10 +112,12 @@ def _build_short_history_notice(symbol, stock_name, data_len, period):
 
 def _render_stock_profile(profile):
     """渲染基础资料/估值卡片。"""
-    if not profile:
-        return
+    profile = profile or {"loading": True}
 
     with st.expander("基础资料 / 估值", expanded=False):
+        if profile.get("loading"):
+            st.caption("基础资料仍在加载或当前请求未及时返回；请稍等几秒后刷新/重新查询即可读取缓存。")
+
         col_industry, col_listing, col_market_cap, col_float_cap = st.columns(4)
         with col_industry:
             st.metric("行业", profile.get("industry") or "--")
@@ -785,9 +787,9 @@ def analyze_stock_page():
 
             try:
                 if 'profile' in futures:
-                    profile = futures['profile'].result(timeout=0.8)
+                    profile = futures['profile'].result(timeout=2.5)
             except Exception:
-                profile = None
+                profile = {"loading": True, "source": "基础资料服务"}
 
             try:
                 if 'extended_info' in futures:

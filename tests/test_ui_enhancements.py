@@ -266,6 +266,17 @@ def test_analyze_page_renders_market_news_section():
     assert "_render_market_news(extended_info)" in source
 
 
+def test_stock_profile_section_is_never_dropped_when_loading():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert 'profile = profile or {"loading": True}' in source
+    assert "基础资料仍在加载或当前请求未及时返回" in source
+    assert 'with st.expander("基础资料 / 估值", expanded=False)' in source
+    assert "profile = futures['profile'].result(timeout=2.5)" in source
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 
