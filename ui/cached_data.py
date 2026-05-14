@@ -67,7 +67,7 @@ def get_cached_stock_profile(symbol, market):
 def get_cached_stock_extended_info(symbol, market):
     """缓存财务摘要/资金流/新闻等扩展信息。"""
     try:
-        return stock_info_service.get_stock_extended_info(symbol, market)
+        return stock_info_service.get_stock_extended_info(symbol, market, include_deep_layers=False)
     except Exception:
         logger.warning("缓存层获取个股扩展信息失败: symbol=%s market=%s", symbol, market, exc_info=True)
         return None

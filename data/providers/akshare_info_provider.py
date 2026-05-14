@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -21,21 +22,59 @@ class AkShareInfoProvider:
 
     source_name = "AKShare"
 
-    def get_stock_extended_info(self, symbol: str, timeout_seconds: float = 4) -> dict[str, Any]:
+    def get_stock_extended_info(
+        self,
+        symbol: str,
+        timeout_seconds: float = 4,
+        include_deep_layers: bool = True,
+    ) -> dict[str, Any]:
         if not AKSHARE_AVAILABLE:
             return self._empty_payload(symbol, "AKShare 不可用")
 
-        return {
+        payload = {
             "symbol": symbol,
-            "financial": self.get_financial_summary(symbol, timeout_seconds=timeout_seconds),
-            "fund_flow": self.get_fund_flow_summary(symbol, timeout_seconds=timeout_seconds),
-            "news": self.get_news(symbol, timeout_seconds=timeout_seconds, limit=5),
-            "research": self.get_research_summary(symbol, timeout_seconds=timeout_seconds),
-            "risk_events": self.get_risk_events(symbol, timeout_seconds=timeout_seconds),
-            "sector_attribution": self.get_sector_attribution(symbol, timeout_seconds=timeout_seconds),
+            "financial": {},
+            "fund_flow": {},
+            "news": [],
+            "research": {"reports": [], "eps_consensus": {}},
+            "risk_events": {"lhb": {}, "restricted_release": [], "announcements": []},
+            "sector_attribution": {"industry": {}, "concepts": []},
             "source": self.source_name,
             "updated_at": utc_now_iso(),
         }
+        tasks = {
+            "financial": lambda: self.get_financial_summary(symbol, timeout_seconds=timeout_seconds),
+            "fund_flow": lambda: self.get_fund_flow_summary(symbol, timeout_seconds=timeout_seconds),
+            "news": lambda: self.get_news(symbol, timeout_seconds=timeout_seconds, limit=5),
+        }
+        if include_deep_layers:
+            tasks.update({
+                "research": lambda: self.get_research_summary(symbol, timeout_seconds=timeout_seconds),
+                "risk_events": lambda: self.get_risk_events(symbol, timeout_seconds=timeout_seconds),
+                "sector_attribution": lambda: self.get_sector_attribution(symbol, timeout_seconds=timeout_seconds),
+            })
+        executor = ThreadPoolExecutor(max_workers=len(tasks))
+        futures = {key: executor.submit(task) for key, task in tasks.items()}
+        deadline = time.monotonic() + max(timeout_seconds, 1)
+        try:
+            for key, future in futures.items():
+                remaining = max(deadline - time.monotonic(), 0)
+                if remaining <= 0:
+                    break
+                try:
+                    result = future.result(timeout=remaining)
+                    if result:
+                        payload[key] = result
+                except TimeoutError:
+                    logger.info("获取扩展信息部分超时 symbol=%s field=%s", symbol, key)
+                except Exception as exc:
+                    logger.info("获取扩展信息部分失败 symbol=%s field=%s error=%s", symbol, key, _brief_error(exc))
+        finally:
+            for future in futures.values():
+                if not future.done():
+                    future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+        return payload
 
     def get_financial_summary(self, symbol: str, timeout_seconds: float = 4) -> dict[str, Any]:
         try:
@@ -59,11 +98,19 @@ class AkShareInfoProvider:
 
     def get_news(self, symbol: str, timeout_seconds: float = 4, limit: int = 5) -> list[dict[str, Any]]:
         try:
-            df = run_with_timeout(lambda: ak.stock_news_em(symbol=symbol), timeout_seconds)
+            df = run_with_timeout(
+                lambda: self._fetch_stock_news_em(symbol),
+                timeout_seconds,
+            )
             return self._normalize_news(df, limit=limit)
         except Exception as exc:
             logger.info("获取个股新闻失败 symbol=%s error=%s", symbol, _brief_error(exc))
             return []
+
+    @staticmethod
+    def _fetch_stock_news_em(symbol: str) -> pd.DataFrame:
+        with pd.option_context("mode.string_storage", "python"):
+            return ak.stock_news_em(symbol=symbol)
 
     def get_research_summary(self, symbol: str, timeout_seconds: float = 4) -> dict[str, Any]:
         return {

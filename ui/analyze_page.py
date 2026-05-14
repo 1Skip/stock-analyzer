@@ -146,16 +146,15 @@ def _render_stock_profile(profile):
 
 def _render_extended_info(extended_info):
     """渲染财务摘要/资金流/新闻信息。"""
-    if not extended_info:
-        return
-
+    extended_info = extended_info or {"loading": True}
     financial = extended_info.get("financial") or {}
     fund_flow = extended_info.get("fund_flow") or {}
     news = extended_info.get("news") or []
-    if not financial and not fund_flow and not news and not extended_info.get("source") and not extended_info.get("error"):
-        return
 
     with st.expander("财务 / 资金 / 新闻", expanded=False):
+        if extended_info.get("loading"):
+            st.caption("扩展信息仍在加载或当前请求未及时返回；请稍等几秒后刷新/重新查询即可读取缓存。")
+
         metrics = financial.get("metrics") or {}
         if metrics:
             st.caption(f"财务报告期：{financial.get('period') or '--'}")
@@ -166,6 +165,8 @@ def _render_extended_info(extended_info):
                 st.metric("归母净利润", _format_money(metrics.get("归母净利润")))
             with col_cash:
                 st.metric("经营现金流", _format_money(metrics.get("经营现金流量净额")))
+        else:
+            st.caption("财务报告期：暂无")
 
         if fund_flow:
             st.caption(f"资金流日期：{fund_flow.get('date') or '--'}")
@@ -176,6 +177,8 @@ def _render_extended_info(extended_info):
                 st.metric("主力净占比", _format_optional_number(fund_flow.get("main_net_inflow_ratio"), "%"))
             with col_five:
                 st.metric("近5日主力净流入", _format_money(fund_flow.get("five_day_main_net_inflow")))
+        else:
+            st.caption("资金流日期：暂无")
 
         news_date = _latest_news_date(news)
         if news:
@@ -421,7 +424,8 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     st.write("")
 
     _render_stock_profile(profile)
-    _render_extended_info(extended_info)
+    if market == "CN":
+        _render_extended_info(extended_info)
     render_decision_dashboard(data, signals, quote, extended_info, profile)
 
     # ③ 分时图（仅A股）
@@ -756,15 +760,15 @@ def analyze_stock_page():
 
             try:
                 if 'profile' in futures:
-                    profile = futures['profile'].result(timeout=0.2)
+                    profile = futures['profile'].result(timeout=0.8)
             except Exception:
                 profile = None
 
             try:
                 if 'extended_info' in futures:
-                    extended_info = futures['extended_info'].result(timeout=0.2)
+                    extended_info = futures['extended_info'].result(timeout=2.5)
             except Exception:
-                extended_info = None
+                extended_info = {"loading": True, "source": "AKShare"}
         finally:
             for future in futures.values():
                 if not future.done():

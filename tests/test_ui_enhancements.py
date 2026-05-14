@@ -240,10 +240,20 @@ def test_extended_info_exposes_latest_news_date():
     from ui.analyze_page import _latest_news_date
 
     assert _latest_news_date([
-        {"title": "测试新闻", "date": "2026-05-14 09:30:00"},
         {"title": "旧新闻", "date": "2026-05-13 15:00:00"},
+        {"title": "测试新闻", "date": "2026-05-14 09:30:00"},
     ]) == "2026-05-14 09:30:00"
     assert _latest_news_date([]) == "--"
+
+
+def test_analyze_page_renders_extended_info_placeholder():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert 'extended_info = extended_info or {"loading": True}' in source
+    assert "扩展信息仍在加载或当前请求未及时返回" in source
+    assert 'extended_info = futures[\'extended_info\'].result(timeout=2.5)' in source
 
 
 def test_ai_analysis_ui_is_optional_auxiliary():

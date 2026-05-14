@@ -15,16 +15,22 @@ class StockInfoService:
         self.provider = provider or AkShareInfoProvider()
         self.cache = cache or JsonFileCache("stock_extended_info", CACHE_TTL_STOCK_EXTENDED_INFO)
 
-    def get_stock_extended_info(self, symbol: str, market: str = "CN") -> dict | None:
+    def get_stock_extended_info(
+        self,
+        symbol: str,
+        market: str = "CN",
+        include_deep_layers: bool = True,
+    ) -> dict | None:
         symbol = str(symbol or "").strip()
         if market != "CN" or not re.fullmatch(r"\d{6}", symbol):
             return None
 
-        cache_key = f"{market}:{symbol}:extended:v2"
+        layer_mode = "full" if include_deep_layers else "core"
+        cache_key = f"{market}:{symbol}:extended:v3:{layer_mode}"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
 
-        payload = self.provider.get_stock_extended_info(symbol)
+        payload = self.provider.get_stock_extended_info(symbol, include_deep_layers=include_deep_layers)
         self.cache.set(cache_key, payload)
         return payload
