@@ -173,7 +173,6 @@ def test_main_returns_immediately_after_page_change(monkeypatch):
     monkeypatch.setattr(app, "render_committee_status_card", lambda: None)
     monkeypatch.setattr(app, "display_market_temperature", lambda: None)
     monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: None)
-    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda: None)
     monkeypatch.setattr(app, "display_data_source_selector", lambda: None)
 
     app.main()
@@ -230,10 +229,9 @@ def test_page_switch_second_run_keeps_light_sidebar(monkeypatch):
     monkeypatch.setattr(app, "_render_main_page", lambda page: calls.append(f"render:{page}"))
     monkeypatch.setattr(app, "display_market_temperature", lambda: calls.append("market"))
     monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: calls.append("watchlist") or None)
-    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda: calls.append("mini"))
     monkeypatch.setattr(app, "display_data_source_selector", lambda: calls.append("source"))
 
     app.main()
 
-    assert calls == ["watchlist", "mini", "source", "render:股票对比", "market"]
+    assert calls == ["watchlist", "source", "render:股票对比", "market"]
     assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

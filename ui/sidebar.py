@@ -1,16 +1,14 @@
-"""侧边栏组件 — 大盘温度、自选股列表、mini 分析面板、数据源选择"""
+"""侧边栏组件 — 大盘温度、自选股列表、数据源选择"""
 import html
 import streamlit as st
 from config import (
     INDEX_WATCHLIST,
     INDEX_CACHE_TTL,
-    CACHE_TTL_WATCHLIST_MINI,
 )
 from watchlist import (
     remove_from_watchlist,
-    get_watchlist, get_watchlist_summary,
+    get_watchlist,
 )
-from chart_utils import classify_signal
 from ui.cached_data import quote_service
 
 
@@ -22,9 +20,6 @@ def _open_watchlist_stock_in_main(symbol, market, name=None):
     st.session_state.trigger_analysis = True
     st.session_state.scroll_to_results = True
     st.session_state.pending_main_page = "个股分析"
-    st.session_state.wl_view_symbol = symbol
-    st.session_state.wl_view_market = market
-    st.session_state.wl_view_name = name or symbol
     st.session_state.quick_match_caption = f"已从自选股打开：{name or symbol} ({symbol})"
 
 
@@ -77,7 +72,7 @@ def display_watchlist_sidebar():
             st.caption("暂无自选股")
             return
 
-        st.caption("点击股票查看下方详情，点右侧 × 可移除。")
+        st.caption("点击股票后，主页会自动显示对应个股分析；点右侧 × 可移除。")
         for index, raw_item in enumerate(watchlist):
             symbol = raw_item.get('symbol', '')
             name = raw_item.get('name') or symbol
@@ -93,105 +88,6 @@ def display_watchlist_sidebar():
                     remove_from_watchlist(symbol, market)
                     st.rerun()
 
-
-
-@st.cache_data(ttl=CACHE_TTL_WATCHLIST_MINI, show_spinner=False)
-def _cached_mini_analysis(symbol, market, name=None):
-    """获取单只股票简要分析数据（侧边栏 mini 面板用，5分钟缓存）"""
-    from watchlist import get_watchlist_summary
-    results = get_watchlist_summary([{'symbol': symbol, 'name': name or symbol, 'market': market}])
-    return results[0] if results else None
-
-
-def display_watchlist_mini_panel():
-    """在侧边栏显示选中自选股的 mini 分析面板"""
-    symbol = st.session_state.get('wl_view_symbol')
-    market = st.session_state.get('wl_view_market')
-    selected_name = st.session_state.get('wl_view_name')
-
-    if not symbol:
-        return
-
-    result = _cached_mini_analysis(symbol, market, selected_name)
-
-    if result is None:
-        return
-
-    error = result.get('error')
-    price = result.get('price')
-    change_pct = result.get('change_pct', 0) or 0
-    signal_text = result.get('signal_summary', '--')
-    hint_text = result.get('entry_hint', '--')
-    indicators = result.get('indicators', {})
-    name = result.get('name') or selected_name or symbol
-
-    st.caption("自选详情")
-
-    with st.container(border=True):
-        if error:
-            st.caption(f"⚠ {error}")
-            return
-
-        change_color = "#ff3b30" if change_pct >= 0 else "#34c759"
-        arrow_sign = "+" if change_pct >= 0 else ""
-        st.markdown(
-            f'<span style="font-weight:600">{html.escape(symbol)}</span> · {html.escape(name[:6])}'
-            f'&nbsp;&nbsp;<span style="color:{change_color};font-weight:600">¥{price:.2f} {arrow_sign}{change_pct:.2f}%</span>',
-            unsafe_allow_html=True
-        )
-
-        st.divider()
-
-        cls = classify_signal(signal_text)
-
-        st.markdown(
-            f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span>',
-            unsafe_allow_html=True
-        )
-
-        ind_lines = []
-        rsi = indicators.get('rsi')
-        if rsi is not None:
-            ind_lines.append(f"RSI: {rsi:.1f}")
-
-        macd = indicators.get('macd')
-        macd_signal = indicators.get('macd_signal')
-        if macd is not None and macd_signal is not None:
-            macd_status = "金叉" if macd > macd_signal else "死叉"
-            ind_lines.append(f"MACD: {macd_status}")
-
-        k, d, j = indicators.get('kdj_k'), indicators.get('kdj_d'), indicators.get('kdj_j')
-        if k is not None and d is not None and j is not None:
-            ind_lines.append(f"KDJ: K{k:.1f} D{d:.1f} J{j:.1f}")
-
-        boll_upper = indicators.get('boll_upper')
-        boll_lower = indicators.get('boll_lower')
-        boll_mid = indicators.get('boll_mid')
-        if boll_upper is not None and boll_lower is not None and price is not None:
-            band_range = boll_upper - boll_lower
-            if band_range > 0:
-                pos = (price - boll_lower) / band_range
-                if pos <= 0.05:
-                    boll_pos = "下轨附近"
-                elif pos <= 0.35:
-                    boll_pos = "偏下区间"
-                elif pos <= 0.65:
-                    boll_pos = "中轨附近"
-                elif pos <= 0.95:
-                    boll_pos = "偏上区间"
-                else:
-                    boll_pos = "上轨附近"
-                ind_lines.append(f"布林: {boll_pos}")
-
-        if ind_lines:
-            st.caption("  |  ".join(ind_lines))
-
-        if hint_text and hint_text != '--':
-            st.caption(f"入场: {hint_text}")
-
-        if st.button("在主页查看完整分析 →", key="wl_mini_full", use_container_width=True):
-            _open_watchlist_stock_in_main(symbol, market, name)
-            st.rerun()
 
 
 def display_data_source_selector():

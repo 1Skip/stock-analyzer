@@ -74,7 +74,6 @@ CACHE_TTL_INTRADAY = 60       # 分时图数据（1分钟）
 CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算
 CACHE_TTL_WATCHLIST_SUMMARY = 300  # 自选股摘要（5分钟）
-CACHE_TTL_WATCHLIST_MINI = 300     # 自选股 mini 面板（5分钟）
 
 # 板块推送配置
 SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "true").lower() == "true"

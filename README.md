@@ -149,7 +149,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `RUNTIME_CACHE_DIR`：运行缓存目录，默认 `.cache/`，用于离线行情缓存和主板股票池缓存。
 - `API_AUTH_KEY`：API 鉴权密钥；如果 API 服务不只监听本地地址，建议务必设置。
 - `CACHE_TTL_FUNDAMENTALS`：A股基础资料/估值缓存时间，默认 3600 秒。
-- `CACHE_TTL_WATCHLIST_SUMMARY` / `CACHE_TTL_WATCHLIST_MINI`：自选股侧边栏缓存时间，默认 300 秒。
+- `CACHE_TTL_WATCHLIST_SUMMARY`：自选股摘要/推送缓存时间，默认 300 秒。
 - `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
 - `SCHEDULE_TIME`：定时任务执行时间，默认 `15:30`。
 - `NOTIFY_CHANNELS`：推送渠道，逗号分隔，可选 `wechat`, `feishu`。

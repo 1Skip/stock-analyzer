@@ -301,15 +301,15 @@ def test_sidebar_watchlist_shows_full_list_and_single_detail():
     from pathlib import Path
 
     source = Path("ui/sidebar.py").read_text(encoding="utf-8")
-    list_section = source.split("def display_watchlist_sidebar", 1)[1].split("def _cached_mini_analysis", 1)[0]
 
     assert 'with st.expander(f"自选股（{len(watchlist)}）")' in source
     assert "wl_pick_" in source
     assert "wl_remove_" in source
-    assert "_cached_watchlist_summary(" not in list_section
-    assert "def display_watchlist_mini_panel():" in source
-    assert "result = _cached_mini_analysis(symbol, market, selected_name)" in source
-    assert 'st.caption("自选详情")' in source
+    assert "_cached_watchlist_summary(" not in source
+    assert "def display_watchlist_mini_panel" not in source
+    assert "_cached_mini_analysis" not in source
+    assert "自选详情" not in source
+    assert "在主页查看完整分析" not in source
 
 
 def test_sidebar_watchlist_click_opens_main_analysis():
@@ -322,19 +322,17 @@ def test_sidebar_watchlist_click_opens_main_analysis():
     assert "st.session_state.analyze_symbol_input = symbol" in source
     assert "st.session_state.trigger_analysis = True" in source
     assert 'st.session_state.pending_main_page = "个股分析"' in source
-    assert "st.session_state.wl_view_name = name or symbol" in source
     assert "_open_watchlist_stock_in_main(symbol, market, name)" in source
 
 
-def test_sidebar_mini_analysis_keeps_watchlist_name():
+def test_sidebar_watchlist_click_does_not_keep_mini_panel_state():
     from pathlib import Path
 
     source = Path("ui/sidebar.py").read_text(encoding="utf-8")
 
-    assert "def _cached_mini_analysis(symbol, market, name=None):" in source
-    assert "{'symbol': symbol, 'name': name or symbol, 'market': market}" in source
-    assert "selected_name = st.session_state.get('wl_view_name')" in source
-    assert "name = result.get('name') or selected_name or symbol" in source
+    assert "wl_view_symbol" not in source
+    assert "wl_view_market" not in source
+    assert "wl_view_name" not in source
 
 
 def test_app_applies_pending_main_page_before_radio():

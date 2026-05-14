@@ -24,7 +24,6 @@ from ui.committee_status import render_committee_status_card
 from ui.sidebar import (
     display_data_source_selector,
     display_market_temperature,
-    display_watchlist_mini_panel,
     display_watchlist_sidebar,
 )
 
@@ -157,7 +156,6 @@ def main():
         render_committee_status_card()
 
         display_watchlist_sidebar()
-        display_watchlist_mini_panel()
         display_data_source_selector()
 
         st.caption("风险提示：本系统仅供参考，不构成投资建议")
