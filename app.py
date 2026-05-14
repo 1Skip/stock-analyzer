@@ -78,6 +78,9 @@ def _clear_inactive_page_state(active_page):
 
 def _sync_active_page(page):
     """切换主页面时先清理旧页面状态，再 rerun 让前端卸载旧 DOM。"""
+    if "_active_page" not in st.session_state:
+        st.session_state["_active_page"] = page
+        return False
     if st.session_state.get("_active_page") == page:
         return False
     st.session_state["_active_page"] = page
@@ -154,9 +157,6 @@ def main():
         display_watchlist_mini_panel()
         display_data_source_selector()
 
-        if MARKET_INDEX_ENABLED:
-            display_market_temperature()
-
         st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
     if _sync_active_page(page):
@@ -165,6 +165,10 @@ def main():
     page_switch_pending = st.session_state.pop(_PAGE_SWITCH_PENDING_KEY, False)
 
     _render_main_page(page)
+
+    with st.sidebar:
+        if MARKET_INDEX_ENABLED:
+            display_market_temperature()
 
     if page_switch_pending:
         return

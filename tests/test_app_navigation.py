@@ -47,8 +47,7 @@ def test_light_sidebar_renders_before_main_page():
 
     assert watchlist_index < render_index
     assert source_index < render_index
-    assert watchlist_index < market_index
-    assert source_index < market_index
+    assert render_index < market_index
 
 
 def test_custom_css_does_not_keep_stale_pages_visible():
@@ -101,6 +100,19 @@ def test_page_switch_clears_inactive_state_and_reruns(monkeypatch):
     assert reruns == [True]
 
 
+def test_first_page_load_does_not_force_rerun():
+    import app
+    import streamlit as st
+
+    st.session_state.clear()
+
+    changed = app._sync_active_page("个股分析")
+
+    assert changed is False
+    assert st.session_state["_active_page"] == "个股分析"
+    assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state
+
+
 def test_page_switch_keeps_current_page_state(monkeypatch):
     import app
     import streamlit as st
@@ -147,6 +159,7 @@ def test_main_returns_immediately_after_page_change(monkeypatch):
             return False
 
     st.session_state.clear()
+    st.session_state["_active_page"] = "个股分析"
     st.session_state["main_page"] = "股票对比"
     calls = []
 
@@ -222,5 +235,5 @@ def test_page_switch_second_run_keeps_light_sidebar(monkeypatch):
 
     app.main()
 
-    assert calls == ["watchlist", "mini", "source", "market", "render:股票对比"]
+    assert calls == ["watchlist", "mini", "source", "render:股票对比", "market"]
     assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

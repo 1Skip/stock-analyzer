@@ -188,7 +188,7 @@ def _load_from_file():
     """从 JSON 文件加载自选股"""
     if os.path.exists(_WATCHLIST_FILE):
         try:
-            with open(_WATCHLIST_FILE, 'r', encoding='utf-8') as f:
+            with open(_WATCHLIST_FILE, 'r', encoding='utf-8-sig') as f:
                 return json.load(f)
         except Exception:
             return []

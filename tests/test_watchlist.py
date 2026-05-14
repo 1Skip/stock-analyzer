@@ -47,6 +47,13 @@ class TestInitWatchlist:
         assert len(st.session_state.watchlist) == 2
         assert st.session_state.watchlist[0]['symbol'] == '000001'
 
+    def test_loads_utf8_sig_file(self, temp_watchlist_file):
+        import watchlist
+        data = [{'symbol': '002609', 'name': '捷顺科技', 'market': 'CN'}]
+        temp_watchlist_file.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8-sig')
+        watchlist.init_watchlist()
+        assert st.session_state.watchlist[0]['symbol'] == '002609'
+
     def test_corrupted_file_returns_empty(self, temp_watchlist_file):
         import watchlist
         temp_watchlist_file.write_text('not valid json', encoding='utf-8')
