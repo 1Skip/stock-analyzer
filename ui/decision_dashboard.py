@@ -9,8 +9,20 @@ import streamlit as st
 from decision_committee import build_a_share_decision
 
 
-def build_decision_snapshot(data, signals: dict[str, Any], quote: dict[str, Any] | None, extended_info: dict[str, Any] | None = None) -> dict[str, Any]:
-    decision = build_a_share_decision(data=data, signals=signals, quote=quote, extended_info=extended_info)
+def build_decision_snapshot(
+    data,
+    signals: dict[str, Any],
+    quote: dict[str, Any] | None,
+    extended_info: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decision = build_a_share_decision(
+        data=data,
+        signals=signals,
+        quote=quote,
+        extended_info=extended_info,
+        profile=profile,
+    )
     score = decision["score"]
     tone = "bullish" if score >= 75 else "watch" if score >= 60 else "bearish" if score <= 35 else "neutral"
     return {
@@ -39,11 +51,17 @@ def _card(title: str, body: str, tone: str = "neutral") -> None:
     )
 
 
-def render_decision_dashboard(data, signals: dict[str, Any], quote: dict[str, Any] | None, extended_info: dict[str, Any] | None = None) -> None:
+def render_decision_dashboard(
+    data,
+    signals: dict[str, Any],
+    quote: dict[str, Any] | None,
+    extended_info: dict[str, Any] | None = None,
+    profile: dict[str, Any] | None = None,
+) -> None:
     if not signals or "error" in signals:
         return
 
-    snapshot = build_decision_snapshot(data, signals, quote, extended_info)
+    snapshot = build_decision_snapshot(data, signals, quote, extended_info, profile)
     st.markdown("#### 决策仪表盘")
     col_score, col_action, col_risk, col_catalyst = st.columns([1, 1.2, 1.6, 1.6])
     with col_score:
@@ -54,6 +72,7 @@ def render_decision_dashboard(data, signals: dict[str, Any], quote: dict[str, An
             "操作参考",
             f"<b>{html.escape(snapshot['action'])}</b><br>"
             f"<span>仓位：{html.escape(snapshot['position'])}</span><br>"
+            f"<span>风险：{html.escape(snapshot['risk_level'])} · 置信度：{snapshot['confidence']}%</span><br>"
             f"<span>{html.escape(snapshot['entry_hint'])}</span>",
             snapshot["tone"],
         )
@@ -73,6 +92,7 @@ def render_decision_dashboard(data, signals: dict[str, Any], quote: dict[str, An
                 body = (
                     f"<b>{html.escape(agent.get('stance', '--'))}</b> "
                     f"({agent.get('score_delta', 0):+})<br>"
+                    f"权重 {agent.get('weight', 0)} · 置信度 {agent.get('confidence', 0)}%<br>"
                     f"{html.escape(agent.get('summary', ''))}<br>{evidence}"
                 )
                 if warnings:

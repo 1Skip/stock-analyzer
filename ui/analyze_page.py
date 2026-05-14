@@ -400,7 +400,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     _render_stock_profile(profile)
     _render_extended_info(extended_info)
-    render_decision_dashboard(data, signals, quote, extended_info)
+    render_decision_dashboard(data, signals, quote, extended_info, profile)
 
     # ③ 分时图（仅A股）
     if market == "CN":

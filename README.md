@@ -37,7 +37,7 @@
 - **大盘温度** — 上证/深证/沪深300/北证50 实时跟踪
 - **自选股** — 持久化管理，支持 A股/港股/美股，侧边栏 mini 分析面板
 - **每日决策仪表盘** — CLI/定时导出 Markdown 日报，汇总大盘、自选股、推荐股、研报、公告、龙虎榜、解禁、板块归因和操作检查清单
-- **A股决策委员会** — 借鉴 TradingAgents 多角色框架，规则版五层 Agent 覆盖技术分析、资金情绪、基本面、题材板块、风险事件，统一输出评分、仓位、买卖点、风险警报和催化因素
+- **A股决策委员会** — 借鉴 TradingAgents 多角色框架，阶段 1 最终版五层 Agent 覆盖技术分析、资金情绪、基本面、题材板块、风险事件，按权重输出评分、置信度、仓位、买卖点、风险警报和催化因素
 - **定时调度** — 收盘后自动分析+推送（默认关闭）
 - **飞书机器人** — 对话式股票查询（默认关闭），支持 `/analysis 600519`、`分析贵州茅台`、`查 招商银行` 等代码/中文名称输入
 - **三种配色** — A股传统（红涨绿跌）/ 国际惯例（绿涨红跌）/ 色盲友好（蓝涨橙跌）
@@ -175,7 +175,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
 | `data/` | 新分层数据服务（providers/services/cache/health/models），逐步承接行情、基础资料、研报、信号、新闻、公告等接口 |
-| `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险五层 Agent） |
+| `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险五层 Agent，含权重、置信度、关键位） |
 | `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
@@ -217,7 +217,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - 风险事件层：补充龙虎榜、限售解禁和近 30 日个股公告，风险公告会进入风险警报。
 - 板块归因层：补充行业/概念归属、板块涨跌幅和简单题材原因。
 - 决策面板：输出决策评分、买卖点、风险警报、催化因素和操作检查清单。
-- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的五层 Agent 结论；当前阶段为规则版，不依赖外部 LLM，适合 GitHub Actions 和飞书定时推送，后续可叠加多空辩论和风控 Agent。
+- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的五层 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件细分评分；当前不依赖外部 LLM，适合 GitHub Actions 和飞书定时推送，后续可叠加多空辩论和风控 Agent。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。

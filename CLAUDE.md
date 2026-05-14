@@ -29,7 +29,7 @@
 | `main.py` | CLI 入口 | 交互式菜单 + argparse 命令行 |
 | `data_fetcher.py` | 数据获取 | A股: AKShare → 新浪 → yfinance；港股: yfinance K线 + 新浪实时；美股: 新浪 K线 → yfinance。带健康检查、离线缓存、超时保护、全量A股名称索引 |
 | `data/` | 分层数据服务 | providers/services/cache/health/models/runtime；已接入 A股基础资料/估值、行情服务接缝、财务摘要/资金流/新闻扩展信息 |
-| `decision_committee.py` | A股决策委员会 | 借鉴 TradingAgents 多角色框架，规则版五层 Agent：技术分析、资金情绪、基本面、题材板块、风险事件 |
+| `decision_committee.py` | A股决策委员会 | 借鉴 TradingAgents 多角色框架，阶段 1 最终版五层 Agent：技术分析、资金情绪、基本面、题材板块、风险事件；含权重、置信度、关键位和细分评分 |
 | `reports/` | 每日报告服务 | `DailyReportService` 汇总大盘、自选股、推荐股、研报、风险事件、板块归因、操作检查清单，`exporter.py` 导出 Markdown |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
 | `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多Agent协作（技术+风险+决策） |
@@ -65,7 +65,7 @@
 - **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；失败返回空结构，不影响主图表和技术指标
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 决策仪表盘，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
 - **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
-- **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1，使用规则版五层 Agent 产出评分、仓位、买卖点、风险警报和催化因素；个股页 `ui/decision_dashboard.py` 与日报 `DailyReportService` 共用同一套结论，当前不依赖外部 LLM，阶段 4 再叠加多空辩论/风控 Agent
+- **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用五层 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号；个股页 `ui/decision_dashboard.py` 与日报 `DailyReportService` 共用同一套结论，当前不依赖外部 LLM，阶段 4 再叠加多空辩论/风控 Agent
 - **日报定时推送**：`scheduler.py` 默认按“自选股摘要 → 固定四板块推荐 → 每日完整 Markdown 日报”执行；四板块为算力租赁、电力、苹果概念、特斯拉概念，默认每板块短线 2 只 + 长线 1 只；智能推荐和推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场观察，不做主板过滤；定时推送不再用全市场推荐股补充内容，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后定时推送被推荐股全市场扫描拖慢
 - **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify`，默认 `NOTIFY_CHANNELS=feishu`；配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送日报，配置 `STOCK_LIST`（逗号分隔，支持 A 股代码/中文名）或高级 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；中文名解析失败会直接报错，不再误用中文名查询行情
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过

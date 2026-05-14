@@ -123,7 +123,8 @@ class DailyReportService:
             lines.append(
                 f"- 自选股重点：`{top_watch.get('symbol')}` {top_watch.get('name', '')}，"
                 f"决策 {top_decision.get('action', '--')}，评分 {top_decision.get('score', '--')}，"
-                f"仓位 {top_decision.get('position', '--')}，风险 {top_decision.get('risk_level', '--')}"
+                f"仓位 {top_decision.get('position', '--')}，风险 {top_decision.get('risk_level', '--')}，"
+                f"置信度 {top_decision.get('confidence', '--')}%"
             )
         elif recommendations:
             item = recommendations[0]
@@ -159,10 +160,18 @@ class DailyReportService:
                 score = decision.get("score", self._decision_score(item))
                 lines.append(
                     f"- `{item['symbol']}` {item.get('name', '')}：决策评分 {score}；"
-                    f"建议 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}，风险 {decision.get('risk_level', '--')}；"
+                    f"建议 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}，"
+                    f"风险 {decision.get('risk_level', '--')}，置信度 {decision.get('confidence', '--')}%；"
                     f"现价 {self._fmt_number(item.get('price'))} ({self._fmt_pct(item.get('change_pct'))})；"
                     f"买卖点：{decision.get('entry_hint') or item.get('entry_hint', '--')}"
                 )
+                key_levels = decision.get("key_levels") or {}
+                if key_levels:
+                    lines.append(
+                        f"  - 关键位：支撑 {self._fmt_number(key_levels.get('support'))}，"
+                        f"中轨 {self._fmt_number(key_levels.get('mid'))}，"
+                        f"压力 {self._fmt_number(key_levels.get('resistance'))}"
+                    )
                 for point in (decision.get("bullish_points") or [])[:2]:
                     lines.append(f"  - 看多依据：{point}")
                 for risk in (decision.get("risk_alerts") or [])[:2]:
@@ -200,7 +209,8 @@ class DailyReportService:
                     for agent in (decision.get("agents") or [])[:5]:
                         lines.append(
                             f"  - {agent.get('name')}：{agent.get('stance')} "
-                            f"({agent.get('score_delta'):+})，{agent.get('summary')}"
+                            f"({agent.get('score_delta'):+})，权重 {agent.get('weight')}，"
+                            f"置信度 {agent.get('confidence')}%，{agent.get('summary')}"
                         )
                 metrics = financial.get("metrics") or {}
                 if metrics:
