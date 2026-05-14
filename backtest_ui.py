@@ -62,37 +62,38 @@ def backtest_page():
     PERIOD_OPTIONS = {"6个月 · 快速验证": "6mo", "1年 · 标准回测": "1y",
                       "2年 · 深度验证": "2y", "5年 · 长期验证": "5y"}
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        symbol_input = st.text_input("股票代码或名称", value="000001", help="A股可输入6位代码或股票名称")
-    with col2:
-        market_label = st.selectbox("市场", options=list(MARKET_MAP.keys()),
-                                    index=0, key="bt_market_label")
-        market = MARKET_MAP[market_label]
-    with col3:
-        period_label = st.selectbox("数据周期", options=list(PERIOD_OPTIONS.keys()),
-                                    index=1, help="6个月起可用，建议1年以上",
-                                    key="bt_period_label")
-        period = PERIOD_OPTIONS[period_label]
+    with st.form("backtest_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            symbol_input = st.text_input("股票代码或名称", value="000001", help="A股可输入6位代码或股票名称")
+        with col2:
+            market_label = st.selectbox("市场", options=list(MARKET_MAP.keys()),
+                                        index=0, key="bt_market_label")
+            market = MARKET_MAP[market_label]
+        with col3:
+            period_label = st.selectbox("数据周期", options=list(PERIOD_OPTIONS.keys()),
+                                        index=1, help="6个月起可用，建议1年以上",
+                                        key="bt_period_label")
+            period = PERIOD_OPTIONS[period_label]
 
-    # ---- 参数 ----
-    with st.expander("回测参数", expanded=False):
-        pc1, pc2, pc3, pc4 = st.columns(4)
-        with pc1:
-            eval_window = st.number_input("评估窗口（天）", min_value=5, max_value=60,
-                                          value=BACKTEST_EVAL_WINDOW)
-        with pc2:
-            stop_loss = st.number_input("止损线（%）", min_value=-20.0, max_value=0.0,
-                                        value=BACKTEST_STOP_LOSS, step=0.5)
-        with pc3:
-            take_profit = st.number_input("止盈线（%）", min_value=0.0, max_value=50.0,
-                                          value=BACKTEST_TAKE_PROFIT, step=0.5)
-        with pc4:
-            neutral_band = st.number_input("中性区间（%）", min_value=0.5, max_value=10.0,
-                                           value=BACKTEST_NEUTRAL_BAND, step=0.5)
+        with st.expander("回测参数", expanded=False):
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            with pc1:
+                eval_window = st.number_input("评估窗口（天）", min_value=5, max_value=60,
+                                              value=BACKTEST_EVAL_WINDOW)
+            with pc2:
+                stop_loss = st.number_input("止损线（%）", min_value=-20.0, max_value=0.0,
+                                            value=BACKTEST_STOP_LOSS, step=0.5)
+            with pc3:
+                take_profit = st.number_input("止盈线（%）", min_value=0.0, max_value=50.0,
+                                              value=BACKTEST_TAKE_PROFIT, step=0.5)
+            with pc4:
+                neutral_band = st.number_input("中性区间（%）", min_value=0.5, max_value=10.0,
+                                               value=BACKTEST_NEUTRAL_BAND, step=0.5)
 
-    # ---- 运行 ----
-    if st.button("开始回测", type="primary", use_container_width=True):
+        submitted = st.form_submit_button("开始回测", type="primary", use_container_width=True)
+
+    if submitted:
         symbol, stock_name = _resolve_backtest_target(symbol_input, market)
         if not symbol:
             st.error("请输入股票代码或名称")

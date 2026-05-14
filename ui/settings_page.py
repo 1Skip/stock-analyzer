@@ -72,7 +72,13 @@ def settings_page() -> None:
     st.divider()
     st.subheader("一键测试推送")
     default_channels = [channel for channel in ["feishu", "wechat"] if channel in NOTIFY_CHANNELS]
-    channels = st.multiselect("测试通道", ["feishu", "wechat"], default=default_channels or ["feishu"])
+    channel_labels = {"feishu": "飞书", "wechat": "企业微信"}
+    channels = st.multiselect(
+        "测试通道",
+        ["feishu", "wechat"],
+        default=default_channels or ["feishu"],
+        format_func=lambda channel: channel_labels.get(channel, channel),
+    )
     title = st.text_input("标题", value="股票分析系统推送测试")
     body = st.text_area("内容", value="如果你看到这条消息，说明 Webhook 推送已经打通。", height=120)
 

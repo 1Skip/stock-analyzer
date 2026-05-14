@@ -262,6 +262,8 @@ def test_analyze_page_uses_code_name_title_card():
     source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
 
     assert "个股分析标的" in source
+    assert "当前标的" in source
+    assert "def _render_current_stock_header" in source
     assert "display_name = stock_name if stock_name and stock_name != symbol else" in source
     assert "{html.escape(symbol)}{f\" · {html.escape(display_name)}\" if display_name else \"\"}" in source
 
@@ -363,6 +365,8 @@ def test_backtest_page_resolves_name_and_renders_target_header():
     assert "def _resolve_backtest_target" in source
     assert "resolve_cached_stock_input(query, market)" in source
     assert "股票代码或名称" in source
+    assert 'with st.form("backtest_form")' in source
+    assert 'st.form_submit_button("开始回测"' in source
     assert "回测标的" in source
     assert "_render_backtest_target_header(symbol, stock_name, market" in source
     assert "adapter.save_results(symbol, market, output)" in source
@@ -378,6 +382,8 @@ def test_settings_page_documents_wechat_push_setup():
     assert 'setx NOTIFY_CHANNELS "wechat"' in source
     assert 'setx WECHAT_WEBHOOK_URL "你的企业微信机器人Webhook"' in source
     assert 'setx NOTIFY_CHANNELS "feishu,wechat"' in source
+    assert 'channel_labels = {"feishu": "飞书", "wechat": "企业微信"}' in source
+    assert "format_func=lambda channel: channel_labels.get(channel, channel)" in source
     assert "WECHAT_WEBHOOK_URL" in workflow
     assert "vars.NOTIFY_CHANNELS" in workflow
 

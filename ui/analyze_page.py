@@ -413,6 +413,26 @@ def _render_watchlist_quick_action(symbol: str, market: str) -> None:
             st.warning(msg)
 
 
+def _render_current_stock_header(symbol: str, market: str, period: str, stock_name: str | None = None) -> None:
+    """在搜索区下方展示当前待分析标的，避免首屏标题空白。"""
+    display_name = stock_name if stock_name and stock_name != symbol else ""
+    market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+    st.markdown(
+        f"""
+        <div style="margin:8px 0 14px;padding:12px 14px;border-radius:12px;
+                    border:1px solid rgba(128,128,128,0.16);
+                    background:rgba(128,128,128,0.04);">
+          <div style="font-size:0.78rem;opacity:0.62;margin-bottom:3px;">当前标的</div>
+          <div style="font-size:1.05rem;font-weight:700;line-height:1.35;">
+            {html.escape(str(symbol or "--"))}{f" · {html.escape(str(display_name))}" if display_name else ""}
+          </div>
+          <div style="font-size:0.82rem;opacity:0.62;margin-top:3px;">{html.escape(market_label)} · {html.escape(str(period))}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
@@ -654,6 +674,19 @@ def analyze_stock_page():
     if submitted:
         st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
         st.session_state.trigger_analysis = True
+
+    current_header_name = st.session_state.get("analyzed_stock_name")
+    current_header_symbol = st.session_state.get("analyze_symbol_input", st.session_state.analyze_symbol)
+    if st.session_state.get("analyzed_data") is None:
+        target = _resolve_watchlist_target(current_header_symbol, st.session_state.analyze_market)
+        if target:
+            current_header_symbol, current_header_name = target
+    _render_current_stock_header(
+        current_header_symbol,
+        st.session_state.analyze_market,
+        st.session_state.analyze_period,
+        current_header_name,
+    )
 
     quick_match_caption = st.session_state.pop("quick_match_caption", None)
     if quick_match_caption:
