@@ -150,7 +150,7 @@ jobs:
           AI_DEBATE_MAX_SYMBOLS: ${{ vars.AI_DEBATE_MAX_SYMBOLS || '3' }}
           DAILY_REPORT_ENABLED: "true"
           DAILY_REPORT_PUSH_ENABLED: "true"
-          DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "false"
+          DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "true"
           DAILY_REPORT_DIR: reports/history
         run: python main.py --notify
 
