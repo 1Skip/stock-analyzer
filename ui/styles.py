@@ -451,31 +451,310 @@ CUSTOM_CSS = """
     }
 
     /* ===== 决策仪表盘 ===== */
-    .decision-card {
-        border-left: 4px solid var(--color-primary);
-        border-radius: 14px;
-        padding: 14px 16px;
-        min-height: 132px;
-        box-shadow: 0 8px 22px rgba(0,0,0,0.04);
-        border-top: 1px solid rgba(128,128,128,0.08);
-        border-right: 1px solid rgba(128,128,128,0.08);
-        border-bottom: 1px solid rgba(128,128,128,0.08);
+    .decision-hero {
+        display: flex;
+        gap: 18px;
+        align-items: center;
+        padding: 18px;
+        margin: 8px 0 14px 0;
+        border-radius: 22px;
+        border: 1px solid rgba(128,128,128,0.12);
+        background: linear-gradient(135deg, rgba(0,113,227,0.10), rgba(128,128,128,0.03));
+        box-shadow: 0 12px 34px rgba(0,0,0,0.06);
     }
-    .decision-card-title {
-        font-size: 0.82rem;
+    .decision-hero.bullish {
+        background: linear-gradient(135deg, rgba(255,59,48,0.14), rgba(255,149,0,0.06));
+    }
+    .decision-hero.bearish {
+        background: linear-gradient(135deg, rgba(52,199,89,0.14), rgba(128,128,128,0.04));
+    }
+    .decision-hero.watch {
+        background: linear-gradient(135deg, rgba(255,149,0,0.16), rgba(0,113,227,0.05));
+    }
+    .decision-score-ring {
+        width: 112px;
+        min-width: 112px;
+        height: 112px;
+        border-radius: 50%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.68);
+        border: 8px solid var(--color-primary);
+        box-shadow: inset 0 0 0 1px rgba(128,128,128,0.08), 0 10px 26px rgba(0,0,0,0.08);
+    }
+    .decision-score-ring.bullish { border-color: var(--color-rise); }
+    .decision-score-ring.bearish { border-color: var(--color-fall); }
+    .decision-score-ring.watch { border-color: var(--color-warning); }
+    .decision-score-ring strong {
+        font-size: 2.35rem;
+        line-height: 1;
+        letter-spacing: -0.05em;
+    }
+    .decision-score-ring span {
+        font-size: 0.75rem;
+        opacity: 0.55;
+        margin-top: 2px;
+    }
+    .decision-hero-main {
+        min-width: 0;
+        flex: 1;
+    }
+    .decision-eyebrow {
+        font-size: 0.72rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.52;
         font-weight: 800;
-        opacity: 0.68;
-        margin-bottom: 8px;
+        margin-bottom: 4px;
     }
-    .decision-card-body {
-        font-size: 0.94rem;
+    .decision-hero-title {
+        font-size: 1.55rem;
+        line-height: 1.2;
+        font-weight: 850;
+        letter-spacing: -0.04em;
+        margin-bottom: 6px;
+    }
+    .decision-hero-summary {
+        font-size: 0.92rem;
+        opacity: 0.78;
+        line-height: 1.55;
+        margin-bottom: 12px;
+    }
+    .decision-chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .decision-chip {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        border: 1px solid rgba(128,128,128,0.12);
+        background: rgba(128,128,128,0.08);
+    }
+    .decision-chip.bullish {
+        color: var(--color-rise);
+        background: rgba(255,59,48,0.10);
+        border-color: rgba(255,59,48,0.18);
+    }
+    .decision-chip.bearish {
+        color: var(--color-fall);
+        background: rgba(52,199,89,0.10);
+        border-color: rgba(52,199,89,0.18);
+    }
+    .decision-chip.watch {
+        color: var(--color-warning);
+        background: rgba(255,149,0,0.12);
+        border-color: rgba(255,149,0,0.20);
+    }
+    .decision-panel {
+        border-radius: 18px;
+        padding: 15px 16px;
+        min-height: 150px;
+        margin-bottom: 12px;
+        border: 1px solid rgba(128,128,128,0.10);
+        background: rgba(128,128,128,0.035);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.035);
+        overflow: hidden;
+    }
+    .decision-panel.compact {
+        min-height: 178px;
+    }
+    .decision-panel.bullish { border-left: 4px solid var(--color-rise); }
+    .decision-panel.bearish { border-left: 4px solid var(--color-fall); }
+    .decision-panel.watch { border-left: 4px solid var(--color-warning); }
+    .decision-panel.neutral { border-left: 4px solid var(--color-primary); }
+    .decision-panel-title {
+        font-size: 0.80rem;
+        font-weight: 850;
+        opacity: 0.66;
+        margin-bottom: 10px;
+    }
+    .decision-panel-body {
+        font-size: 0.92rem;
         line-height: 1.55;
     }
-    .decision-score {
-        font-size: 2.45rem;
-        line-height: 1;
-        font-weight: 800;
-        letter-spacing: -0.04em;
+    .decision-action {
+        font-size: 1.05rem;
+        font-weight: 850;
+        line-height: 1.45;
+        margin-bottom: 12px;
+    }
+    .decision-mini-note {
+        margin-top: 9px;
+        font-size: 0.78rem;
+        opacity: 0.60;
+    }
+    .decision-meter {
+        position: relative;
+        height: 22px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: rgba(128,128,128,0.10);
+        border: 1px solid rgba(128,128,128,0.08);
+    }
+    .decision-meter-fill {
+        height: 100%;
+        min-width: 4px;
+        border-radius: 999px;
+        background: var(--color-primary);
+    }
+    .decision-meter-fill.bullish { background: var(--color-rise); }
+    .decision-meter-fill.bearish { background: var(--color-fall); }
+    .decision-meter-fill.watch { background: var(--color-warning); }
+    .decision-meter span {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.72rem;
+        font-weight: 850;
+    }
+    .decision-level-row {
+        display: grid;
+        grid-template-columns: 64px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(128,128,128,0.08);
+    }
+    .decision-level-row:last-child {
+        border-bottom: none;
+    }
+    .decision-level-row b {
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+    }
+    .decision-level-row span:last-child {
+        font-size: 0.72rem;
+        opacity: 0.48;
+    }
+    .decision-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+    }
+    .decision-list li {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        min-width: 0;
+        word-break: break-word;
+    }
+    .decision-list-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 24px;
+        height: 20px;
+        border-radius: 999px;
+        font-size: 0.68rem;
+        font-weight: 850;
+        background: rgba(128,128,128,0.10);
+    }
+    .decision-list-icon.bullish {
+        color: var(--color-rise);
+        background: rgba(255,59,48,0.10);
+    }
+    .decision-list-icon.bearish {
+        color: var(--color-fall);
+        background: rgba(52,199,89,0.10);
+    }
+    .decision-list-icon.watch {
+        color: var(--color-warning);
+        background: rgba(255,149,0,0.12);
+    }
+    .agent-card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 12px;
+    }
+    .agent-card {
+        border-radius: 18px;
+        padding: 14px;
+        border: 1px solid rgba(128,128,128,0.10);
+        background: rgba(128,128,128,0.035);
+        border-left: 4px solid var(--color-primary);
+        box-shadow: 0 8px 22px rgba(0,0,0,0.035);
+    }
+    .agent-card.bullish { border-left-color: var(--color-rise); }
+    .agent-card.bearish { border-left-color: var(--color-fall); }
+    .agent-card-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: flex-start;
+        margin-bottom: 10px;
+    }
+    .agent-name {
+        font-weight: 850;
+        line-height: 1.25;
+    }
+    .agent-summary {
+        font-size: 0.76rem;
+        opacity: 0.58;
+        line-height: 1.45;
+        margin-top: 3px;
+    }
+    .agent-score-pill {
+        min-width: 42px;
+        text-align: center;
+        border-radius: 999px;
+        padding: 4px 8px;
+        font-size: 0.78rem;
+        font-weight: 850;
+        background: rgba(128,128,128,0.10);
+    }
+    .agent-score-pill.bullish {
+        color: var(--color-rise);
+        background: rgba(255,59,48,0.10);
+    }
+    .agent-score-pill.bearish {
+        color: var(--color-fall);
+        background: rgba(52,199,89,0.10);
+    }
+    .agent-meta-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+        margin-bottom: 10px;
+        font-size: 0.74rem;
+        opacity: 0.78;
+    }
+    .agent-meta-grid span {
+        border-radius: 10px;
+        padding: 6px 8px;
+        background: rgba(128,128,128,0.07);
+    }
+    .agent-detail-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 9px;
+        margin-top: 10px;
+        font-size: 0.80rem;
+    }
+    @media (max-width: 760px) {
+        .decision-hero {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+        .decision-score-ring {
+            width: 96px;
+            min-width: 96px;
+            height: 96px;
+        }
+        .agent-meta-grid {
+            grid-template-columns: 1fr;
+        }
     }
 </style>
 """.lstrip()

@@ -281,3 +281,15 @@ python main.py --schedule
   - `py -m pytest tests\test_decision_committee.py -q` ? 2 passed
   - `py -m pytest tests\test_daily_report.py tests\test_ui_enhancements.py tests\test_scheduler.py tests\test_notification.py -q` ? 62 passed
 
+## 追加记录：TradingAgents 借鉴阶段 2 - 个股页决策仪表盘最终版
+- 目标：把阶段 1 的五层 Agent 结论从“简单卡片”升级为个股页可直接使用的决策仪表盘，降低用户看结果时的信息跳跃感。
+- 修改内容：
+  - `ui/decision_dashboard.py` 重构为综合评分 Hero + 买卖点/仓位 + 关键价位 + 催化因素 + 看多/看空/风险三栏 + 五层 Agent 折叠明细。
+  - Agent 明细展示 `stance`、`score_delta`、`raw_score`、`weight`、`confidence`、`evidence`、`warnings`，方便追溯每一层为何加分或扣分。
+  - `ui/styles.py` 新增 `decision-hero`、`decision-score-ring`、`decision-panel`、`decision-chip`、`decision-level-row`、`agent-card-grid`、`agent-score-pill` 等样式，统一 Apple/Tesla 卡片风格并避免内容重叠。
+  - `tests/test_ui_enhancements.py` 补充阶段 2 字段和 CSS 类保护，确保后续改 UI 不丢关键展示结构。
+  - README 和 CLAUDE 同步记录阶段 2 最终版状态。
+- 验证：
+  - `py -m compileall ui\decision_dashboard.py ui\styles.py tests\test_ui_enhancements.py`
+  - `py -m pytest tests\test_ui_enhancements.py tests\test_decision_committee.py -q` → 15 passed
+

@@ -3,6 +3,7 @@
 import pandas as pd
 
 from ui.decision_dashboard import build_decision_snapshot
+from ui.styles import CUSTOM_CSS
 from ui.compare_page import (
     build_compare_insights,
     build_trend_dashboard_figure,
@@ -171,3 +172,45 @@ def test_decision_snapshot_scores_bullish_signal():
 
     assert snapshot["score"] >= 60
     assert snapshot["tone"] in {"watch", "bullish"}
+
+
+def test_decision_snapshot_exposes_stage2_dashboard_fields():
+    snapshot = build_decision_snapshot(
+        data=None,
+        signals={
+            "recommendation": "\u504f\u591a\u4fe1\u53f7",
+            "macd": "\u91d1\u53c9",
+            "kdj": "\u91d1\u53c9",
+            "boll": "\u4e2d\u8f68\u4e0a\u65b9",
+        },
+        quote={"price": 12.34, "change": 1.8},
+        extended_info={
+            "fund_flow": {"main_net_inflow": 12000000, "main_net_inflow_ratio": 2.1},
+            "research": {"reports": [{"title": "\u7814\u62a5"}]},
+            "sector_attribution": {
+                "industry": {"name": "\u7535\u529b", "change_pct": 1.2},
+                "concepts": [{"name": "\u7eff\u7535", "change_pct": 2.5}],
+            },
+        },
+    )
+
+    assert snapshot["confidence"] > 0
+    assert snapshot["position"]
+    assert snapshot["entry_hint"]
+    assert snapshot["key_levels"]["price"] == 12.34
+    assert len(snapshot["agents"]) == 5
+    for agent in snapshot["agents"]:
+        assert {"name", "weight", "raw_score", "score_delta", "confidence", "evidence", "warnings"} <= set(agent)
+
+
+def test_decision_dashboard_stage2_css_classes_exist():
+    for class_name in [
+        "decision-hero",
+        "decision-score-ring",
+        "decision-panel",
+        "decision-chip",
+        "decision-level-row",
+        "agent-card-grid",
+        "agent-score-pill",
+    ]:
+        assert class_name in CUSTOM_CSS
