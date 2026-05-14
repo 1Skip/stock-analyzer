@@ -742,6 +742,96 @@ CUSTOM_CSS = """
         margin-top: 10px;
         font-size: 0.80rem;
     }
+
+    /* ===== A股决策委员会状态卡片 ===== */
+    .committee-status-card {
+        margin: 14px 0 10px 0;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid rgba(128,128,128,0.12);
+        background: linear-gradient(145deg, rgba(0,113,227,0.10), rgba(128,128,128,0.035));
+        box-shadow: 0 10px 26px rgba(0,0,0,0.045);
+    }
+    .committee-status-eyebrow {
+        font-size: 0.66rem;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        opacity: 0.50;
+        margin-bottom: 2px;
+    }
+    .committee-status-title {
+        font-size: 1rem;
+        font-weight: 850;
+        letter-spacing: -0.03em;
+    }
+    .committee-status-subtitle {
+        font-size: 0.74rem;
+        opacity: 0.62;
+        margin: 3px 0 10px 0;
+    }
+    .committee-stage-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .committee-stage-row {
+        display: grid;
+        grid-template-columns: 48px 1fr auto;
+        align-items: center;
+        gap: 6px;
+        padding: 7px 8px;
+        border-radius: 12px;
+        background: rgba(128,128,128,0.07);
+        font-size: 0.72rem;
+    }
+    .committee-stage-row span {
+        font-weight: 850;
+        opacity: 0.58;
+    }
+    .committee-stage-row strong {
+        font-weight: 760;
+        min-width: 0;
+    }
+    .committee-stage-row em {
+        border-radius: 999px;
+        padding: 2px 6px;
+        font-style: normal;
+        font-size: 0.66rem;
+        font-weight: 850;
+        color: var(--color-primary);
+        background: rgba(0,113,227,0.10);
+    }
+    .committee-stage-row.done em {
+        color: var(--color-rise);
+        background: rgba(255,59,48,0.10);
+    }
+    .committee-stage-row.inactive em {
+        color: var(--color-warning);
+        background: rgba(255,149,0,0.12);
+    }
+    .committee-stage-row.active em {
+        color: var(--color-rise);
+        background: rgba(255,59,48,0.12);
+    }
+    .committee-status-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 5px;
+        margin-top: 10px;
+        font-size: 0.72rem;
+    }
+    .committee-status-grid span {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding-top: 5px;
+        border-top: 1px solid rgba(128,128,128,0.10);
+        opacity: 0.78;
+    }
+    .committee-status-grid b {
+        font-weight: 850;
+    }
     @media (max-width: 760px) {
         .decision-hero {
             align-items: flex-start;

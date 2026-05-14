@@ -20,6 +20,7 @@ from ui.hot_stocks_page import hot_stocks_page
 from ui.recommend_page import recommended_stocks_page
 from ui.report_history_page import report_history_page
 from ui.settings_page import settings_page
+from ui.committee_status import render_committee_status_card
 from ui.sidebar import (
     display_data_source_selector,
     display_market_temperature,
@@ -147,6 +148,7 @@ def main():
             key="main_page",
             format_func=lambda item: f"{nav_emoji.get(item, '')} {item}",
         )
+        render_committee_status_card()
 
     if _sync_active_page(page):
         return

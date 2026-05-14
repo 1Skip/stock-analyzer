@@ -308,3 +308,13 @@ python main.py --schedule
 - 验证：
   - `py -m pytest tests\test_ai_analysis.py tests\test_daily_report.py tests\test_notification.py -q` → 82 passed
 
+## 追加记录：网页端展示阶段 1-5 状态卡片
+- 背景：阶段 3-5 主要影响日报、飞书和 GitHub Actions，用户在网页端不容易看出变化。
+- 修改内容：
+  - 新增 `ui/committee_status.py`，构建轻量状态数据并渲染侧边栏“ A股决策委员会 ”状态卡片。
+  - `app.py` 在功能菜单下固定展示该卡片，所有页面都能看到阶段 1-5、飞书、Actions 和 LLM 辩论开关状态。
+  - `ui/styles.py` 新增 `committee-status-card`、`committee-stage-row` 等样式，保持 Apple/Tesla 卡片风格。
+  - README、CLAUDE 同步说明该状态卡片。
+- 验证：
+  - `tests/test_app_navigation.py` 覆盖状态卡片接入、五阶段数量和 CSS 类。
+

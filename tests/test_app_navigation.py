@@ -31,6 +31,7 @@ def test_app_shell_uses_main_page_container():
     assert "_render_main_page(page)" in source
     assert "options=nav_items" in source
     assert "key=\"main_page\"" in source
+    assert "render_committee_status_card()" in source
 
 
 def test_main_page_renders_before_slow_sidebar_widgets():
@@ -50,6 +51,26 @@ def test_main_page_renders_before_slow_sidebar_widgets():
 def test_custom_css_does_not_keep_stale_pages_visible():
     assert ".stale-element" not in CUSTOM_CSS
     assert "[data-stale=\"true\"]" not in CUSTOM_CSS
+
+
+def test_committee_status_card_exposes_all_phases(monkeypatch):
+    monkeypatch.setattr("config.FEISHU_WEBHOOK_URL", "")
+    monkeypatch.setattr("config.NOTIFY_CHANNELS", [])
+    monkeypatch.setattr("config.AI_DEBATE_ENABLED", False)
+    monkeypatch.setattr("config.AI_API_KEY", None)
+
+    from ui.committee_status import build_committee_status
+
+    status = build_committee_status()
+
+    assert len(status["stages"]) == 5
+    assert all(item["done"] for item in status["stages"])
+    assert status["debate_enabled"] is False
+
+
+def test_committee_status_css_exists():
+    assert "committee-status-card" in CUSTOM_CSS
+    assert "committee-stage-row" in CUSTOM_CSS
 
 
 def test_page_switch_clears_inactive_state_and_reruns(monkeypatch):
