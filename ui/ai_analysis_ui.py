@@ -87,7 +87,7 @@ def _show_setup_form(symbol="", period=""):
 
 
 def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model):
-    """显示 AI 分析按钮和结果"""
+    """显示 AI 辅助解读按钮和结果。"""
     cache_key = f"ai_result_{symbol}_{period}"
     multi_cache_key = f"ai_multi_result_{symbol}_{period}"
 
@@ -96,12 +96,14 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
     if multi_cache_key not in st.session_state:
         st.session_state[multi_cache_key] = None
 
-    use_multi = st.checkbox("多Agent协作模式（技术+风险+决策三Agent协作）",
+    st.caption("主结论以 A股决策委员会 为准；AI 仅用于解释技术指标、补充风险和梳理语言，不作为独立买卖建议。")
+
+    use_multi = st.checkbox("启用补充协作模式（技术+风险+决策三Agent解释）",
                             key=f"ai_multi_{symbol}_{period}")
 
     col_btn, col_info = st.columns([1, 3])
     with col_btn:
-        if st.button("AI 分析", type="primary", key=f"ai_btn_{symbol}_{period}"):
+        if st.button("生成辅助解读", type="primary", key=f"ai_btn_{symbol}_{period}"):
             error_msg = None
             try:
                 snapshot = build_indicator_snapshot(data, signals, symbol, stock_name)
@@ -159,7 +161,7 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
             st.markdown("#### 操作参考")
             st.markdown(_clean(suggestion))
 
-        st.caption(f"模型: {model_label} | 以上为 AI 自动分析，不构成投资建议")
+        st.caption(f"模型: {model_label} | AI 辅助解读，仅作解释补充，不构成投资建议")
 
     # 多Agent 结果渲染
     multi_result = st.session_state[multi_cache_key]
@@ -225,23 +227,25 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
                     for p in points:
                         st.markdown(f"- {p}")
 
-        st.caption(f"模型: {model_label} | 多Agent协作分析 | 不构成投资建议")
+        st.caption(f"模型: {model_label} | 补充协作解读 | 不构成投资建议")
 
 
 def display_ai_analysis_card(data, signals, symbol, stock_name, period):
-    """AI 智能解读 — 独立区域，与交易信号平级"""
+    """AI 辅助解读 — 默认折叠的可选解释区。"""
     st.divider()
-    st.subheader("AI 智能解读")
+    st.subheader("AI 辅助解读（可选）")
+    st.caption("默认不参与 A股决策委员会评分；需要自然语言解释时再展开使用。")
 
     key = st.session_state.get("ai_api_key") or AI_API_KEY
     model = st.session_state.get("ai_model") or AI_MODEL
 
     if not key:
-        with st.expander("设置 API Key", expanded=True):
+        with st.expander("设置 API Key 后启用 AI 辅助解读", expanded=False):
             _show_setup_form()
         return
 
-    _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
+    with st.expander("展开 AI 辅助解读", expanded=False):
+        _show_analysis_ui(data, signals, symbol, stock_name, period, key, model)
 
-    if st.checkbox("更换配置", key=f"ai_change_cfg_{symbol}_{period}"):
+    if st.checkbox("更换 AI 配置", key=f"ai_change_cfg_{symbol}_{period}"):
         _show_setup_form(symbol, period)

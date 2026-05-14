@@ -75,6 +75,22 @@ def _format_money(value):
     return _format_large_number(value)
 
 
+def _latest_news_date(news):
+    """返回新闻列表中的最新可见日期。"""
+    candidates = []
+    for item in news or []:
+        date_text = str(item.get("date") or item.get("publish_time") or "").strip()
+        if date_text:
+            parsed = pd.to_datetime(date_text, errors="coerce")
+            candidates.append((parsed, date_text))
+    parsed_candidates = [candidate for candidate in candidates if pd.notna(candidate[0])]
+    if parsed_candidates:
+        return max(parsed_candidates, key=lambda candidate: candidate[0])[1]
+    if candidates:
+        return candidates[0][1]
+    return "--"
+
+
 def _build_short_history_notice(symbol, stock_name, data_len, period):
     """生成短历史数据提示。"""
     if data_len >= 30:
@@ -136,7 +152,7 @@ def _render_extended_info(extended_info):
     financial = extended_info.get("financial") or {}
     fund_flow = extended_info.get("fund_flow") or {}
     news = extended_info.get("news") or []
-    if not financial and not fund_flow and not news:
+    if not financial and not fund_flow and not news and not extended_info.get("source") and not extended_info.get("error"):
         return
 
     with st.expander("财务 / 资金 / 新闻", expanded=False):
@@ -161,8 +177,14 @@ def _render_extended_info(extended_info):
             with col_five:
                 st.metric("近5日主力净流入", _format_money(fund_flow.get("five_day_main_net_inflow")))
 
+        news_date = _latest_news_date(news)
         if news:
-            st.caption("相关新闻")
+            st.caption(f"新闻最新：{news_date}")
+        else:
+            st.caption("新闻最新：暂无（当前数据源未返回该股相关新闻）")
+
+        if news:
+            st.caption("相关新闻：")
             for item in news[:5]:
                 title = html.escape(str(item.get("title", "")))
                 date = html.escape(str(item.get("date", "")))
@@ -427,7 +449,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     # ④ 交易信号
     display_signals(signals)
 
-    # ⑤ AI 智能解读
+    # ⑤ AI 辅助解读（可选）
     if AI_ENABLED:
         display_ai_analysis_card(data, signals, symbol, stock_name, period)
 

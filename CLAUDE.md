@@ -20,7 +20,7 @@
 | `ui/styles.py` | CSS 样式定义 | ~207行，Apple × Tesla 设计体系，app.py 导入注入 |
 | `ui/cached_data.py` | 缓存数据层 | quote_service/fundamental_service 实例 + 股票数据/实时行情/分时/名称解析等 @st.cache_data 函数 |
 | `ui/charts.py` | 图表函数 | K线/RSI/KDJ/BOLL/分时图，Plotly 实现 |
-| `ui/ai_analysis_ui.py` | AI 分析 UI | API 配置表单 + 单Agent/多Agent 结果渲染 |
+| `ui/ai_analysis_ui.py` | AI 辅助解读 UI | 默认折叠，可选启用；API 配置表单 + 单Agent/多Agent 解释补充 |
 | `ui/sidebar.py` | 侧边栏组件 | 大盘温度、自选股列表、mini 分析面板、数据源选择 |
 | `ui/committee_status.py` | 决策委员会状态卡片 | 侧边栏展示阶段 1-5、飞书、Actions、LLM 辩论开关 |
 | `ui/analyze_page.py` | 个股分析页面 | 输入表单 + 股票名称搜索 + Enter键搜索 + 信号/指标卡片 + 图表渲染 |
@@ -34,7 +34,7 @@
 | `ui/decision_dashboard.py` | 个股页决策仪表盘 | 阶段 2 最终版展示层：综合评分 Hero、仓位/买卖点、关键价位、催化因素、看多/看空/风险列表和五层 Agent 折叠明细 |
 | `reports/` | 每日报告服务 | `DailyReportService` 汇总大盘、自选股、推荐股、研报、风险事件、板块归因、操作检查清单，`exporter.py` 导出 Markdown |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
-| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持技术/风险/决策协作和A股多空研究员+风控经理辩论层 |
+| `ai_analysis.py` | AI 辅助解读 | 提取指标快照 → LLM 翻译为自然语言解释，支持技术/风险/决策协作和A股多空研究员+风控经理辩论层；主结论以 A股决策委员会 为准 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义，多因子评分(0-100)，支持 CN/US/HK |
@@ -64,7 +64,7 @@
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
 - **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻
 - **基础资料/估值**：A股个股分析页并行调用 `get_cached_stock_profile()`，AKShare 获取股票简称/行业/上市日期/股本/市值，腾讯行情补 PE/PB/换手率，辅助数据最多短暂等待，不阻塞 K线主流程
-- **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；失败返回空结构，不影响主图表和技术指标
+- **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；财务展示报告期，资金展示资金流日期，新闻展示最新新闻时间或“暂无”状态；失败返回空结构，不影响主图表和技术指标
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 决策仪表盘，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
 - **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
 - **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用五层 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示；日报 `DailyReportService` 已完成阶段 3 最终版决策仪表盘输出；`ai_analysis.py` 已完成阶段 4 最终版可选 LLM 多空辩论/风控经理层，未配置 `AI_API_KEY` 时自动跳过

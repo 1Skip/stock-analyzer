@@ -13,10 +13,10 @@
 - **MA** — 5/10/20/60 四条均线
 - **分时图** — 当日价格走势 + 均价线 + 昨收参考线
 
-### AI 智能解读
-- 将技术指标快照交给 LLM 翻译为自然语言分析
+### AI 辅助解读（可选）
+- 将技术指标快照交给 LLM 翻译为自然语言解释，默认折叠，不参与 A股决策委员会评分
 - 自动检测 API Key 类型（OpenAI / Gemini / Claude / DeepSeek / 通义千问 等 10+ 模型）
-- 可选开启/关闭
+- 主结论以 A股决策委员会 为准，AI 仅用于解释和补充风险表述
 
 ### 通知推送
 - 企业微信机器人 Webhook
@@ -174,7 +174,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/compare_page.py` | 股票对比页面（多股票指标横向对比 + 走势决策仪表盘） |
 | `ui/sidebar.py` | 侧边栏组件（大盘温度 + 自选股 + mini 面板） |
 | `ui/committee_status.py` | A股决策委员会状态卡片（阶段 1-5、飞书、Actions、LLM 辩论开关） |
-| `ui/ai_analysis_ui.py` | AI 分析 UI（API 配置 + 单/多Agent 结果渲染） |
+| `ui/ai_analysis_ui.py` | AI 辅助解读 UI（默认折叠 + API 配置 + 单/多Agent 解释补充） |
 | `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
@@ -182,7 +182,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险五层 Agent，含权重、置信度、关键位） |
 | `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
-| `ai_analysis.py` | AI 智能解读（技术+风险+决策，多空研究员+风控经理辩论层） |
+| `ai_analysis.py` | AI 辅助解读（技术+风险解释，多空研究员+风控经理辩论层） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
 | `chart_utils.py` | 共享图表工具 |
 | `stock_recommendation.py` | 热门排行 + 板块排行 + 评分推荐 |
@@ -208,7 +208,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `data/runtime.py`：统一第三方接口超时包装和非关键数据源安全调用。
 
 当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。行情相关入口（K线、实时行情、分时、批量报价、大盘指数、数据源选择）已先收敛到 `QuoteDataService`，后续可以继续把新浪、腾讯、AKShare 等源拆成独立 provider。
-个股页还会以非阻塞方式加载“财务 / 资金 / 新闻”折叠区；这些扩展信息失败时不会影响 K 线和技术分析主流程。
+个股页还会以非阻塞方式加载“财务 / 资金 / 新闻”折叠区；财务展示报告期、资金展示资金流日期，新闻展示最新新闻时间或“暂无”状态；这些扩展信息失败时不会影响 K 线和技术分析主流程。
 
 ### 每日分析报告
 

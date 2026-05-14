@@ -234,3 +234,23 @@ def test_agent_card_html_is_not_markdown_code_block():
     assert html.startswith("<div")
     assert "\n    <div" not in html
     assert 'class="agent-card neutral"' in html
+
+
+def test_extended_info_exposes_latest_news_date():
+    from ui.analyze_page import _latest_news_date
+
+    assert _latest_news_date([
+        {"title": "测试新闻", "date": "2026-05-14 09:30:00"},
+        {"title": "旧新闻", "date": "2026-05-13 15:00:00"},
+    ]) == "2026-05-14 09:30:00"
+    assert _latest_news_date([]) == "--"
+
+
+def test_ai_analysis_ui_is_optional_auxiliary():
+    from pathlib import Path
+
+    source = Path("ui/ai_analysis_ui.py").read_text(encoding="utf-8")
+
+    assert "AI 辅助解读（可选）" in source
+    assert "主结论以 A股决策委员会 为准" in source
+    assert 'with st.expander("展开 AI 辅助解读", expanded=False)' in source
