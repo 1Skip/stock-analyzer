@@ -288,6 +288,15 @@ def test_analyze_page_keeps_top_watchlist_action():
     assert "加入自选" in source
 
 
+def test_analyze_page_does_not_rewrite_instantiated_symbol_input():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    after_widget = source.split('key="analyze_symbol_input"', 1)[1]
+
+    assert "st.session_state.analyze_symbol_input = symbol" not in after_widget
+
+
 def test_sidebar_watchlist_shows_full_list_and_single_detail():
     from pathlib import Path
 

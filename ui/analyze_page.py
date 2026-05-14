@@ -763,7 +763,6 @@ def analyze_stock_page():
                     resolved_name = result[1]
                     symbol = result[0]
                     st.session_state.analyze_symbol = symbol
-                    st.session_state.analyze_symbol_input = symbol
                     st.caption(f"已识别: {resolved_name} ({symbol})")
                 else:
                     st.error(f"未找到匹配「{symbol}」的股票，请使用6位代码搜索或检查名称是否正确")
@@ -776,7 +775,6 @@ def analyze_stock_page():
                     resolved_name = result[1]
                     symbol = result[0]
                     st.session_state.analyze_symbol = symbol
-                    st.session_state.analyze_symbol_input = symbol
                     st.caption(f"已识别: {resolved_name} ({symbol})")
 
         is_valid, err_msg = _validate_symbol(symbol, market)
