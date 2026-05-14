@@ -329,6 +329,18 @@ python main.py --schedule
 - 验证：
   - `tests/test_ui_enhancements.py` 新增新闻最新时间和 AI 可选辅助定位的源码保护测试。
 
+## 追加记录：A股基础资料全量索引兜底
+- 背景：部分股票基础资料接口会返回行业/上市日期为 `-`、`----` 或空值，北交所存量股票还存在旧代码切换到 `920` 号段的情况，导致用户看到“有些股票行业、上市日期显示为 ----”。
+- 处理：
+  - `AkShareProvider.get_stock_profile_index()` 构建 A 股全量基础资料索引，合并东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表。
+  - `FundamentalDataService` 新增索引缓存，优先用全量索引补齐行业、上市日期、股本、市值、PB 等字段。
+  - 将 `-`、`--`、`----` 等占位值识别为缺失值，不再误判为已有有效资料。
+  - 对北交所“已切换”旧代码按股票名称匹配现代码资料，例如 `831396` 可补齐为许昌智能现代码 `920496` 的行业和上市日期。
+- 验证：
+  - `py -m compileall data\providers\akshare_provider.py data\services\fundamental_service.py tests\test_data_services.py`
+  - `py -m pytest tests\test_data_services.py -q` → 33 passed
+  - 真实抽样：`000001`、`002609`、`688981`、`920000`、`831396` 均能返回行业和上市日期；`831396` 来源显示 `北交所(现代码920496)`。
+
 
 ## ??????????? / ?????
 - ?????????????????????????/????????????????????

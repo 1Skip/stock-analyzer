@@ -60,6 +60,7 @@
 - **CLI 图表** → Matplotlib（在 `chart_plotter.py` 中），静态图片
 - **超时保护**：所有数据获取调用通过 `concurrent.futures.ThreadPoolExecutor` 包装超时（stock_info 5s / K线数据 20s / 实时行情 3s / 全市场快照 8s），超时后降级到已获取数据继续渲染
 - **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；同时提交 `data/static/stock_name_index.json` 作为 GitHub Actions/离线兜底，不再靠“报一个补一个”
+- **A股基础资料兜底**：`FundamentalDataService` 会构建并缓存全量基础资料索引，组合东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表；当个股基础接口只返回 `-`、`----` 或北交所“已切换”旧代码时，按代码/股票名称补齐行业、上市日期、股本、市值和 PB
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
 - **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻/市场资讯；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异

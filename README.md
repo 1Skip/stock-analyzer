@@ -202,6 +202,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 
 - `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料、财务摘要、资金流、东方财富个股新闻、财新数据通市场资讯、腾讯行情估值补充，以及旧行情获取器适配层 `LegacyQuoteProvider`；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异。
 - `data/services/`：业务接口层，目前提供 `FundamentalDataService.get_stock_profile()`、`QuoteDataService` 和 `StockInfoService`。
+- 基础资料兜底：`FundamentalDataService` 会缓存 A 股全量基础资料索引，组合东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表，用于补齐行业、上市日期、股本、市值、PB 等缺失字段；北交所存量股票切换 `920` 号段时，会按股票名称匹配现代码资料，避免“报一个补一个”。
 - `data/cache.py`：统一 JSON 文件缓存，默认落到 `.cache/`。
 - `data/health.py`：数据源健康状态登记，后续用于多源 fallback。
 - `data/models.py`：标准数据模型，当前包含 `StockProfile`。

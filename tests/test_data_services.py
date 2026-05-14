@@ -3,6 +3,7 @@ import pandas as pd
 
 from data.cache import JsonFileCache
 from data.health import SourceHealthRegistry
+from data.models import StockProfile
 from data.providers.akshare_provider import AkShareProvider
 from data.providers.akshare_info_provider import AkShareInfoProvider
 from data.runtime import safe_call
@@ -130,6 +131,72 @@ class TestAkShareProvider:
         assert profile.listing_date == "1993-09-03"
         assert profile.source == "腾讯行情 + 巨潮资讯"
 
+    def test_profile_index_merges_exchange_rows(self):
+        provider = AkShareProvider()
+        index = {}
+
+        provider._merge_szse_profile_rows(index, pd.DataFrame([{
+            "A股代码": "000001",
+            "A股简称": "平安银行",
+            "A股上市日期": "1991-04-03",
+            "A股总股本": "19,405,918,198",
+            "A股流通股本": "19,405,685,028",
+            "所属行业": "J 金融业",
+        }]), "深交所A股")
+        provider._merge_bse_profile_rows(index, pd.DataFrame([{
+            "证券代码": "831396",
+            "证券简称": "许昌智能",
+            "上市日期": "2024-01-26",
+            "所属行业": "电气机械和器材制造业",
+        }]), "北交所")
+
+        assert index["000001"]["industry"] == "J 金融业"
+        assert index["000001"]["listing_date"] == "1991-04-03"
+        assert index["831396"]["industry"] == "电气机械和器材制造业"
+        assert index["831396"]["listing_date"] == "2024-01-26"
+
+    def test_profile_enrichment_matches_renumbered_bse_stock_by_name(self, monkeypatch):
+        provider = AkShareProvider()
+
+        monkeypatch.setattr(provider, "get_stock_profile_index", lambda timeout_seconds=5: {
+            "920496": {
+                "symbol": "920496",
+                "name": "许昌智能",
+                "industry": "电气机械和器材制造业",
+                "listing_date": "2024-01-26",
+                "source": "北交所",
+            }
+        })
+
+        profile = provider._enrich_profile_from_full_index(
+            StockProfile(symbol="831396", name="许昌智能(已切换)", industry="-", source="腾讯行情"),
+            symbol="831396",
+        )
+
+        assert profile.name == "许昌智能"
+        assert profile.industry == "电气机械和器材制造业"
+        assert profile.listing_date == "2024-01-26"
+        assert "现代码920496" in profile.source
+
+    def test_profile_enrichment_returns_index_profile_when_realtime_missing(self, monkeypatch):
+        provider = AkShareProvider()
+
+        monkeypatch.setattr(provider, "get_stock_profile_index", lambda timeout_seconds=5: {
+            "000001": {
+                "symbol": "000001",
+                "name": "平安银行",
+                "industry": "J 金融业",
+                "listing_date": "1991-04-03",
+                "source": "深交所A股",
+            }
+        })
+
+        profile = provider._enrich_profile_from_full_index(None, symbol="000001")
+
+        assert profile.symbol == "000001"
+        assert profile.industry == "J 金融业"
+        assert profile.listing_date == "1991-04-03"
+
     def test_health_registry_marks_unhealthy_after_threshold(self):
         registry = SourceHealthRegistry(fail_threshold=2)
 
@@ -170,6 +237,114 @@ class TestFundamentalDataService:
         service = FundamentalDataService(provider=object(), cache=cache)
 
         assert service.get_stock_profile("AAPL", "US") is None
+
+    def test_get_stock_profile_fills_missing_fields_from_full_index(self, tmp_path):
+        class FakeProvider:
+            def get_stock_profile(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "name": "许昌智能",
+                    "source": "腾讯行情",
+                }
+
+            def get_stock_profile_index(self):
+                return {
+                    "831396": {
+                        "symbol": "831396",
+                        "industry": "电气机械和器材制造业",
+                        "listing_date": "2024-01-26",
+                        "source": "北交所",
+                    }
+                }
+
+        cache = JsonFileCache("fundamentals_test_fill", ttl_seconds=3600, cache_dir=tmp_path)
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_fill", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("831396", "CN")
+
+        assert result["industry"] == "电气机械和器材制造业"
+        assert result["listing_date"] == "2024-01-26"
+        assert "北交所" in result["source"]
+
+    def test_cached_profile_fills_missing_fields_from_full_index(self, tmp_path):
+        class FakeProvider:
+            def get_stock_profile(self, symbol):
+                raise AssertionError("缓存缺字段时应先用全量索引补齐")
+
+            def get_stock_profile_index(self):
+                return {
+                    "000001": {
+                        "symbol": "000001",
+                        "industry": "J 金融业",
+                        "listing_date": "1991-04-03",
+                        "source": "深交所A股",
+                    }
+                }
+
+        cache = JsonFileCache("fundamentals_test_cached_fill", ttl_seconds=3600, cache_dir=tmp_path)
+        cache.set("CN:000001:profile", {"symbol": "000001", "name": "平安银行", "source": "腾讯行情"})
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_cached_fill", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("000001", "CN")
+
+        assert result["industry"] == "J 金融业"
+        assert result["listing_date"] == "1991-04-03"
+
+    def test_cached_profile_matches_renumbered_bse_stock_by_name(self, tmp_path):
+        class FakeProvider:
+            def get_stock_profile(self, symbol):
+                raise AssertionError("缓存应通过全量索引按名称补齐")
+
+            def get_stock_profile_index(self):
+                return {
+                    "920496": {
+                        "symbol": "920496",
+                        "name": "许昌智能",
+                        "industry": "电气机械和器材制造业",
+                        "listing_date": "2024-01-26",
+                        "source": "北交所",
+                    }
+                }
+
+        cache = JsonFileCache("fundamentals_test_renumbered_fill", ttl_seconds=3600, cache_dir=tmp_path)
+        cache.set("CN:831396:profile", {"symbol": "831396", "name": "许昌智能(已切换)", "industry": "-", "source": "腾讯行情"})
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_renumbered_fill", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("831396", "CN")
+
+        assert result["name"] == "许昌智能"
+        assert result["industry"] == "电气机械和器材制造业"
+        assert result["listing_date"] == "2024-01-26"
+        assert "现代码920496" in result["source"]
+
+    def test_missing_provider_profile_can_return_index_profile(self, tmp_path):
+        class FakeProvider:
+            def get_stock_profile(self, symbol):
+                return None
+
+            def get_stock_profile_index(self):
+                return {
+                    "000001": {
+                        "symbol": "000001",
+                        "name": "平安银行",
+                        "industry": "J 金融业",
+                        "listing_date": "1991-04-03",
+                        "source": "深交所A股",
+                    }
+                }
+
+        cache = JsonFileCache("fundamentals_test_index_only", ttl_seconds=3600, cache_dir=tmp_path)
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_index_only", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("000001", "CN")
+
+        assert result["name"] == "平安银行"
+        assert result["industry"] == "J 金融业"
+        assert result["listing_date"] == "1991-04-03"
 
 
 class TestQuoteDataService:

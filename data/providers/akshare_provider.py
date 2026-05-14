@@ -62,6 +62,46 @@ def _brief_error(error: Exception | str) -> str:
 _run_with_timeout = run_with_timeout
 
 
+def _append_source(source: str | None, suffix: str) -> str:
+    source = source or ""
+    if suffix in source:
+        return source
+    return f"{source} + {suffix}" if source else suffix
+
+
+def _normalize_stock_name(name: Any) -> str:
+    text = re.sub(r"\s+", "", str(name or "")).replace("Ａ", "A").replace("Ｂ", "B")
+    return re.sub(r"[\(（][^()（）]*(?:已切换|已退市|退市|转板)[^()（）]*[\)）]$", "", text)
+
+
+def _is_missing_profile_value(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip() in {"", "-", "--", "----", "None", "nan"}
+    try:
+        return bool(pd.isna(value))
+    except Exception:
+        return False
+
+
+def _find_profile_index_item(index: dict[str, dict[str, Any]], symbol: str, name: str | None = None) -> dict[str, Any] | None:
+    item = index.get(symbol)
+    if isinstance(item, dict):
+        return item
+
+    normalized_name = _normalize_stock_name(name)
+    if not normalized_name:
+        return None
+
+    for index_item in index.values():
+        if not isinstance(index_item, dict):
+            continue
+        if _normalize_stock_name(index_item.get("name")) == normalized_name:
+            return index_item
+    return None
+
+
 class AkShareProvider:
     """封装 AKShare 原始接口，向 service 返回标准模型。"""
 
@@ -82,11 +122,139 @@ class AkShareProvider:
             profile = self._normalize_stock_profile(symbol, df)
             profile = self._enrich_valuation_from_tencent(profile, timeout_seconds=2)
             self.health.mark_success(self.source_name)
-            return profile
+            return self._enrich_profile_from_full_index(profile, symbol=symbol, timeout_seconds=timeout_seconds)
         except Exception as exc:
             self.health.mark_failure(self.source_name, exc)
             logger.warning("AKShare 获取个股基础资料失败，降级到腾讯行情: symbol=%s error=%s", symbol, _brief_error(exc))
-            return self._get_stock_profile_from_tencent(symbol, timeout_seconds=2)
+            return self._enrich_profile_from_full_index(
+                self._get_stock_profile_from_tencent(symbol, timeout_seconds=2),
+                symbol=symbol,
+                timeout_seconds=timeout_seconds,
+            )
+
+    def get_stock_profile_index(self, timeout_seconds: float = 12) -> dict[str, dict[str, Any]]:
+        """构建 A 股全量基础资料索引，用于行业/上市日期兜底。"""
+        if not AKSHARE_AVAILABLE:
+            return {}
+
+        index: dict[str, dict[str, Any]] = {}
+        self._merge_eastmoney_profile_index(index, timeout_seconds=timeout_seconds)
+        self._merge_exchange_profile_index(index, timeout_seconds=timeout_seconds)
+        return index
+
+    def _merge_eastmoney_profile_index(self, index: dict[str, dict[str, Any]], timeout_seconds: float = 12) -> None:
+        fields = "f12,f14,f20,f21,f23,f26,f38,f39,f100"
+        params = {
+            "pn": 1,
+            "pz": 10000,
+            "po": 1,
+            "np": 1,
+            "ut": "bd1d9ddb04089700cf9c27f6f7426281",
+            "fltt": 2,
+            "invt": 2,
+            "fid": "f12",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+            "fields": fields,
+        }
+        hosts = ["https://40.push2.eastmoney.com", "https://push2.eastmoney.com", "https://82.push2.eastmoney.com"]
+        last_error: Exception | None = None
+        for host in hosts:
+            try:
+                response = requests.get(
+                    f"{host}/api/qt/clist/get",
+                    params=params,
+                    headers=_HTTP_HEADERS,
+                    timeout=timeout_seconds,
+                )
+                response.raise_for_status()
+                rows = ((response.json().get("data") or {}).get("diff") or [])
+                for row in rows:
+                    symbol = str(row.get("f12") or "").zfill(6)
+                    if not re.fullmatch(r"\d{6}", symbol):
+                        continue
+                    item = index.setdefault(symbol, {"symbol": symbol, "market": "CN"})
+                    item.update({
+                        "symbol": symbol,
+                        "name": str(row.get("f14") or "").replace(" ", "").strip() or item.get("name"),
+                        "industry": str(row.get("f100") or "").strip() or item.get("industry"),
+                        "listing_date": _format_listing_date(row.get("f26")) or item.get("listing_date"),
+                        "market_cap": _safe_float(row.get("f20")) or item.get("market_cap"),
+                        "float_market_cap": _safe_float(row.get("f21")) or item.get("float_market_cap"),
+                        "total_shares": _safe_float(row.get("f38")) or item.get("total_shares"),
+                        "float_shares": _safe_float(row.get("f39")) or item.get("float_shares"),
+                        "pb": _safe_float(row.get("f23")) or item.get("pb"),
+                        "source": _append_source(item.get("source"), "东方财富全量快照"),
+                    })
+                if rows:
+                    return
+            except Exception as exc:
+                last_error = exc
+                continue
+        if last_error:
+            logger.debug("东方财富全量基础资料索引失败: %s", _brief_error(last_error), exc_info=True)
+
+    def _merge_exchange_profile_index(self, index: dict[str, dict[str, Any]], timeout_seconds: float = 12) -> None:
+        tasks = [
+            ("上交所主板", lambda: ak.stock_info_sh_name_code(symbol="主板A股"), self._merge_sse_profile_rows),
+            ("上交所科创板", lambda: ak.stock_info_sh_name_code(symbol="科创板"), self._merge_sse_profile_rows),
+            ("深交所A股", lambda: ak.stock_info_sz_name_code(symbol="A股列表"), self._merge_szse_profile_rows),
+            ("北交所", lambda: ak.stock_info_bj_name_code(), self._merge_bse_profile_rows),
+        ]
+        per_call_timeout = max(min(timeout_seconds, 8), 3)
+        for source_name, fetcher, merger in tasks:
+            try:
+                df = _run_with_timeout(fetcher, per_call_timeout)
+                merger(index, df, source_name)
+            except Exception as exc:
+                logger.debug("%s 基础资料索引失败: %s", source_name, _brief_error(exc), exc_info=True)
+
+    def _merge_sse_profile_rows(self, index: dict[str, dict[str, Any]], df: pd.DataFrame, source_name: str) -> None:
+        if df is None or df.empty:
+            return
+        for _, row in df.iterrows():
+            symbol = str(row.get("证券代码") or "").zfill(6)
+            if not re.fullmatch(r"\d{6}", symbol):
+                continue
+            item = index.setdefault(symbol, {"symbol": symbol, "market": "CN"})
+            item.update({
+                "name": str(row.get("证券简称") or row.get("公司简称") or "").replace(" ", "").strip() or item.get("name"),
+                "listing_date": _format_listing_date(row.get("上市日期")) or item.get("listing_date"),
+                "source": _append_source(item.get("source"), source_name),
+            })
+
+    def _merge_szse_profile_rows(self, index: dict[str, dict[str, Any]], df: pd.DataFrame, source_name: str) -> None:
+        if df is None or df.empty:
+            return
+        for _, row in df.iterrows():
+            symbol = str(row.get("A股代码") or "").zfill(6)
+            if not re.fullmatch(r"\d{6}", symbol):
+                continue
+            item = index.setdefault(symbol, {"symbol": symbol, "market": "CN"})
+            item.update({
+                "name": str(row.get("A股简称") or "").replace(" ", "").strip() or item.get("name"),
+                "industry": str(row.get("所属行业") or "").strip() or item.get("industry"),
+                "listing_date": _format_listing_date(row.get("A股上市日期")) or item.get("listing_date"),
+                "total_shares": _safe_float(str(row.get("A股总股本") or "").replace(",", "")) or item.get("total_shares"),
+                "float_shares": _safe_float(str(row.get("A股流通股本") or "").replace(",", "")) or item.get("float_shares"),
+                "source": _append_source(item.get("source"), source_name),
+            })
+
+    def _merge_bse_profile_rows(self, index: dict[str, dict[str, Any]], df: pd.DataFrame, source_name: str) -> None:
+        if df is None or df.empty:
+            return
+        for _, row in df.iterrows():
+            symbol = str(row.get("证券代码") or "").zfill(6)
+            if not re.fullmatch(r"\d{6}", symbol):
+                continue
+            item = index.setdefault(symbol, {"symbol": symbol, "market": "CN"})
+            item.update({
+                "name": str(row.get("证券简称") or "").replace(" ", "").strip() or item.get("name"),
+                "industry": str(row.get("所属行业") or "").strip() or item.get("industry"),
+                "listing_date": _format_listing_date(row.get("上市日期")) or item.get("listing_date"),
+                "total_shares": _safe_float(row.get("总股本")) or item.get("total_shares"),
+                "float_shares": _safe_float(row.get("流通股本")) or item.get("float_shares"),
+                "source": _append_source(item.get("source"), source_name),
+            })
 
     def _get_stock_profile_from_tencent(self, symbol: str, timeout_seconds: float = 2) -> StockProfile | None:
         """腾讯快行情 fallback：至少保证名称、价格、估值和市值可用。"""
@@ -194,6 +362,63 @@ class AkShareProvider:
             )
         except Exception as exc:
             logger.debug("巨潮资料补充失败 symbol=%s error=%s", profile.symbol, _brief_error(exc), exc_info=True)
+            return profile
+
+    def _enrich_profile_from_full_index(
+        self,
+        profile: StockProfile | None,
+        symbol: str | None = None,
+        timeout_seconds: float = 5,
+    ) -> StockProfile | None:
+        if (
+            profile is not None
+            and not _is_missing_profile_value(profile.industry)
+            and not _is_missing_profile_value(profile.listing_date)
+        ):
+            return profile
+        try:
+            index = self.get_stock_profile_index(timeout_seconds=max(timeout_seconds, 12))
+            lookup_symbol = str(symbol or (profile.symbol if profile else "") or "").zfill(6)
+            item = _find_profile_index_item(index, lookup_symbol, profile.name if profile else None)
+            if not item:
+                return profile
+            item_name = item.get("name")
+            if profile is None:
+                return StockProfile(
+                    symbol=lookup_symbol,
+                    name=item_name,
+                    market="CN",
+                    industry=item.get("industry"),
+                    listing_date=item.get("listing_date"),
+                    total_shares=item.get("total_shares"),
+                    float_shares=item.get("float_shares"),
+                    market_cap=item.get("market_cap"),
+                    float_market_cap=item.get("float_market_cap"),
+                    pb=item.get("pb"),
+                    source=_append_source(str(item.get("source") or ""), "A股全量基础资料索引"),
+                    updated_at=utc_now_iso(),
+                )
+            source_suffix = str(item.get("source") or "A股全量基础资料索引")
+            if item.get("symbol") and item.get("symbol") != profile.symbol:
+                source_suffix = f"{source_suffix}(现代码{item.get('symbol')})"
+            return StockProfile(
+                **{
+                    **profile.to_dict(),
+                    "name": item_name if "已切换" in str(profile.name or "") else profile.name or item_name,
+                    "industry": item.get("industry") if _is_missing_profile_value(profile.industry) else profile.industry,
+                    "listing_date": item.get("listing_date") if _is_missing_profile_value(profile.listing_date) else profile.listing_date,
+                    "total_shares": item.get("total_shares") if _is_missing_profile_value(profile.total_shares) else profile.total_shares,
+                    "float_shares": item.get("float_shares") if _is_missing_profile_value(profile.float_shares) else profile.float_shares,
+                    "market_cap": item.get("market_cap") if _is_missing_profile_value(profile.market_cap) else profile.market_cap,
+                    "float_market_cap": item.get("float_market_cap") if _is_missing_profile_value(profile.float_market_cap) else profile.float_market_cap,
+                    "pb": item.get("pb") if _is_missing_profile_value(profile.pb) else profile.pb,
+                    "source": _append_source(profile.source, source_suffix),
+                    "updated_at": utc_now_iso(),
+                }
+            )
+        except Exception as exc:
+            fallback_symbol = symbol or (profile.symbol if profile else "")
+            logger.debug("A股全量基础资料索引补充失败 symbol=%s error=%s", fallback_symbol, _brief_error(exc), exc_info=True)
             return profile
 
     def _normalize_stock_profile(self, symbol: str, df: pd.DataFrame) -> StockProfile | None:
