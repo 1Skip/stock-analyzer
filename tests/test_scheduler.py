@@ -242,6 +242,7 @@ class TestWatchlistPriority:
         monkeypatch.setattr('scheduler._load_watchlist_from_file', lambda: watchlist_data)
         monkeypatch.setattr('scheduler.NOTIFY_ENABLED', True)
         monkeypatch.setattr('scheduler.SECTOR_PUSH_ENABLED', True)
+        monkeypatch.setattr('scheduler.DAILY_REPORT_ENABLED', False)
         mock_push = MagicMock(return_value={'feishu': True})
         monkeypatch.setattr('scheduler.send_push', mock_push)
 
@@ -265,6 +266,11 @@ class TestWatchlistPriority:
                 'entry_hint': '回踩关注',
             }],
         )
+        fake_info_service = MagicMock()
+        fake_info_service.get_stock_extended_info.return_value = {
+            "fund_flow": {"main_net_inflow": 1000000, "main_net_inflow_ratio": 1.1},
+        }
+        monkeypatch.setattr('data.services.info_service.StockInfoService', lambda: fake_info_service)
 
         from scheduler import run_scheduled_analysis
         run_scheduled_analysis()
@@ -273,6 +279,9 @@ class TestWatchlistPriority:
         body = mock_push.call_args.args[1]
         assert "平安银行" in body
         assert "板块龙头推荐" in body
+        assert "交易计划卡片" in body
+        assert "风控防御看板" in body
+        assert "资金博弈溯源" in body
 
 
 class TestSectorPushIntegration:

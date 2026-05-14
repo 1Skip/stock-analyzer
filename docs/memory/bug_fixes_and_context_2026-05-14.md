@@ -29,6 +29,8 @@ type: project
 - 智能推荐 / 推荐股推送仅推荐沪深主板股票；热门板块、行业排行、概念排行、涨跌幅榜保留全市场。
 - 支持飞书和企业微信 Webhook，配置页补充企业微信教程，一键测试推送显示中文通道名。
 - 云端自选股支持 `STOCK_LIST` / `WATCHLIST_JSON` Secret，`STOCK_LIST` 支持 A 股代码和中文名称。
+- 推荐股推送补齐“交易计划卡片 + 风控防御看板 + 资金博弈溯源”，四板块推荐和自选股推送口径保持一致。
+- 配置页明确“一键测试推送”只验证 Webhook 连通性，不生成正式股票分析内容。
 
 ### 3. 自选股与中文股票名称识别
 
@@ -67,6 +69,9 @@ type: project
 - 个股分析搜索中保留页面结构并显示进度，不再长期空白。
 - 指标图补充实时数值，统一 MACD/RSI/KDJ/BOLL 折叠与标识位置，修复 BOLL/价格遮挡和 MACD 数值缺失。
 - 大盘温度提前到侧栏同步渲染，并发获取上证、深证、沪深300、北证50；优先走新浪快速源，单次实测约 0.257s。
+- Web 全局主题改为黑蓝科技风，主按钮统一为卡里布蓝 `#015697`，避免黄色按钮与白色文字冲突。
+- Tab 选中态改为白色文字，并移除额外胶囊背景，只保留清晰的选中提示。
+- 项目协作约束写入 `CLAUDE.md`：没有用户明确要求，不擅自新增 UI、背景装饰、交互形态或额外功能。
 
 ### 7. 本机启动与项目分发
 
@@ -95,6 +100,10 @@ type: project
 - 修复从智能推荐切到股票对比时底部残留旧页面内容的问题。
 - 修复热门板块请求影响其他页面首屏的问题。
 - 修复大盘温度显示慢、不能跟侧栏同步出现的问题。
+- 修复黄色按钮白字可读性差的问题，统一替换为卡里布蓝按钮。
+- 修复本机每日推送配置 Tab 选中后文字不够清晰的问题。
+- 修复 Tab 选中态出现额外椭圆胶囊背景的问题。
+- 修复推荐股/四板块推送缺少交易计划卡片和风控防御看板的问题。
 
 ## 验证记录
 
@@ -103,6 +112,8 @@ type: project
 - 页面切换、自选股、输入框、加载状态、股票对比、回测、推送配置等 UI 相关测试。
 - 数据获取、A 股名称解析、指数行情、大盘温度、基础资料兜底等数据层测试。
 - 飞书/企业微信推送、GitHub Actions 配置、日报生成和推荐池相关测试。
+- 推荐股推送补齐交易计划卡片/风控防御看板后，新增 `tests/test_notification.py` 覆盖防回归。
+- 最新一次推送/UI 验证：`py -m pytest tests/test_notification.py tests/test_scheduler.py tests/test_daily_report.py -q` → `55 passed`；`py -m pytest tests/test_ui_enhancements.py tests/test_app_navigation.py -q` → `54 passed`。
 - 最新一次大盘温度优化验证：`py -m pytest tests/test_app_navigation.py tests/test_ui_enhancements.py tests/test_data_fetcher.py::TestIndexRealtime -q` → `53 passed`。
 - 大盘指数真实接口计时：上证、深证、沪深300、北证50 总耗时约 `0.257s`。
 - 本地 Streamlit 首页 `http://localhost:8501` 返回 `200`。
@@ -113,3 +124,5 @@ type: project
 - GitHub Actions 使用的自选股不会自动读取本机网页端 `watchlist.json`；云端需要配置 `STOCK_LIST` 或 `WATCHLIST_JSON` Secret。
 - 飞书 Webhook 主动推送不是实时对话 Agent；实时对话仍需要 FastAPI 回调服务、公网访问和飞书事件订阅。
 - 热门板块保留全市场，智能推荐和推荐股推送才做沪深主板过滤，这是当前明确规则。
+- GitHub Actions 中 AKShare/东方财富接口偶发 `RemoteDisconnected`、`TimeoutError` 多为云端网络或数据源限流，不等同于 Webhook 配置错误；应优先用股票代码配置 `STOCK_LIST`，减少中文名实时解析依赖。
+- 后续修复遵守“只改用户明确要求范围”的协作约束，附带调整必须先说明原因。

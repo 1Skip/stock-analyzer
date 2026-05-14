@@ -62,6 +62,41 @@ class TestBuildAnalysisReport:
         )
         assert "AI解读" not in body
 
+    def test_with_trade_plan_and_defense_dashboard(self):
+        from notification import build_analysis_report
+
+        decision = {
+            "score": 72,
+            "confidence": 76,
+            "risk_level": "中",
+            "action": "轻仓试探",
+            "position": "1-2成",
+            "recommendation": "偏多信号",
+            "key_levels": {
+                "price": 10.0,
+                "support": 9.5,
+                "mid": 10.2,
+                "resistance": 11.0,
+                "ma20": 10.1,
+            },
+            "risk_alerts": [],
+        }
+
+        _, body = build_analysis_report(
+            "000001",
+            "平安银行",
+            10.0,
+            1.0,
+            {"recommendation": "偏多"},
+            decision=decision,
+            extended_info={"fund_flow": {"main_net_inflow": 1000000, "main_net_inflow_ratio": 1.2}},
+        )
+
+        assert "交易计划卡片" in body
+        assert "风控防御看板" in body
+        assert "资金博弈溯源" in body
+        assert "数据说明" in body
+
 
 # ============================================================
 # TestSendPush
@@ -274,6 +309,14 @@ class TestBuildSectorReport:
         assert "立讯精密" in body
         assert "002475" in body
         assert "35.20" in body
+
+    def test_sector_recommendations_include_decision_cards(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        title, body = build_sector_report(data)
+        assert "交易计划卡片" in body
+        assert "风控防御看板" in body
+        assert "数据说明" in body
 
     def test_positive_change_shows_up_arrow(self):
         from notification import build_sector_report

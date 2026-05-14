@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from ui.decision_dashboard import build_decision_snapshot
+from ui.decision_dashboard import build_decision_snapshot, build_defense_dashboard, build_trade_plan
 from ui.styles import CUSTOM_CSS
 from ui.compare_page import (
     build_compare_insights,
@@ -214,6 +214,230 @@ def test_decision_dashboard_stage2_css_classes_exist():
         "agent-score-pill",
     ]:
         assert class_name in CUSTOM_CSS
+
+
+def test_trade_plan_card_builds_explicit_levels_from_real_indicators():
+    dates = pd.date_range("2026-01-01", periods=20, freq="D")
+    data = pd.DataFrame({
+        "high": [10.5 + i * 0.05 for i in range(20)],
+        "low": [9.8 + i * 0.04 for i in range(20)],
+        "close": [10 + i * 0.05 for i in range(20)],
+        "ma60": [9.6 + i * 0.02 for i in range(20)],
+    }, index=dates)
+    snapshot = {
+        "score": 72,
+        "confidence": 76,
+        "risk_level": "中",
+        "action": "轻仓试探",
+        "position": "1-2成",
+        "key_levels": {
+            "price": 10.95,
+            "support": 9.8,
+            "mid": 10.4,
+            "resistance": 11.2,
+            "ma20": 10.3,
+        },
+    }
+
+    plan = build_trade_plan(snapshot, data)
+
+    assert plan["current_action"] == "轻仓试探"
+    assert "9.80" in plan["buy_zone"]
+    assert "10.40" in plan["add_condition"]
+    assert plan["stop_loss"] < 9.8
+    assert plan["take_profit_1"] == 11.2
+    assert plan["position"] == "1-2成"
+    assert "未使用模拟" in plan["data_basis"]
+
+
+def test_defense_dashboard_uses_five_real_data_dimensions():
+    dates = pd.date_range("2026-01-01", periods=70, freq="D")
+    data = pd.DataFrame({
+        "close": [10 + i * 0.1 for i in range(70)],
+        "volume": [1000000 + i * 10000 for i in range(70)],
+        "ma60": [9 + i * 0.08 for i in range(70)],
+        "rsi": [55 + (i % 5) for i in range(70)],
+    }, index=dates)
+    benchmark_data = pd.DataFrame({
+        "close": [3000 + i * 2 for i in range(70)],
+    }, index=dates)
+    snapshot = {
+        "score": 75,
+        "risk_level": "低",
+        "recommendation": "偏多信号",
+        "confidence": 82,
+        "key_levels": {"price": 16.9, "support": 15.8, "resistance": 17.8, "ma20": 16.5},
+        "risk_alerts": [],
+    }
+    extended_info = {
+        "financial": {"metrics": {"归母净利润": 10000000, "经营现金流量净额": 5000000}},
+        "fund_flow": {
+            "main_net_inflow": 1200000,
+            "five_day_main_net_inflow": 3000000,
+            "main_net_inflow_ratio": 2.2,
+            "super_large_net_inflow": 800000,
+            "large_net_inflow": 600000,
+        },
+        "research": {"eps_consensus": {"values": {"2025预测EPS": 0.8, "2026预测EPS": 1.0}}},
+        "dividend": {"cash_dividend_per_share": 0.169, "source": "新浪财经历史分红"},
+    }
+    profile = {"pe_ttm": 18.0, "pb": 1.9, "turnover_rate": 3.2}
+
+    defense = build_defense_dashboard(snapshot, data, benchmark_data, extended_info, profile)
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert defense["overall"] >= 60
+    assert [item["name"] for item in defense["dimensions"]] == ["估值", "成长", "趋势", "安全", "资金"]
+    assert all(0 <= item["score"] <= 100 for item in defense["dimensions"])
+    assert "公开真实数据源" in defense["data_basis"]
+    assert defense["signal_state"]["name"] in {"趋势持有", "试探建仓", "压力减仓", "底部观察", "防御观望", "风险回避"}
+    assert defense["signal_state"]["triggers"]
+    assert set(metrics) >= {"PEG", "相对强弱", "Beta", "股息率", "主力成本"}
+    assert metrics["Beta"]["value"] != "暂无"
+    assert metrics["Beta"]["status"] == "ok"
+    assert metrics["股息率"]["value"] == "1.00%"
+    assert metrics["股息率"]["status"] == "derived"
+    assert "按现价推导" in metrics["股息率"]["note"]
+    assert any(item["note"].endswith("模型推断") or "模型推断" in item["note"] for item in defense["core_metrics"])
+    assert len(defense["capital_trace"]) >= 6
+    assert any(item["basis"] == "真实收盘价×成交量推导" for item in defense["capital_trace"])
+
+
+def test_defense_dashboard_missing_data_uses_empty_labels_not_fake_values():
+    snapshot = {
+        "score": 48,
+        "risk_level": "中",
+        "recommendation": "观望",
+        "confidence": 40,
+        "key_levels": {},
+        "risk_alerts": [],
+    }
+
+    defense = build_defense_dashboard(snapshot, data=None, benchmark_data=None, extended_info={}, profile={})
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert metrics["PEG"]["value"] == "暂无"
+    assert "不编造" in metrics["PEG"]["note"]
+    assert metrics["PEG"]["status"] == "missing"
+    assert metrics["Beta"]["value"] == "暂无"
+    assert metrics["Beta"]["status"] == "missing"
+    assert metrics["股息率"]["value"] == "暂无"
+    assert metrics["股息率"]["status"] == "missing"
+    assert metrics["主力成本"]["value"] == "暂无"
+    assert all("模拟" not in str(item) for item in defense["core_metrics"])
+    assert all("随机" not in str(item) for item in defense["core_metrics"])
+
+
+def test_defense_dashboard_distinguishes_source_failure_from_empty_data():
+    dates = pd.date_range("2026-01-01", periods=40, freq="D")
+    data = pd.DataFrame({
+        "close": [10 + i * 0.05 for i in range(40)],
+        "volume": [1000000 for _ in range(40)],
+    }, index=dates)
+    snapshot = {
+        "score": 55,
+        "risk_level": "中",
+        "recommendation": "观望",
+        "confidence": 58,
+        "key_levels": {"price": 12.0},
+        "risk_alerts": [],
+    }
+    extended_info = {
+        "research": {
+            "eps_consensus": {
+                "status": "source_empty",
+                "source": "同花顺盈利预测",
+                "reason": "接口可访问，但未返回可计算EPS字段",
+            }
+        },
+        "dividend": {
+            "status": "source_failed",
+            "source": "巨潮/新浪分红",
+            "reason": "巨潮失败:timeout",
+        },
+    }
+
+    defense = build_defense_dashboard(snapshot, data, benchmark_data=None, extended_info=extended_info, profile={"pe_ttm": 18})
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert metrics["PEG"]["status"] == "source_empty"
+    assert "未返回可计算EPS字段" in metrics["PEG"]["note"]
+    assert metrics["股息率"]["status"] == "source_failed"
+    assert "巨潮/新浪分红失败" in metrics["股息率"]["note"]
+    assert metrics["Beta"]["status"] == "source_failed"
+    assert metrics["Beta"]["status_label"] == "接口失败"
+
+
+def test_decision_dashboard_trade_plan_css_classes_exist():
+    from pathlib import Path
+
+    for class_name in [
+        "trade-plan-action",
+        "trade-plan-hero",
+        "trade-plan-grid",
+        "trade-plan-row",
+        "defense-dashboard-layout",
+        "defense-top-row",
+        "defense-overall",
+        "defense-dimension",
+        "defense-bottom-grid",
+        "signal-state-card",
+        "defense-metric-grid",
+        "defense-metric-head",
+        "source_failed",
+        "capital-trace-table",
+        "风控防御看板",
+    ]:
+        if class_name.startswith("风控"):
+            assert class_name in Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
+        else:
+            assert class_name in CUSTOM_CSS
+
+
+def test_trade_defense_layout_keeps_evidence_cards_in_left_column():
+    from pathlib import Path
+
+    source = Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
+    section = source.split('st.markdown("#### 交易计划与风控防御")', 1)[1].split('with st.expander("A股决策委员会', 1)[0]
+
+    assert "col_plan, col_defense = st.columns([0.9, 1.7])" in section
+    assert section.index('with col_plan:') < section.index('"看多依据"') < section.index('with col_defense:')
+    assert section.index('"看空因素"') < section.index('with col_defense:')
+    assert section.index('"风险警报"') < section.index('with col_defense:')
+
+
+def test_decision_dashboard_has_no_alphaseeker_name():
+    from pathlib import Path
+
+    assert "AlphaSeeker" not in Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
+    assert "AlphaSeeker" not in CUSTOM_CSS
+
+
+def test_decision_scores_are_labeled_by_purpose():
+    from pathlib import Path
+
+    source = Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
+
+    assert "决策分" in source
+    assert "风控分" in source
+
+
+def test_decision_dashboard_renders_before_profile_sections():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    body = source.split("def _render_analysis_results", 1)[1]
+
+    assert body.index("render_decision_dashboard(") < body.index("_render_stock_profile(profile)")
+
+
+def test_benchmark_data_has_sina_fallback_for_beta():
+    from pathlib import Path
+
+    source = Path("ui/cached_data.py").read_text(encoding="utf-8")
+
+    assert "ak.index_zh_a_hist" in source
+    assert "ak.stock_zh_index_daily" in source
 
 
 def test_agent_card_html_is_not_markdown_code_block():

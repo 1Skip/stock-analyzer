@@ -1,6 +1,8 @@
 """缓存数据获取层 — Streamlit @st.cache_data 封装"""
 import logging
+from datetime import datetime, timedelta
 
+import pandas as pd
 import streamlit as st
 from config import (
     CACHE_TTL_FUNDAMENTALS,
@@ -30,6 +32,54 @@ def get_cached_stock_data(symbol, period, market):
         return quote_service.get_stock_data(symbol, period=period, market=market)
     except Exception:
         logger.warning("缓存层获取股票数据失败: symbol=%s market=%s period=%s", symbol, market, period, exc_info=True)
+        return None
+
+
+@st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=16, show_spinner=False)
+def get_cached_benchmark_data(symbol="000300", period="1y"):
+    """缓存A股基准指数K线，用于 Beta 等真实相对风险指标。"""
+    try:
+        import akshare as ak
+
+        period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+        days = period_days.get(period, 365)
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        df = None
+        try:
+            df = ak.index_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
+        except Exception:
+            logger.info("东财指数历史接口失败，改用新浪指数历史: symbol=%s", symbol, exc_info=True)
+        if df is None or df.empty:
+            sina_symbol = f"sh{symbol}" if str(symbol).startswith("000") else f"sz{symbol}"
+            df = ak.stock_zh_index_daily(symbol=sina_symbol)
+            if df is not None and not df.empty and "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                start_ts = pd.to_datetime(start_date)
+                end_ts = pd.to_datetime(end_date)
+                df = df[(df["date"] >= start_ts) & (df["date"] <= end_ts)]
+        if df is None or df.empty:
+            return None
+        rename_map = {
+            "日期": "date",
+            "开盘": "open",
+            "收盘": "close",
+            "最高": "high",
+            "最低": "low",
+            "成交量": "volume",
+            "成交额": "amount",
+        }
+        df = df.rename(columns=rename_map)
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.dropna(subset=["date"]).set_index("date")
+        for column in ["open", "high", "low", "close", "volume", "amount"]:
+            if column in df.columns:
+                df[column] = pd.to_numeric(df[column], errors="coerce")
+        df.attrs["data_source"] = "AKShare指数历史行情"
+        return df
+    except Exception:
+        logger.warning("缓存层获取基准指数失败: symbol=%s period=%s", symbol, period, exc_info=True)
         return None
 
 

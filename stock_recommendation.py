@@ -6,6 +6,10 @@ import requests
 import re
 import yfinance as yf
 import pandas as pd
+try:
+    import akshare as ak
+except Exception:  # pragma: no cover - depends on optional runtime package
+    ak = None
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
@@ -246,7 +250,16 @@ class StockRecommender:
         return results[:limit]
 
     def get_hot_sectors_cn(self, limit=30):
-        """获取A股行业板块排行（同花顺实时数据，HTML抓取）"""
+        """获取A股行业板块排行：同花顺页面优先，东财/同花顺 AKShare 兜底。"""
+        sectors = self._get_hot_sectors_ths_html(limit)
+        if sectors:
+            return sectors[:limit]
+        sectors = self._get_hot_sectors_akshare_em(limit)
+        if sectors:
+            return sectors[:limit]
+        return self._get_hot_sectors_akshare_ths(limit)[:limit]
+
+    def _get_hot_sectors_ths_html(self, limit=30):
         sectors = []
         try:
             headers = {
@@ -279,6 +292,7 @@ class StockRecommender:
                             '下跌家数': int(cols[7].get_text(strip=True)),
                             '总成交额(亿)': round(float(cols[4].get_text(strip=True)), 2),
                             '净流入(亿)': round(float(cols[5].get_text(strip=True)), 2),
+                            '数据源': '同花顺行业板块',
                         })
                     except (ValueError, IndexError):
                         continue
@@ -291,8 +305,17 @@ class StockRecommender:
             return sectors if sectors else []
 
     def get_hot_concepts_cn(self, limit=30):
-        """获取A股概念板块排行（同花顺概念资金流向，全量抓取后按涨跌幅排序）
+        """获取A股概念板块排行：同花顺资金流优先，东财/同花顺 AKShare 兜底。"""
+        concepts = self._get_hot_concepts_ths_html(limit)
+        if concepts:
+            return concepts[:limit]
+        concepts = self._get_hot_concepts_akshare_em(limit)
+        if concepts:
+            return concepts[:limit]
+        return self._get_hot_concepts_akshare_ths(limit)[:limit]
 
+    def _get_hot_concepts_ths_html(self, limit=30):
+        """同花顺概念资金流向，全量抓取后按涨跌幅排序。
         注意：同花顺web端概念板块页面(/gn/)是大事记而非排行，
         概念排行数据从概念资金流向页面抓取后客户端排序。
         """
@@ -341,6 +364,7 @@ class StockRecommender:
                             '下跌家数': 0,
                             '总成交额(亿)': 0,
                             '净流入(亿)': round(float(cols[6].get_text(strip=True)), 2),
+                            '数据源': '同花顺概念资金流',
                         })
                     except (ValueError, IndexError):
                         continue
@@ -351,6 +375,97 @@ class StockRecommender:
         except Exception as e:
             print(f"获取概念板块排行失败: {e}")
             return concepts if concepts else []
+
+    def _get_hot_sectors_akshare_em(self, limit=30):
+        return self._normalize_akshare_board_ranking(
+            lambda: ak.stock_board_industry_name_em() if ak else None,
+            limit,
+            source='东方财富行业板块',
+        )
+
+    def _get_hot_sectors_akshare_ths(self, limit=30):
+        return self._normalize_akshare_board_ranking(
+            lambda: ak.stock_board_industry_name_ths() if ak else None,
+            limit,
+            source='同花顺行业板块AKShare',
+        )
+
+    def _get_hot_concepts_akshare_em(self, limit=30):
+        return self._normalize_akshare_board_ranking(
+            lambda: ak.stock_board_concept_name_em() if ak else None,
+            limit,
+            source='东方财富概念板块',
+        )
+
+    def _get_hot_concepts_akshare_ths(self, limit=30):
+        return self._normalize_akshare_board_ranking(
+            lambda: ak.stock_board_concept_name_ths() if ak else None,
+            limit,
+            source='同花顺概念板块AKShare',
+        )
+
+    def _normalize_akshare_board_ranking(self, fetcher, limit=30, source='AKShare板块'):
+        if ak is None:
+            return []
+        try:
+            df = fetcher()
+            if df is None or df.empty:
+                return []
+            rows = []
+            for _, row in df.head(max(limit, 30)).iterrows():
+                name = self._first_board_value(row, ['板块名称', '行业名称', '概念名称', '名称'])
+                if not name:
+                    continue
+                rows.append({
+                    '板块': str(name),
+                    '涨跌幅': self._safe_board_float(self._first_board_value(row, ['涨跌幅', '涨跌幅%', '最新涨跌幅'])),
+                    '领涨股': str(self._first_board_value(row, ['领涨股票', '领涨股', '龙头股']) or ''),
+                    '领涨股价格': self._safe_board_float(self._first_board_value(row, ['领涨股最新价', '领涨股价格', '最新价'])),
+                    '领涨股涨幅': self._safe_board_float(self._first_board_value(row, ['领涨股涨跌幅', '领涨股涨幅'])),
+                    '上涨家数': int(self._safe_board_float(self._first_board_value(row, ['上涨家数', '上涨数'])) or 0),
+                    '下跌家数': int(self._safe_board_float(self._first_board_value(row, ['下跌家数', '下跌数'])) or 0),
+                    '总成交额(亿)': self._safe_board_money_yi(self._first_board_value(row, ['成交额', '总成交额'])),
+                    '净流入(亿)': self._safe_board_money_yi(self._first_board_value(row, ['净流入', '主力净流入', '资金净流入'])),
+                    '数据源': source,
+                })
+            rows.sort(key=lambda item: item['涨跌幅'] if item['涨跌幅'] is not None else -999, reverse=True)
+            return rows[:limit]
+        except Exception as e:
+            print(f"{source}兜底失败: {e}")
+            return []
+
+    @staticmethod
+    def _first_board_value(row, candidates):
+        for candidate in candidates:
+            for key, value in row.items():
+                if candidate == str(key) or candidate in str(key):
+                    if pd.notna(value):
+                        return value
+        return None
+
+    @staticmethod
+    def _safe_board_float(value):
+        try:
+            if value is None or value == '':
+                return None
+            text = str(value).replace('%', '').replace(',', '').strip()
+            return round(float(text), 2)
+        except (TypeError, ValueError):
+            return None
+
+    @classmethod
+    def _safe_board_money_yi(cls, value):
+        numeric = cls._safe_board_float(value)
+        if numeric is None:
+            return 0
+        text = str(value)
+        if '亿' in text:
+            return numeric
+        if '万' in text:
+            return round(numeric / 10000, 2)
+        if abs(numeric) > 1000000:
+            return round(numeric / 100000000, 2)
+        return numeric
 
     @staticmethod
     def _is_main_board(code):

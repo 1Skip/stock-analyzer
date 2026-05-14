@@ -1,5 +1,6 @@
 """分层数据服务测试。"""
 import pandas as pd
+import pytest
 
 from data.cache import JsonFileCache
 from data.health import SourceHealthRegistry
@@ -620,6 +621,23 @@ class TestStockInfoService:
         assert result["metrics"]["归母净利润"] == 12000000.0
         assert result["metrics"]["经营现金流量净额"] == -3000000.0
 
+    def test_financial_summary_falls_back_to_secondary_source(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                raise RuntimeError("primary down")
+            return pd.DataFrame([{"指标": "每股收益", "20260331": 0.32}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_financial_summary("002609")
+
+        assert result["source"] == "同花顺财务摘要"
+        assert result["metrics"]["每股收益"] == 0.32
+
     def test_normalize_fund_flow_summary(self):
         provider = AkShareInfoProvider()
         df = pd.DataFrame([
@@ -633,6 +651,24 @@ class TestStockInfoService:
         assert result["main_net_inflow"] == -20.0
         assert result["main_net_inflow_ratio"] == -0.5
         assert result["five_day_main_net_inflow"] == 80.0
+
+    def test_fund_flow_falls_back_to_main_fund_flow(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                return pd.DataFrame()
+            return pd.DataFrame([{"代码": "002609", "主力净流入": 1234.0, "主力净占比": 2.5}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_fund_flow_summary("002609")
+
+        assert result["source"] == "东方财富主力资金流"
+        assert result["main_net_inflow"] == 1234.0
+        assert result["main_net_inflow_ratio"] == 2.5
 
     def test_info_service_uses_cache(self, tmp_path):
         calls = {"count": 0}
@@ -701,6 +737,104 @@ class TestStockInfoService:
         assert result[0]["title"] == "银行业深度报告"
         assert result[0]["pdf_url"] == "https://example.com/report.pdf"
 
+    def test_research_reports_fall_back_to_profit_forecast(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                raise RuntimeError("report down")
+            return pd.DataFrame([{"机构名称": "测试证券", "评级": "买入", "报告日期": "2026-05-14"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_research_reports("002609")
+
+        assert result[0]["source"] == "东方财富盈利预测"
+        assert result[0]["rating"] == "买入"
+
+    def test_normalize_dividend_summary_prefers_implemented_plan(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([
+            {"公告日期": "2026-04-30", "派息": 0.85, "进度": "预案", "除权除息日": None},
+            {"公告日期": "2025-05-23", "派息": 0.70, "进度": "实施", "除权除息日": "2025-05-30"},
+        ])
+
+        result = provider._normalize_dividend_summary(df)
+
+        assert result["source"] == "新浪财经历史分红"
+        assert result["cash_dividend_per_10"] == 0.70
+        assert result["cash_dividend_per_share"] == pytest.approx(0.07)
+        assert result["progress"] == "实施"
+
+    def test_normalize_cninfo_dividend_summary_uses_cash_ratio(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([{
+            "实施方案公告日期": "2026-05-08",
+            "派息比例": 1.50,
+            "除权除息日": "2026-05-16",
+            "实施方案分红说明": "10派1.5元",
+        }])
+
+        result = provider._normalize_cninfo_dividend_summary(df)
+
+        assert result["status"] == "ok"
+        assert result["source"] == "巨潮资讯历史分红"
+        assert result["cash_dividend_per_10"] == 1.50
+        assert result["cash_dividend_per_share"] == pytest.approx(0.15)
+
+    def test_normalize_sina_dividend_overview_as_last_resort(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([{
+            "代码": "002609",
+            "名称": "捷顺科技",
+            "年均股息": 0.50,
+            "分红次数": 8,
+        }])
+
+        result = provider._normalize_sina_dividend_overview("002609", df)
+
+        assert result["status"] == "ok"
+        assert result["source"] == "新浪财经历史分红摘要"
+        assert result["annual_dividend_per_share"] == pytest.approx(0.05)
+        assert "非最近一期" in result["note"]
+
+    def test_normalize_eps_consensus_empty_has_status_from_public_method(self, monkeypatch):
+        provider = AkShareInfoProvider()
+
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            return pd.DataFrame([{"预测机构数": 3}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_eps_consensus("002609")
+
+        assert result["status"] == "source_empty"
+        assert result["source"] == "同花顺/东方财富盈利预测"
+        assert "同花顺盈利预测返回空数据" in result["reason"]
+        assert "东方财富盈利预测返回空数据" in result["reason"]
+
+    def test_eps_consensus_falls_back_to_eastmoney(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                return pd.DataFrame([{"预测机构数": 3}])
+            return pd.DataFrame([{"2026预测每股收益": 0.88}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_eps_consensus("002609")
+
+        assert result["source"] == "东方财富盈利预测"
+        assert result["values"]["2026预测每股收益"] == 0.88
+
     def test_normalize_news_accepts_eastmoney_columns(self):
         provider = AkShareInfoProvider()
         df = pd.DataFrame([{
@@ -715,6 +849,7 @@ class TestStockInfoService:
             "title": "测试新闻",
             "date": "2026-05-14 10:00:00",
             "url": "https://example.com/news",
+            "source": "",
         }]
 
     def test_normalize_market_news_accepts_caixin_columns(self):
@@ -735,6 +870,40 @@ class TestStockInfoService:
             "url": "https://example.com/market",
             "source": "财新数据通",
         }]
+
+    def test_market_news_merges_caixin_and_cls_sources(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                return pd.DataFrame([{"summary": "财新市场快讯", "url": "https://example.com/a"}])
+            return pd.DataFrame([{"标题": "财联社快讯", "链接": "https://example.com/b"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_market_news(limit=5)
+
+        assert [item["source"] for item in result] == ["财新数据通", "财联社资讯"]
+        assert result[0]["title"] == "财新市场快讯"
+
+    def test_stock_news_falls_back_to_cls_filtered_news(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                return pd.DataFrame()
+            return pd.DataFrame([{"标题": "002609 公司公告相关快讯", "链接": "https://example.com/c"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_news("002609")
+
+        assert result[0]["source"] == "财联社资讯"
+        assert "002609" in result[0]["title"]
 
     def test_extended_info_provider_runs_layers_in_parallel(self, monkeypatch):
         provider = AkShareInfoProvider()
@@ -791,21 +960,41 @@ class TestStockInfoService:
         }])
 
         lhb = provider._normalize_lhb_summary("000001", lhb_df)
-        release = provider._normalize_restricted_release(release_df)
-        notices = provider._normalize_announcements(notice_df)
+        release = provider._normalize_restricted_release(release_df, source="测试限售")
+        notices = provider._normalize_announcements(notice_df, source="测试公告")
 
         assert lhb["times"] == 2
         assert release[0]["type"] == "首发限售"
+        assert release[0]["source"] == "测试限售"
         assert notices[0]["title"] == "关于股东减持的风险提示公告"
+        assert notices[0]["source"] == "测试公告"
+
+    def test_announcements_fall_back_to_market_notice(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            if len(calls) == 1:
+                return pd.DataFrame()
+            return pd.DataFrame([{"代码": "002609", "公告标题": "风险提示公告", "公告日期": "2026-05-14"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_announcements("002609")
+
+        assert result[0]["title"] == "风险提示公告"
+        assert result[0]["source"] == "东方财富全市场公告"
 
     def test_sector_attribution_helpers(self):
         provider = AkShareInfoProvider()
         row = pd.Series({"板块名称": "机器人概念", "涨跌幅": 2.5, "领涨股票": "测试股"})
 
-        sector = provider._sector_row(row, "机器人概念")
+        sector = provider._sector_row(row, "机器人概念", source="测试板块")
 
         assert sector["change_pct"] == 2.5
         assert "机器人" in sector["reason"]
+        assert sector["source"] == "测试板块"
 
 
 class TestRuntimeHelpers:

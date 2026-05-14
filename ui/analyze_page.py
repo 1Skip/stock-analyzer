@@ -15,7 +15,7 @@ from ui.cached_data import (
     get_cached_stock_data, get_cached_stock_info,
     get_cached_realtime_quote, get_cached_intraday_data,
     get_cached_stock_profile, get_cached_stock_extended_info,
-    resolve_cached_stock_input,
+    resolve_cached_stock_input, get_cached_benchmark_data,
 )
 from ui.charts import (
     latest_indicator_values,
@@ -283,9 +283,9 @@ def _display_indicator_values(data):
     kdj_os = KDJ_OVERSOLD
 
     card = (
-        "background:rgba(128,128,128,0.04);border-radius:8px;"
-        "padding:8px 14px;margin-bottom:6px;"
-        "border:1px solid rgba(128,128,128,0.1);"
+        "background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));border-radius:12px;"
+        "padding:9px 14px;margin-bottom:7px;"
+        "border:1px solid rgba(85,199,255,0.14);box-shadow:0 10px 24px rgba(0,0,0,0.18);"
         "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 12px;"
     )
 
@@ -301,7 +301,7 @@ def _display_indicator_values(data):
         f'<span style="color:#ff3b30">6日 {rsi6}</span>  '
         f'<span style="color:#fb8c00">12日 {rsi12}</span>  '
         f'<span style="color:#7b1fa2">24日 {rsi24}</span></span>'
-        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">超买&gt;{rsi_ob} 超卖&lt;{rsi_os}</span>'
+        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">超买&gt;{rsi_ob} 超卖&lt;{rsi_os}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -316,7 +316,7 @@ def _display_indicator_values(data):
         f'<span style="color:#1e88e5">K {k}</span>  '
         f'<span style="color:#fb8c00">D {d}</span>  '
         f'<span style="color:#7b1fa2">J {j}</span></span>'
-        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">超买&gt;{kdj_ob} 超卖&lt;{kdj_os}</span>'
+        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">超买&gt;{kdj_ob} 超卖&lt;{kdj_os}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -352,7 +352,7 @@ def _display_indicator_values(data):
         f'<span style="color:#ff3b30">上轨 {upper}</span>  '
         f'<span style="color:#1e88e5">中轨 {mid}</span>  '
         f'<span style="color:#34c759">下轨 {lower}</span></span>'
-        f'<span style="font-size:0.75rem;color:gray;white-space:nowrap;">{pct_str}</span>'
+        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">{pct_str}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -420,8 +420,9 @@ def _render_current_stock_header(symbol: str, market: str, period: str, stock_na
     st.markdown(
         f"""
         <div style="margin:8px 0 14px;padding:12px 14px;border-radius:12px;
-                    border:1px solid rgba(128,128,128,0.16);
-                    background:rgba(128,128,128,0.04);">
+                    border:1px solid rgba(85,199,255,0.16);
+                    background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));
+                    box-shadow:0 10px 24px rgba(0,0,0,0.16);">
           <div style="font-size:0.78rem;opacity:0.62;margin-bottom:3px;">当前标的</div>
           <div style="font-size:1.05rem;font-weight:700;line-height:1.35;">
             {html.escape(str(symbol or "--"))}{f" · {html.escape(str(display_name))}" if display_name else ""}
@@ -446,8 +447,9 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         st.markdown(
             f"""
             <div style="margin:0 0 12px;padding:14px 16px;border-radius:14px;
-                        border:1px solid rgba(128,128,128,0.18);
-                        background:linear-gradient(135deg,rgba(52,199,89,0.08),rgba(128,128,128,0.04));">
+                        border:1px solid rgba(85,199,255,0.18);
+                        background:linear-gradient(135deg,rgba(85,199,255,0.13),rgba(5,13,24,0.78));
+                        box-shadow:0 12px 30px rgba(0,0,0,0.20);">
               <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">个股分析标的</div>
               <div style="font-size:1.32rem;font-weight:700;line-height:1.3;">
                 {html.escape(symbol)}{f" · {html.escape(display_name)}" if display_name else ""}
@@ -523,11 +525,15 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     st.write("")
 
+    benchmark_data = None
+    if market == "CN":
+        benchmark_data = get_cached_benchmark_data("000300", period)
+    render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)
+
     _render_stock_profile(profile)
     if market == "CN":
         _render_extended_info(extended_info)
         _render_market_news(extended_info)
-    render_decision_dashboard(data, signals, quote, extended_info, profile)
 
     # ③ 分时图（仅A股）
     if market == "CN":

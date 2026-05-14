@@ -15,6 +15,7 @@ from config import (
 from data.services.info_service import StockInfoService
 from data.services.quote_service import QuoteDataService
 from decision_committee import build_watchlist_decision
+from reports.decision_cards import build_decision_card_markdown
 from reports.exporter import save_markdown_report
 from stock_recommendation import StockRecommender
 
@@ -196,6 +197,13 @@ class DailyReportService:
                     lines.append(f"  - 看多依据：{point}")
                 for risk in (decision.get("risk_alerts") or [])[:2]:
                     lines.append(f"  - 风险警报：{risk}")
+                info = self._find_extended_info(item.get("symbol"), extended_items)
+                lines.extend(build_decision_card_markdown(
+                    decision,
+                    extended_info=info,
+                    profile=info.get("profile") if isinstance(info, dict) else None,
+                    compact=True,
+                ))
                 debate = debate_map.get(item.get("symbol")) or {}
                 if debate:
                     lines.extend(self._render_debate_lines(debate))
@@ -308,6 +316,15 @@ class DailyReportService:
             "",
         ])
         return "\n".join(lines)
+
+    @staticmethod
+    def _find_extended_info(symbol: str | None, extended_items: list[dict[str, Any]]) -> dict[str, Any]:
+        if not symbol:
+            return {}
+        for item in extended_items:
+            if item.get("symbol") == symbol:
+                return item.get("info") or {}
+        return {}
 
     @staticmethod
     def _top_watch_item(watchlist: list[dict[str, Any]]) -> dict[str, Any] | None:

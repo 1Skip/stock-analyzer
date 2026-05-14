@@ -89,6 +89,9 @@ class TestDailyReportService:
         assert "仓位" in content
         assert "关键价位" in content
         assert "催化因素" in content
+        assert "交易计划卡片" in content
+        assert "风控防御看板" in content
+        assert "资金博弈溯源" in content
 
     def test_save_markdown_report_writes_dated_and_latest(self, tmp_path):
         paths = save_markdown_report("# 测试", "2026-05-13", output_dir=tmp_path)

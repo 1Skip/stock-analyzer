@@ -71,6 +71,7 @@ def settings_page() -> None:
 
     st.divider()
     st.subheader("一键测试推送")
+    st.caption("这里仅测试 Webhook 是否打通；交易计划卡片和风控防御看板会出现在正式的每日推送、自选股推送和推荐股推送中。")
     default_channels = [channel for channel in ["feishu", "wechat"] if channel in NOTIFY_CHANNELS]
     channel_labels = {"feishu": "飞书", "wechat": "企业微信"}
     channels = st.multiselect(

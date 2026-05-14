@@ -70,7 +70,11 @@ def run_scheduled_analysis():
         if watchlist:
             logger.info(f"自选股模式：{len(watchlist)} 只")
             from watchlist import get_watchlist_summary
+            from decision_committee import build_watchlist_decision
+            from data.services.info_service import StockInfoService
+
             summaries = get_watchlist_summary(watchlist)
+            info_service = StockInfoService()
             for item in summaries:
                 if item.get('error'):
                     logger.warning(f"自选股 {item['symbol']} 分析失败: {item['error']}")
@@ -79,11 +83,26 @@ def run_scheduled_analysis():
                 name = item['name']
                 price = item['price'] or 0
                 change_pct = item.get('change_pct', 0) or 0
+                extended_info = {}
+                try:
+                    source = next(
+                        (stock for stock in watchlist if stock.get("symbol") == symbol),
+                        {},
+                    )
+                    extended_info = info_service.get_stock_extended_info(
+                        symbol,
+                        source.get("market", item.get("market", "CN")),
+                    ) or {}
+                except Exception as exc:
+                    logger.info(f"自选股 {symbol} 扩展信息获取失败，推送使用基础交易计划: {exc}")
+                decision = build_watchlist_decision(item, extended_info)
 
                 title, body = build_analysis_report(
                     symbol, name, price, change_pct,
                     {'recommendation': item['signal_summary'],
-                     'entry_hint': item.get('entry_hint', '')}
+                     'entry_hint': item.get('entry_hint', '')},
+                    decision=decision,
+                    extended_info=extended_info,
                 )
                 reports.append((title, body))
 

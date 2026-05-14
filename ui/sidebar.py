@@ -72,7 +72,8 @@ def display_market_temperature():
 
     st.markdown(
         f'<div style="margin:12px 0;padding:10px 12px;border-radius:10px;'
-        f'background:rgba(128,128,128,0.06)">'
+        f'background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));'
+        f'border:1px solid rgba(85,199,255,0.12);box-shadow:0 10px 24px rgba(0,0,0,0.16)">'
         f'<div style="font-size:0.8rem;opacity:0.6;margin-bottom:6px">大盘温度</div>'
         f'{"".join(rows)}'
         f'</div>',

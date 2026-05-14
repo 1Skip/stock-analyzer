@@ -320,8 +320,29 @@ class TestGetHotSectorsCN:
     def test_request_failure_returns_empty(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.requests.get',
                             lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+        monkeypatch.setattr('stock_recommendation.ak', None)
         result = recommender.get_hot_sectors_cn()
         assert result == []
+
+    def test_request_failure_falls_back_to_eastmoney_board(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.requests.get',
+                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+
+        class FakeAk:
+            @staticmethod
+            def stock_board_industry_name_em():
+                return pd.DataFrame([{"板块名称": "电力行业", "涨跌幅": 2.1, "领涨股票": "上海电力"}])
+
+            @staticmethod
+            def stock_board_industry_name_ths():
+                return pd.DataFrame()
+
+        monkeypatch.setattr('stock_recommendation.ak', FakeAk)
+
+        result = recommender.get_hot_sectors_cn(limit=5)
+
+        assert result[0]["板块"] == "电力行业"
+        assert result[0]["数据源"] == "东方财富行业板块"
 
 
 # ============================================================
@@ -349,8 +370,29 @@ class TestGetHotConceptsCN:
     def test_request_failure_returns_empty(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.requests.get',
                             lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+        monkeypatch.setattr('stock_recommendation.ak', None)
         result = recommender.get_hot_concepts_cn()
         assert result == []
+
+    def test_request_failure_falls_back_to_eastmoney_concept_board(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.requests.get',
+                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+
+        class FakeAk:
+            @staticmethod
+            def stock_board_concept_name_em():
+                return pd.DataFrame([{"板块名称": "算力租赁", "涨跌幅": 3.2, "领涨股票": "测试股"}])
+
+            @staticmethod
+            def stock_board_concept_name_ths():
+                return pd.DataFrame()
+
+        monkeypatch.setattr('stock_recommendation.ak', FakeAk)
+
+        result = recommender.get_hot_concepts_cn(limit=5)
+
+        assert result[0]["板块"] == "算力租赁"
+        assert result[0]["数据源"] == "东方财富概念板块"
 
 
 # ============================================================

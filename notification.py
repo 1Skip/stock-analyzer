@@ -4,7 +4,7 @@
 """
 import logging
 import requests
-from typing import Optional
+from typing import Any, Optional
 
 from config import (
     WECHAT_WEBHOOK_URL, FEISHU_WEBHOOK_URL, NOTIFY_CHANNELS,
@@ -144,28 +144,18 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         # 短线
         short_stocks = data.get('短线', [])
         if short_stocks:
-            short_parts = []
-            for s in short_stocks:
-                direction = "📈" if s['change_pct'] > 0 else "📉" if s['change_pct'] < 0 else "➡"
-                short_parts.append(
-                    f"{s['name']}({s['symbol']}) {s['latest_price']:.2f} "
-                    f"{direction}{s['change_pct']:+.2f}%"
-                )
-            body_lines.append(f"**短线**: {' | '.join(short_parts)}")
+            body_lines.append("**短线**")
+            for stock in short_stocks:
+                body_lines.extend(_build_sector_stock_lines(stock))
         else:
             body_lines.append(f"**短线**: 暂无推荐")
 
         # 长线
         long_stocks = data.get('长线', [])
         if long_stocks:
-            long_parts = []
-            for s in long_stocks:
-                direction = "📈" if s['change_pct'] > 0 else "📉" if s['change_pct'] < 0 else "➡"
-                long_parts.append(
-                    f"{s['name']}({s['symbol']}) {s['latest_price']:.2f} "
-                    f"{direction}{s['change_pct']:+.2f}%"
-                )
-            body_lines.append(f"**长线**: {' | '.join(long_parts)}")
+            body_lines.append("**长线**")
+            for stock in long_stocks:
+                body_lines.extend(_build_sector_stock_lines(stock))
         else:
             body_lines.append(f"**长线**: 暂无推荐")
 
@@ -175,9 +165,63 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
     return title, body
 
 
+def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
+    """Render a sector recommendation with the same decision cards used by watchlist push."""
+    price = _number(stock.get("latest_price") or stock.get("price"))
+    change_pct = _number(stock.get("change_pct")) or 0.0
+    direction = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡"
+    name = stock.get("name") or stock.get("symbol", "--")
+    symbol = stock.get("symbol", "--")
+    strategy = stock.get("strategy", "")
+    score = stock.get("score", "--")
+    rating = stock.get("rating", "--")
+
+    header = (
+        f"- {name}({symbol}) "
+        f"{price:.2f} {direction}{change_pct:+.2f}%"
+        f"｜{strategy or '推荐'}｜评分 {score}｜{rating}"
+    ) if price is not None else (
+        f"- {name}({symbol}) {direction}{change_pct:+.2f}%"
+        f"｜{strategy or '推荐'}｜评分 {score}｜{rating}"
+    )
+    lines = [header]
+
+    try:
+        from decision_committee import build_watchlist_decision
+        from reports.decision_cards import build_decision_card_markdown
+
+        item = {
+            "symbol": symbol,
+            "name": name,
+            "price": price,
+            "change_pct": change_pct,
+            "signal_summary": stock.get("rating") or "观望",
+            "rating": stock.get("rating") or "观望",
+            "indicators": stock.get("indicators") or {},
+        }
+        decision = build_watchlist_decision(item)
+        card_lines = build_decision_card_markdown(decision, compact=True)
+        lines.extend(f"  {line}" for line in card_lines)
+    except Exception as exc:
+        logger.info("推荐股决策卡生成失败，保留基础推荐信息: %s", exc)
+
+    return lines
+
+
+def _number(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def build_analysis_report(symbol: str, name: str, price: float,
                            change_pct: float, signals: dict,
-                           ai_summary: str = "") -> tuple[str, str]:
+                           ai_summary: str = "",
+                           decision: dict | None = None,
+                           extended_info: dict | None = None) -> tuple[str, str]:
     """构造推送标题和正文"""
     direction = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡"
     title = f"{name}({symbol}) {price:.2f} {direction}{change_pct:+.2f}%"
@@ -190,6 +234,17 @@ def build_analysis_report(symbol: str, name: str, price: float,
 
     body = f"价格: {price:.2f} ({change_pct:+.2f}%)\n"
     body += f"信号: {signal_text}\n"
+    if decision:
+        from reports.decision_cards import build_decision_card_markdown
+
+        card_lines = build_decision_card_markdown(
+            decision,
+            extended_info=extended_info or {},
+            profile=(extended_info or {}).get("profile") if isinstance(extended_info, dict) else None,
+            compact=True,
+        )
+        if card_lines:
+            body += "\n" + "\n".join(card_lines) + "\n"
     if ai_summary:
         body += f"\nAI解读:\n{ai_summary}"
 

@@ -1,4 +1,4 @@
-- [Bug fixes & context 2026-05-14](bug_fixes_and_context_2026-05-14.md) — 5/14更新：决策委员会、飞书/Actions、自选股、中文名称识别、个股扩展信息、股票对比、页面切换和大盘温度同步显示优化
+- [Bug fixes & context 2026-05-14](bug_fixes_and_context_2026-05-14.md) — 5/14更新：决策委员会、飞书/Actions、自选股、中文名称识别、个股扩展信息、股票对比、页面切换、大盘温度、深色主题和推送卡片补齐
 - [Bug fixes & context 2026-05-13](bug_fixes_and_context_2026-05-13.md) — 5/13更新：对比 daily_stock_analysis / a-stock-data 后新增每日决策仪表盘，接入研报、风险事件、板块归因和 GitHub Actions 定时推送
 - [Bug fixes & context 2026-05-12](bug_fixes_and_context_2026-05-12.md) — 5/12修复：全量A股名称索引、搜索性能优化、运行缓存迁移、API安全提示，533 tests pass
 - [Project state 2026-05-10](project_state.md) — P0代码质量修复完成，P1/P2优化待做，514测试通过
