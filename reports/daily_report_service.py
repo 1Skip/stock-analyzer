@@ -7,6 +7,7 @@ from typing import Any
 from config import INDEX_WATCHLIST
 from data.services.info_service import StockInfoService
 from data.services.quote_service import QuoteDataService
+from decision_committee import build_watchlist_decision
 from reports.exporter import save_markdown_report
 from stock_recommendation import StockRecommender
 
@@ -115,11 +116,14 @@ class DailyReportService:
         watchlist = data.get("watchlist") or []
         recommendations = data.get("recommendations") or []
         extended_items = data.get("extended_info") or []
+        decision_map = self._build_committee_map(watchlist, extended_items)
         top_watch = self._top_watch_item(watchlist)
         if top_watch:
+            top_decision = decision_map.get(top_watch.get("symbol")) or {}
             lines.append(
                 f"- 自选股重点：`{top_watch.get('symbol')}` {top_watch.get('name', '')}，"
-                f"信号 {top_watch.get('signal_summary', '--')}，入场提示：{top_watch.get('entry_hint', '--')}"
+                f"决策 {top_decision.get('action', '--')}，评分 {top_decision.get('score', '--')}，"
+                f"仓位 {top_decision.get('position', '--')}，风险 {top_decision.get('risk_level', '--')}"
             )
         elif recommendations:
             item = recommendations[0]
@@ -151,12 +155,18 @@ class DailyReportService:
                 if item.get("error"):
                     lines.append(f"- `{item['symbol']}` {item.get('name', '')}：⚠ {item['error']}")
                     continue
-                score = self._decision_score(item)
+                decision = decision_map.get(item.get("symbol")) or build_watchlist_decision(item)
+                score = decision.get("score", self._decision_score(item))
                 lines.append(
                     f"- `{item['symbol']}` {item.get('name', '')}：决策评分 {score}；"
+                    f"建议 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}，风险 {decision.get('risk_level', '--')}；"
                     f"现价 {self._fmt_number(item.get('price'))} ({self._fmt_pct(item.get('change_pct'))})；"
-                    f"信号 {item.get('signal_summary', '--')}；买卖点：{item.get('entry_hint', '--')}"
+                    f"买卖点：{decision.get('entry_hint') or item.get('entry_hint', '--')}"
                 )
+                for point in (decision.get("bullish_points") or [])[:2]:
+                    lines.append(f"  - 看多依据：{point}")
+                for risk in (decision.get("risk_alerts") or [])[:2]:
+                    lines.append(f"  - 风险警报：{risk}")
         else:
             lines.append("- 暂无自选股")
 
@@ -180,7 +190,18 @@ class DailyReportService:
                 research = info.get("research") or {}
                 risk_events = info.get("risk_events") or {}
                 sector_attribution = info.get("sector_attribution") or {}
+                decision = decision_map.get(item.get("symbol")) or {}
                 lines.append(f"### `{item['symbol']}` {item.get('name', '')}")
+                if decision:
+                    lines.append(
+                        f"- A股决策委员会：{decision.get('summary', '--')} "
+                        f"操作 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}"
+                    )
+                    for agent in (decision.get("agents") or [])[:5]:
+                        lines.append(
+                            f"  - {agent.get('name')}：{agent.get('stance')} "
+                            f"({agent.get('score_delta'):+})，{agent.get('summary')}"
+                        )
                 metrics = financial.get("metrics") or {}
                 if metrics:
                     lines.append(
@@ -254,6 +275,24 @@ class DailyReportService:
         if not valid:
             return None
         return max(valid, key=lambda item: DailyReportService._decision_score(item))
+
+    def _build_committee_map(
+        self,
+        watchlist: list[dict[str, Any]],
+        extended_items: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        info_map = {
+            item.get("symbol"): item.get("info") or {}
+            for item in extended_items
+            if item.get("symbol")
+        }
+        decisions = {}
+        for item in watchlist:
+            symbol = item.get("symbol")
+            if not symbol or item.get("error"):
+                continue
+            decisions[symbol] = build_watchlist_decision(item, info_map.get(symbol, {}))
+        return decisions
 
     @staticmethod
     def _decision_score(item: dict[str, Any]) -> int:

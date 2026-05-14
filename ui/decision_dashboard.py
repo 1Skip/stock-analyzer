@@ -6,90 +6,17 @@ from typing import Any
 
 import streamlit as st
 
-from watchlist import get_entry_hint
-
-
-def _contains_any(text: str, keywords: tuple[str, ...]) -> bool:
-    return any(keyword in text for keyword in keywords)
+from decision_committee import build_a_share_decision
 
 
 def build_decision_snapshot(data, signals: dict[str, Any], quote: dict[str, Any] | None, extended_info: dict[str, Any] | None = None) -> dict[str, Any]:
-    recommendation = str(signals.get("recommendation", "观望"))
-    signal_text = " ".join(str(signals.get(key, "")) for key in ("macd", "rsi", "kdj", "boll", "recommendation"))
-
-    score = 50
-    if "偏多信号（强）" in recommendation:
-        score = 82
-    elif "偏多" in recommendation:
-        score = 68
-    elif "偏空信号（强）" in recommendation:
-        score = 22
-    elif "偏空" in recommendation:
-        score = 35
-
-    change_pct = (quote or {}).get("change")
-    if isinstance(change_pct, (int, float)):
-        score += max(-8, min(8, change_pct * 1.2))
-    score = int(max(0, min(100, round(score))))
-
-    latest = data.iloc[-1].to_dict() if data is not None and not data.empty else {}
-    price = (quote or {}).get("price") or latest.get("close") or 0
-    entry_hint = get_entry_hint(price, latest, recommendation) if price else "等待有效价格数据"
-
-    if score >= 75:
-        action = "积极关注"
-        tone = "bullish"
-    elif score >= 60:
-        action = "轻仓试探"
-        tone = "watch"
-    elif score <= 35:
-        action = "控制风险"
-        tone = "bearish"
-    else:
-        action = "耐心观察"
-        tone = "neutral"
-
-    risks = []
-    if _contains_any(signal_text, ("偏空", "死叉", "回调", "超买", "突破上轨")):
-        risks.append("技术面存在回调/偏空信号，避免追高。")
-    if _contains_any(signal_text, ("超卖", "跌破下轨")):
-        risks.append("短线波动可能放大，等待企稳确认。")
-    risk_events = (extended_info or {}).get("risk_events") or {}
-    announcements = risk_events.get("announcements") or []
-    lockups = risk_events.get("lockup_expiry") or []
-    if announcements:
-        first = announcements[0]
-        risks.append(f"关注公告风险：{first.get('title') or first.get('name') or '最新公告'}")
-    if lockups:
-        risks.append("存在限售解禁相关信息，注意供给冲击。")
-    if not risks:
-        risks.append("暂无明显风险警报，仍需控制仓位。")
-
-    catalysts = []
-    fund_flow = (extended_info or {}).get("fund_flow") or {}
-    if fund_flow.get("main_net_inflow"):
-        catalysts.append("主力资金流向可作为短线催化观察。")
-    research = (extended_info or {}).get("research") or {}
-    if research.get("reports"):
-        catalysts.append("近期研报覆盖，可结合评级/目标价变化跟踪。")
-    attribution = (extended_info or {}).get("attribution") or {}
-    concepts = attribution.get("concepts") or []
-    if concepts:
-        catalysts.append(f"题材关注：{'、'.join(str(item) for item in concepts[:3])}")
-    news = (extended_info or {}).get("news") or []
-    if news:
-        catalysts.append("近期新闻可能影响情绪面。")
-    if not catalysts:
-        catalysts.append("等待量价突破、板块联动或公告催化。")
-
+    decision = build_a_share_decision(data=data, signals=signals, quote=quote, extended_info=extended_info)
+    score = decision["score"]
+    tone = "bullish" if score >= 75 else "watch" if score >= 60 else "bearish" if score <= 35 else "neutral"
     return {
-        "score": score,
-        "action": action,
+        **decision,
         "tone": tone,
-        "recommendation": recommendation,
-        "entry_hint": entry_hint,
-        "risks": risks[:3],
-        "catalysts": catalysts[:3],
+        "risks": decision.get("risk_alerts", []),
     }
 
 
@@ -125,7 +52,9 @@ def render_decision_dashboard(data, signals: dict[str, Any], quote: dict[str, An
     with col_action:
         _card(
             "操作参考",
-            f"<b>{html.escape(snapshot['action'])}</b><br><span>{html.escape(snapshot['entry_hint'])}</span>",
+            f"<b>{html.escape(snapshot['action'])}</b><br>"
+            f"<span>仓位：{html.escape(snapshot['position'])}</span><br>"
+            f"<span>{html.escape(snapshot['entry_hint'])}</span>",
             snapshot["tone"],
         )
     with col_risk:
@@ -134,3 +63,18 @@ def render_decision_dashboard(data, signals: dict[str, Any], quote: dict[str, An
     with col_catalyst:
         catalyst_html = "<br>".join(f"✨ {html.escape(item)}" for item in snapshot["catalysts"])
         _card("催化因素", catalyst_html, "watch")
+
+    with st.expander("A股决策委员会：五层 Agent 观点", expanded=False):
+        cols = st.columns(5)
+        for idx, agent in enumerate(snapshot.get("agents", [])):
+            with cols[idx % 5]:
+                evidence = "<br>".join(html.escape(str(item)) for item in agent.get("evidence", [])[:3])
+                warnings = "<br>".join(f"⚠ {html.escape(str(item))}" for item in agent.get("warnings", [])[:2])
+                body = (
+                    f"<b>{html.escape(agent.get('stance', '--'))}</b> "
+                    f"({agent.get('score_delta', 0):+})<br>"
+                    f"{html.escape(agent.get('summary', ''))}<br>{evidence}"
+                )
+                if warnings:
+                    body += f"<br>{warnings}"
+                _card(agent.get("name", "Agent"), body, "bullish" if agent.get("score_delta", 0) > 0 else "bearish" if agent.get("score_delta", 0) < 0 else "neutral")
