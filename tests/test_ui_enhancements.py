@@ -256,6 +256,16 @@ def test_analyze_page_renders_extended_info_placeholder():
     assert 'extended_info = futures[\'extended_info\'].result(timeout=2.5)' in source
 
 
+def test_analyze_page_uses_code_name_title_card():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "个股分析标的" in source
+    assert "display_name = stock_name if stock_name and stock_name != symbol else" in source
+    assert "{html.escape(symbol)}{f\" · {html.escape(display_name)}\" if display_name else \"\"}" in source
+
+
 def test_analyze_page_renders_market_news_section():
     from pathlib import Path
 
@@ -343,6 +353,19 @@ def test_app_applies_pending_main_page_before_radio():
     pending_index = source.index('pending_main_page = st.session_state.pop("pending_main_page", None)')
     radio_index = source.index("page = st.radio(")
     assert pending_index < radio_index
+
+
+def test_backtest_page_resolves_name_and_renders_target_header():
+    from pathlib import Path
+
+    source = Path("backtest_ui.py").read_text(encoding="utf-8")
+
+    assert "def _resolve_backtest_target" in source
+    assert "resolve_cached_stock_input(query, market)" in source
+    assert "股票代码或名称" in source
+    assert "回测标的" in source
+    assert "_render_backtest_target_header(symbol, stock_name, market" in source
+    assert "adapter.save_results(symbol, market, output)" in source
 
 
 def test_ai_analysis_ui_is_optional_auxiliary():

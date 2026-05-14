@@ -421,7 +421,22 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     # ① 标题行
     col_title, col_watchlist = st.columns([3, 1])
     with col_title:
-        st.markdown(f'<div style="font-size:1.25rem;font-weight:600;margin-bottom:8px;">{html.escape(symbol)} {html.escape(stock_name)}</div>', unsafe_allow_html=True)
+        display_name = stock_name if stock_name and stock_name != symbol else ""
+        market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+        st.markdown(
+            f"""
+            <div style="margin:0 0 12px;padding:14px 16px;border-radius:14px;
+                        border:1px solid rgba(128,128,128,0.18);
+                        background:linear-gradient(135deg,rgba(52,199,89,0.08),rgba(128,128,128,0.04));">
+              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">个股分析标的</div>
+              <div style="font-size:1.32rem;font-weight:700;line-height:1.3;">
+                {html.escape(symbol)}{f" · {html.escape(display_name)}" if display_name else ""}
+              </div>
+              <div style="font-size:0.85rem;opacity:0.65;margin-top:4px;">{html.escape(market_label)} · {html.escape(period)}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     with col_watchlist:
         if is_in_watchlist(symbol, market):
             if st.button("移除自选", key="remove_watchlist"):

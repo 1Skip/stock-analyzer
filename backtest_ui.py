@@ -1,14 +1,55 @@
 """
 回测验证 Streamlit 页面
 """
+import html
+
 import streamlit as st
 import pandas as pd
 from ui.loading import status_loading
+from ui.cached_data import quote_service, resolve_cached_stock_input
 
 from config import (
     BACKTEST_EVAL_WINDOW, BACKTEST_STOP_LOSS, BACKTEST_TAKE_PROFIT,
     BACKTEST_NEUTRAL_BAND,
 )
+
+
+def _resolve_backtest_target(query: str, market: str) -> tuple[str, str]:
+    """把回测输入解析为股票代码和名称。"""
+    query = str(query or "").strip()
+    if not query:
+        return "", ""
+    if market == "CN":
+        match = resolve_cached_stock_input(query, market)
+        if match:
+            return match[0], match[1]
+        if query.isdigit() and len(query) == 6:
+            return query, quote_service.get_stock_name(query, market) or query
+        return query, query
+    symbol = query.upper()
+    return symbol, quote_service.get_stock_name(symbol, market) or symbol
+
+
+def _render_backtest_target_header(symbol: str, stock_name: str, market: str, *, status: str | None = None) -> None:
+    """展示回测标的标题栏，错误/状态不混入股票名称。"""
+    display_name = stock_name if stock_name and stock_name != symbol else ""
+    subtitle = html.escape(market)
+    if status:
+        subtitle += f" · {html.escape(status)}"
+    st.markdown(
+        f"""
+        <div style="margin:12px 0 16px;padding:14px 16px;border-radius:14px;
+                    border:1px solid rgba(128,128,128,0.18);
+                    background:linear-gradient(135deg,rgba(0,122,255,0.08),rgba(128,128,128,0.04));">
+          <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">回测标的</div>
+          <div style="font-size:1.28rem;font-weight:700;line-height:1.3;">
+            {html.escape(symbol)}{f" · {html.escape(display_name)}" if display_name else ""}
+          </div>
+          <div style="font-size:0.85rem;opacity:0.65;margin-top:4px;">{subtitle}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def backtest_page():
@@ -23,7 +64,7 @@ def backtest_page():
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        symbol = st.text_input("股票代码", value="000001", help="A股输入6位数字")
+        symbol_input = st.text_input("股票代码或名称", value="000001", help="A股可输入6位代码或股票名称")
     with col2:
         market_label = st.selectbox("市场", options=list(MARKET_MAP.keys()),
                                     index=0, key="bt_market_label")
@@ -52,11 +93,17 @@ def backtest_page():
 
     # ---- 运行 ----
     if st.button("开始回测", type="primary", use_container_width=True):
-        with status_loading(f"\u6b63\u5728\u56de\u6d4b {symbol}\uff0c\u53ef\u80fd\u9700\u8981 5-30 \u79d2...", 20):
+        symbol, stock_name = _resolve_backtest_target(symbol_input, market)
+        if not symbol:
+            st.error("请输入股票代码或名称")
+            return
+
+        loading_name = f" {stock_name}" if stock_name and stock_name != symbol else ""
+        with status_loading(f"\u6b63\u5728\u56de\u6d4b {symbol}{loading_name}\uff0c\u53ef\u80fd\u9700\u8981 5-30 \u79d2...", 20):
             from backtest_adapter import BacktestAdapter
             adapter = BacktestAdapter()
             output = adapter.run(
-                symbol=symbol.strip(),
+                symbol=symbol,
                 market=market,
                 period=period,
                 eval_window_days=int(eval_window),
@@ -70,12 +117,16 @@ def backtest_page():
         completed = [r for r in results if r.get("eval_status") == "completed"]
 
         if "error" in summary:
+            _render_backtest_target_header(symbol, stock_name, market, status="回测失败")
             st.error(f"回测失败: {summary['error']}")
             return
 
         if not completed:
+            _render_backtest_target_header(symbol, stock_name, market, status="无有效结果")
             st.warning("没有足够的有效回测结果。请尝试更长的数据周期或更大的评估窗口。")
             return
+
+        _render_backtest_target_header(symbol, stock_name, market, status=f"{period} · 评估窗口 {int(eval_window)} 天")
 
         # ---- 概览指标 ----
         st.subheader("回测概览")
@@ -151,5 +202,5 @@ def backtest_page():
 
         # ---- 保存 ----
         if st.button("保存结果"):
-            path = adapter.save_results(symbol.strip(), market, output)
+            path = adapter.save_results(symbol, market, output)
             st.success(f"已保存: {path}")
