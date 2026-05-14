@@ -73,7 +73,7 @@ class TestDailyReportService:
         assert "# 每日股票决策仪表盘" in content
         assert "## 核心结论" in content
         assert "## 大盘温度" in content
-        assert "## 自选股决策面板" in content
+        assert "## 自选股决策仪表盘" in content
         assert "## 推荐池" in content
         assert "## 研报 / 风险 / 板块归因" in content
         assert "## 操作检查清单" in content
@@ -85,6 +85,8 @@ class TestDailyReportService:
         assert "A股决策委员会" in content
         assert "技术分析 Agent" in content
         assert "仓位" in content
+        assert "关键价位" in content
+        assert "催化因素" in content
 
     def test_save_markdown_report_writes_dated_and_latest(self, tmp_path):
         paths = save_markdown_report("# 测试", "2026-05-13", output_dir=tmp_path)
@@ -134,3 +136,33 @@ class TestDailyReportService:
 
         assert any("龙虎榜" in line for line in risk_lines)
         assert any("公告关注" in line for line in risk_lines)
+
+    def test_render_markdown_contains_llm_debate_when_present(self):
+        service = DailyReportService(quote_service=object(), info_service=object(), recommender=object())
+        content = service.render_markdown({
+            "date": "2026-05-13",
+            "generated_at": "2026-05-13 15:30:00",
+            "market_indices": [],
+            "recommendations": [],
+            "extended_info": [],
+            "watchlist": [{
+                "symbol": "000001",
+                "name": "平安银行",
+                "price": 11.25,
+                "change_pct": 1.2,
+                "signal_summary": "偏多信号",
+            }],
+            "debates": {
+                "000001": {
+                    "enabled": True,
+                    "bull": {"structured": {"核心论点": "资金与技术共振", "证据": ["主力净流入", "MACD金叉"]}},
+                    "bear": {"structured": {"核心论点": "短线波动偏大", "风险": ["涨幅过快"]}},
+                    "risk_manager": {"structured": {"最终裁决": "轻仓试探", "建议仓位": "1-2成", "置信度": "中", "核心理由": "等待回踩确认"}},
+                }
+            },
+        })
+
+        assert "LLM多空辩论" in content
+        assert "多头：资金与技术共振" in content
+        assert "空头：短线波动偏大" in content
+        assert "风控裁决：轻仓试探" in content

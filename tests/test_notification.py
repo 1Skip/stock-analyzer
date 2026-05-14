@@ -181,6 +181,15 @@ class TestFeishuSender:
             assert payload["card"]["header"]["title"]["content"] == "title"
             assert payload["card"]["elements"][0]["content"] == "body"
 
+    def test_feishu_long_markdown_is_chunked(self):
+        from notification import _build_feishu_markdown_elements
+
+        elements = _build_feishu_markdown_elements("A" * 3600 + "\n\nB" * 100, max_chars=1000)
+
+        assert len(elements) > 1
+        assert all(item["tag"] == "markdown" for item in elements)
+        assert all(len(item["content"]) <= 1000 for item in elements)
+
     def test_error_code(self):
         mock_resp = MagicMock()
         mock_resp.status_code = 200

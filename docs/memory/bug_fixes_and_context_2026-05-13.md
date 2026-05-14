@@ -293,3 +293,18 @@ python main.py --schedule
   - `py -m compileall ui\decision_dashboard.py ui\styles.py tests\test_ui_enhancements.py`
   - `py -m pytest tests\test_ui_enhancements.py tests\test_decision_committee.py -q` → 15 passed
 
+## 追加记录：TradingAgents 借鉴阶段 3/4/5 最终版
+- 阶段 3（日报/飞书决策仪表盘）：
+  - `reports/daily_report_service.py` 在 `build_report_data()` 阶段生成并复用 `decisions`，日报自选股区升级为“决策仪表盘”结构。
+  - 自选股日报输出评分、行动、仓位、风险、置信度、价格状态、买卖点、关键价位、催化因素、看多依据和风险警报。
+- 阶段 4（外部 LLM 多空辩论）：
+  - `ai_analysis.py` 新增 `build_debate_snapshot()` 和 `run_debate_analysis()`。
+  - 三角色为多头研究员、空头研究员、风控经理；输入复用五层 Agent 结论、扩展信息、资金/研报/风险/板块数据。
+  - `AI_DEBATE_ENABLED=false` 或未配置 `AI_API_KEY` 时自动跳过，不影响本地、飞书和 GitHub Actions。
+- 阶段 5（GitHub Actions 云端闭环）：
+  - `.github/workflows/daily_analysis.yml` 增加 `AI_MODEL`、`AI_BASE_URL`、`AI_DEBATE_ENABLED`、`AI_DEBATE_MAX_SYMBOLS` 云端配置。
+  - `notification.py` 新增飞书 Markdown 长文本拆分，降低完整日报卡片过长导致推送失败概率。
+  - README、CLAUDE、`docs/FEISHU_GITHUB_ACTIONS.md` 同步说明 LLM 辩论配置和最终推送内容。
+- 验证：
+  - `py -m pytest tests\test_ai_analysis.py tests\test_daily_report.py tests\test_notification.py -q` → 82 passed
+

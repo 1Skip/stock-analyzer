@@ -166,6 +166,8 @@ AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1024"))
 AI_CACHE_TTL_SECONDS = int(os.getenv("AI_CACHE_TTL", "300"))
 AI_MULTI_AGENT = os.getenv("AI_MULTI_AGENT", "false").lower() == "true"  # 多Agent协作分析
+AI_DEBATE_ENABLED = os.getenv("AI_DEBATE_ENABLED", "false").lower() == "true"  # A股多空辩论/风控委员会
+AI_DEBATE_MAX_SYMBOLS = int(os.getenv("AI_DEBATE_MAX_SYMBOLS", "3"))
 
 # ============================================================
 # 数据源配置

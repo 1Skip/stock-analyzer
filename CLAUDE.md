@@ -33,7 +33,7 @@
 | `ui/decision_dashboard.py` | 个股页决策仪表盘 | 阶段 2 最终版展示层：综合评分 Hero、仓位/买卖点、关键价位、催化因素、看多/看空/风险列表和五层 Agent 折叠明细 |
 | `reports/` | 每日报告服务 | `DailyReportService` 汇总大盘、自选股、推荐股、研报、风险事件、板块归因、操作检查清单，`exporter.py` 导出 Markdown |
 | `technical_indicators.py` | 技术指标计算 | MACD / RSI(6/12/24) / KDJ / BOLL / MA，纯 pandas 实现 |
-| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持多Agent协作（技术+风险+决策） |
+| `ai_analysis.py` | AI 智能解读 | 提取指标快照 → LLM 翻译为自然语言，支持技术/风险/决策协作和A股多空研究员+风控经理辩论层 |
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义，多因子评分(0-100)，支持 CN/US/HK |
@@ -66,9 +66,9 @@
 - **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，最多短暂等待；失败返回空结构，不影响主图表和技术指标
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 决策仪表盘，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
 - **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
-- **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用五层 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示，包含综合评分 Hero、关键价位、买卖点、催化因素、看多/看空/风险列表和五层 Agent 折叠明细；日报 `DailyReportService` 共用同一套结论，当前不依赖外部 LLM，阶段 4 再叠加多空辩论/风控 Agent
+- **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用五层 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示；日报 `DailyReportService` 已完成阶段 3 最终版决策仪表盘输出；`ai_analysis.py` 已完成阶段 4 最终版可选 LLM 多空辩论/风控经理层，未配置 `AI_API_KEY` 时自动跳过
 - **日报定时推送**：`scheduler.py` 默认按“自选股摘要 → 固定四板块推荐 → 每日完整 Markdown 日报”执行；四板块为算力租赁、电力、苹果概念、特斯拉概念，默认每板块短线 2 只 + 长线 1 只；智能推荐和推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场观察，不做主板过滤；定时推送不再用全市场推荐股补充内容，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后定时推送被推荐股全市场扫描拖慢
-- **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify`，默认 `NOTIFY_CHANNELS=feishu`；配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送日报，配置 `STOCK_LIST`（逗号分隔，支持 A 股代码/中文名）或高级 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；中文名解析失败会直接报错，不再误用中文名查询行情
+- **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify`，默认 `NOTIFY_CHANNELS=feishu`；配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送日报，配置 `STOCK_LIST`（逗号分隔，支持 A 股代码/中文名）或高级 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；阶段 5 最终版支持通过 Variables `AI_DEBATE_ENABLED=true` + Secret `AI_API_KEY` 在云端启用 LLM 多空辩论；中文名解析失败会直接报错，不再误用中文名查询行情
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）

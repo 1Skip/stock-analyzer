@@ -144,6 +144,10 @@ jobs:
           NOTIFY_CHANNELS: feishu
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-chat' }}
+          AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
+          AI_DEBATE_ENABLED: ${{ vars.AI_DEBATE_ENABLED || 'false' }}
+          AI_DEBATE_MAX_SYMBOLS: ${{ vars.AI_DEBATE_MAX_SYMBOLS || '3' }}
           DAILY_REPORT_ENABLED: "true"
           DAILY_REPORT_PUSH_ENABLED: "true"
           DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "false"

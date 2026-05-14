@@ -4,7 +4,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from config import INDEX_WATCHLIST
+from config import (
+    AI_API_KEY,
+    AI_BASE_URL,
+    AI_DEBATE_ENABLED,
+    AI_DEBATE_MAX_SYMBOLS,
+    AI_MODEL,
+    INDEX_WATCHLIST,
+)
 from data.services.info_service import StockInfoService
 from data.services.quote_service import QuoteDataService
 from decision_committee import build_watchlist_decision
@@ -30,6 +37,8 @@ class DailyReportService:
         watchlist_items = self._load_watchlist()
         watchlist_summary = self._get_watchlist_summary(watchlist_items) if watchlist_items else []
         focus_symbols = self._collect_focus_symbols(watchlist_items)
+        extended_info = self._get_extended_info(focus_symbols)
+        decision_map = self._build_committee_map(watchlist_summary, extended_info)
 
         return {
             "date": report_date,
@@ -37,7 +46,9 @@ class DailyReportService:
             "market_indices": self._get_market_indices(),
             "watchlist": watchlist_summary,
             "recommendations": self._get_recommendations() if include_recommendations else [],
-            "extended_info": self._get_extended_info(focus_symbols),
+            "extended_info": extended_info,
+            "decisions": decision_map,
+            "debates": self._get_debate_results(watchlist_summary, extended_info, decision_map),
         }
 
     def generate_markdown(self, report_date: str | None = None, include_recommendations: bool = True) -> str:
@@ -116,7 +127,8 @@ class DailyReportService:
         watchlist = data.get("watchlist") or []
         recommendations = data.get("recommendations") or []
         extended_items = data.get("extended_info") or []
-        decision_map = self._build_committee_map(watchlist, extended_items)
+        decision_map = data.get("decisions") or self._build_committee_map(watchlist, extended_items)
+        debate_map = data.get("debates") or {}
         top_watch = self._top_watch_item(watchlist)
         if top_watch:
             top_decision = decision_map.get(top_watch.get("symbol")) or {}
@@ -150,7 +162,7 @@ class DailyReportService:
         else:
             lines.append("- 暂无大盘指数数据")
 
-        lines.extend(["", "## 自选股决策面板"])
+        lines.extend(["", "## 自选股决策仪表盘"])
         if watchlist:
             for item in watchlist:
                 if item.get("error"):
@@ -158,24 +170,35 @@ class DailyReportService:
                     continue
                 decision = decision_map.get(item.get("symbol")) or build_watchlist_decision(item)
                 score = decision.get("score", self._decision_score(item))
+                lines.append(f"### `{item['symbol']}` {item.get('name', '')}")
                 lines.append(
-                    f"- `{item['symbol']}` {item.get('name', '')}：决策评分 {score}；"
-                    f"建议 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}，"
-                    f"风险 {decision.get('risk_level', '--')}，置信度 {decision.get('confidence', '--')}%；"
-                    f"现价 {self._fmt_number(item.get('price'))} ({self._fmt_pct(item.get('change_pct'))})；"
+                    f"- **决策仪表盘**：评分 **{score}/100**，"
+                    f"行动 **{decision.get('action', '--')}**，仓位 **{decision.get('position', '--')}**，"
+                    f"风险 **{decision.get('risk_level', '--')}**，置信度 **{decision.get('confidence', '--')}%**。"
+                )
+                lines.append(
+                    f"- **价格状态**：现价 {self._fmt_number(item.get('price'))} "
+                    f"({self._fmt_pct(item.get('change_pct'))})；"
                     f"买卖点：{decision.get('entry_hint') or item.get('entry_hint', '--')}"
                 )
                 key_levels = decision.get("key_levels") or {}
                 if key_levels:
                     lines.append(
-                        f"  - 关键位：支撑 {self._fmt_number(key_levels.get('support'))}，"
+                        f"- **关键价位**：支撑 {self._fmt_number(key_levels.get('support'))}，"
                         f"中轨 {self._fmt_number(key_levels.get('mid'))}，"
-                        f"压力 {self._fmt_number(key_levels.get('resistance'))}"
+                        f"压力 {self._fmt_number(key_levels.get('resistance'))}，"
+                        f"MA20 {self._fmt_number(key_levels.get('ma20'))}"
                     )
+                catalysts = "；".join((decision.get("catalysts") or [])[:3])
+                if catalysts:
+                    lines.append(f"- **催化因素**：{catalysts}")
                 for point in (decision.get("bullish_points") or [])[:2]:
                     lines.append(f"  - 看多依据：{point}")
                 for risk in (decision.get("risk_alerts") or [])[:2]:
                     lines.append(f"  - 风险警报：{risk}")
+                debate = debate_map.get(item.get("symbol")) or {}
+                if debate:
+                    lines.extend(self._render_debate_lines(debate))
         else:
             lines.append("- 暂无自选股")
 
@@ -303,6 +326,73 @@ class DailyReportService:
                 continue
             decisions[symbol] = build_watchlist_decision(item, info_map.get(symbol, {}))
         return decisions
+
+    def _get_debate_results(
+        self,
+        watchlist: list[dict[str, Any]],
+        extended_items: list[dict[str, Any]],
+        decision_map: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        if not AI_DEBATE_ENABLED or not AI_API_KEY:
+            return {}
+        try:
+            from ai_analysis import run_debate_analysis
+        except Exception:
+            return {}
+
+        info_map = {
+            item.get("symbol"): item.get("info") or {}
+            for item in extended_items
+            if item.get("symbol")
+        }
+        results = {}
+        for item in watchlist[: max(0, AI_DEBATE_MAX_SYMBOLS)]:
+            symbol = item.get("symbol")
+            decision = decision_map.get(symbol)
+            if not symbol or not decision or item.get("error"):
+                continue
+            try:
+                results[symbol] = run_debate_analysis(
+                    decision,
+                    stock=item,
+                    extended_info=info_map.get(symbol, {}),
+                    model=AI_MODEL,
+                    api_key=AI_API_KEY,
+                    base_url=AI_BASE_URL,
+                )
+            except Exception as exc:
+                results[symbol] = {
+                    "mode": "a_share_debate",
+                    "enabled": True,
+                    "error": str(exc),
+                    "bull": {},
+                    "bear": {},
+                    "risk_manager": {},
+                }
+        return results
+
+    def _render_debate_lines(self, debate: dict[str, Any]) -> list[str]:
+        if not debate or not debate.get("enabled"):
+            return []
+        if debate.get("error"):
+            return [f"- **LLM多空辩论**：生成失败，{debate.get('error')}"]
+        bull = (debate.get("bull") or {}).get("structured") or {}
+        bear = (debate.get("bear") or {}).get("structured") or {}
+        manager = (debate.get("risk_manager") or {}).get("structured") or {}
+        lines = ["- **LLM多空辩论**："]
+        if bull:
+            evidence = "；".join((bull.get("证据") or [])[:2])
+            lines.append(f"  - 多头：{bull.get('核心论点', '--')}；{evidence}")
+        if bear:
+            risks = "；".join((bear.get("风险") or [])[:2])
+            lines.append(f"  - 空头：{bear.get('核心论点', '--')}；{risks}")
+        if manager:
+            lines.append(
+                f"  - 风控裁决：{manager.get('最终裁决', '--')}，"
+                f"仓位 {manager.get('建议仓位', '--')}，置信度 {manager.get('置信度', '--')}；"
+                f"{manager.get('核心理由', '')}"
+            )
+        return lines
 
     @staticmethod
     def _decision_score(item: dict[str, Any]) -> int:

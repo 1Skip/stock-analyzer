@@ -32,7 +32,24 @@ Settings → Secrets and variables → Actions → New repository secret
 |------|------|
 | `STOCK_LIST` | 云端日报使用的自选股，逗号分隔，推荐 |
 | `WATCHLIST_JSON` | 云端日报使用的高级自选股 JSON |
-| `AI_API_KEY` | AI 解读所需 API Key，没有也可以不填 |
+| `AI_API_KEY` | LLM 多空辩论所需 API Key，没有也可以不填 |
+| `AI_BASE_URL` | 可选，自定义 LLM API 地址 |
+
+如需开启 LLM 多空辩论，还要进入：
+
+```text
+Settings → Secrets and variables → Actions → Variables
+```
+
+新增：
+
+| Variable 名称 | 值 |
+|------|------|
+| `AI_DEBATE_ENABLED` | `true` |
+| `AI_MODEL` | 可选，默认 `deepseek/deepseek-chat` |
+| `AI_DEBATE_MAX_SYMBOLS` | 可选，默认 `3` |
+
+不开启 `AI_DEBATE_ENABLED` 时，日报仍会使用本项目的五层 A股决策委员会，不依赖外部 LLM。
 
 `STOCK_LIST` 示例：
 
@@ -91,6 +108,15 @@ A 股中文名称会先用内置全量名称索引解析，再尝试在线刷新
 3. 每日完整 Markdown 决策日报。
 
 推荐股推送仅包含沪深主板股票；热门板块排行仍保留全市场观察。
+
+完整日报包含：
+
+- A股决策委员会评分、仓位、风险等级、置信度。
+- 买卖点、关键价位、看多依据、风险警报、催化因素。
+- 研报、公告、龙虎榜、限售解禁、行业/概念归因。
+- 可选 LLM 多空辩论：多头研究员、空头研究员、风控经理裁决。
+
+飞书卡片会自动把超长 Markdown 拆成多个元素，避免日报过长导致推送失败。
 
 ## 5. 常见问题
 

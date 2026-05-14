@@ -67,6 +67,7 @@ def _send_feishu(title: str, body: str) -> bool:
     if not FEISHU_WEBHOOK_URL:
         logger.warning("飞书 webhook 未配置")
         return False
+    elements = _build_feishu_markdown_elements(body)
 
     resp = requests.post(
         FEISHU_WEBHOOK_URL,
@@ -77,7 +78,7 @@ def _send_feishu(title: str, body: str) -> bool:
                     "title": {"tag": "plain_text", "content": title},
                     "template": "blue",
                 },
-                "elements": [{"tag": "markdown", "content": body}],
+                "elements": elements,
             },
         },
         timeout=10,
@@ -86,6 +87,30 @@ def _send_feishu(title: str, body: str) -> bool:
     if not ok:
         logger.warning(f"飞书推送失败: {resp.text}")
     return ok
+
+
+def _build_feishu_markdown_elements(body: str, max_chars: int = 3500) -> list[dict]:
+    """把长 Markdown 拆成多个飞书卡片元素，降低超长日报推送失败概率。"""
+    text = str(body or "").strip()
+    if not text:
+        return [{"tag": "markdown", "content": "暂无内容"}]
+    chunks = []
+    current = ""
+    for block in text.split("\n\n"):
+        candidate = block if not current else f"{current}\n\n{block}"
+        if len(candidate) <= max_chars:
+            current = candidate
+            continue
+        if current:
+            chunks.append(current)
+        if len(block) <= max_chars:
+            current = block
+        else:
+            chunks.extend(block[index:index + max_chars] for index in range(0, len(block), max_chars))
+            current = ""
+    if current:
+        chunks.append(current)
+    return [{"tag": "markdown", "content": chunk} for chunk in chunks]
 
 
 def build_sector_report(sector_data: dict) -> tuple[str, str]:

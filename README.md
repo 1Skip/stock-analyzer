@@ -158,6 +158,8 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `DAILY_REPORT_PUSH_ENABLED`：定时任务是否推送完整 Markdown 日报，默认 `true`。
 - `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描推荐股，默认 `false`，避免定时推送过慢。
 - `DAILY_REPORT_DIR`：日报输出目录，默认 `reports/history`。
+- `AI_DEBATE_ENABLED`：日报是否启用外部 LLM 多空辩论/风控经理层，默认 `false`；开启前需配置 `AI_API_KEY`。
+- `AI_DEBATE_MAX_SYMBOLS`：每次日报最多对前 N 只自选股做 LLM 辩论，默认 `3`，用于控制 Actions 耗时和费用。
 
 ## 项目结构
 
@@ -178,7 +180,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险五层 Agent，含权重、置信度、关键位） |
 | `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
-| `ai_analysis.py` | AI 智能解读（多Agent：技术+风险+决策） |
+| `ai_analysis.py` | AI 智能解读（技术+风险+决策，多空研究员+风控经理辩论层） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
 | `chart_utils.py` | 共享图表工具 |
 | `stock_recommendation.py` | 热门排行 + 板块排行 + 评分推荐 |
@@ -216,13 +218,13 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - 研报层：对自选股中的 A 股补充东财个股研报、PDF 链接和同花顺一致预期 EPS。
 - 风险事件层：补充龙虎榜、限售解禁和近 30 日个股公告，风险公告会进入风险警报。
 - 板块归因层：补充行业/概念归属、板块涨跌幅和简单题材原因。
-- 决策面板：输出决策评分、买卖点、风险警报、催化因素和操作检查清单。
-- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的五层 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件细分评分；当前不依赖外部 LLM，适合 GitHub Actions 和飞书定时推送，后续可叠加多空辩论和风控 Agent。
+- 决策面板：输出决策评分、买卖点、关键价位、风险警报、催化因素、操作检查清单和五层 Agent 明细。
+- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的五层 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件细分评分；阶段 3 最终版已把日报升级为决策仪表盘；阶段 4 最终版支持可选外部 LLM 多空辩论（多头研究员、空头研究员、风控经理），未配置 `AI_API_KEY` 时自动跳过，不影响 GitHub Actions 和飞书定时推送。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
 定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只；推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
-GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需云端日报包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
+GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需云端日报包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。如需云端 LLM 多空辩论，再配置 Secret `AI_API_KEY`，并把仓库 Variables 里的 `AI_DEBATE_ENABLED` 设为 `true`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 
 ## 指标说明
 

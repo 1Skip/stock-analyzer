@@ -436,6 +436,13 @@ class TestMultiAgentPrompts:
         from ai_analysis import _DECISION_PROMPT
         assert "json" in _DECISION_PROMPT.lower()
 
+    def test_debate_prompts_exist(self):
+        from ai_analysis import _BEAR_PROMPT, _BULL_PROMPT, _RISK_MANAGER_PROMPT
+        assert "多头" in _BULL_PROMPT
+        assert "空头" in _BEAR_PROMPT
+        assert "风控" in _RISK_MANAGER_PROMPT
+        assert "json" in _RISK_MANAGER_PROMPT.lower()
+
 
 # ============================================================
 # TestRunMultiAgentAnalysis
@@ -573,3 +580,59 @@ class TestRunMultiAgentAnalysis:
         for key in ["technical", "risk", "decision", "mode"]:
             assert key in output, f"缺少 key: {key}"
         assert output["mode"] == "multi_agent"
+
+
+class TestDebateAnalysis:
+
+    def test_build_debate_snapshot_contains_committee_fields(self):
+        from ai_analysis import build_debate_snapshot
+
+        decision = {
+            "symbol": "000001",
+            "name": "平安银行",
+            "score": 72,
+            "action": "轻仓试探",
+            "position": "1-2成",
+            "risk_level": "中",
+            "agents": [{"name": "技术分析 Agent", "stance": "看多", "score_delta": 8}],
+        }
+        snapshot = build_debate_snapshot(decision, stock={"price": 11.2}, extended_info={"fund_flow": {"main_net_inflow": 1}})
+
+        assert snapshot["股票"]["代码"] == "000001"
+        assert snapshot["系统化决策"]["评分"] == 72
+        assert snapshot["五层Agent"][0]["名称"] == "技术分析 Agent"
+        assert snapshot["扩展信息"]["资金流"]["main_net_inflow"] == 1
+
+    def test_debate_analysis_skips_without_api_key(self):
+        from ai_analysis import run_debate_analysis
+
+        output = run_debate_analysis({"symbol": "000001"}, api_key="")
+
+        assert output["mode"] == "a_share_debate"
+        assert output["enabled"] is False
+        assert "AI_API_KEY" in output["error"]
+
+    def test_debate_analysis_full_pipeline(self, monkeypatch):
+        from ai_analysis import run_debate_analysis
+
+        def mock_call(system_prompt, snapshot, config, api_key, base_url):
+            mapping = {
+                "多头研究员": {"核心论点": "资金流入", "证据": ["主力净流入"], "触发条件": ["放量"]},
+                "空头研究员": {"核心论点": "估值偏高", "风险": ["PE偏高"], "失效条件": ["盈利上修"]},
+                "风控经理": {"最终裁决": "轻仓试探", "建议仓位": "1-2成", "核心理由": "多空均衡", "置信度": "中"},
+            }
+            return {
+                "agent": config.name,
+                "content": "",
+                "success": True,
+                "structured": mapping[config.name],
+                "error": "",
+            }
+
+        monkeypatch.setattr("ai_analysis._call_agent", mock_call)
+        output = run_debate_analysis({"symbol": "000001", "score": 70}, api_key="key", model="model")
+
+        assert output["enabled"] is True
+        assert output["bull"]["structured"]["核心论点"] == "资金流入"
+        assert output["bear"]["structured"]["风险"] == ["PE偏高"]
+        assert output["risk_manager"]["structured"]["最终裁决"] == "轻仓试探"
