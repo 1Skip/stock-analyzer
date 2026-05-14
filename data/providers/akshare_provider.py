@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import re
+from html import unescape
 from typing import Any
 from urllib.parse import urlparse
 
@@ -23,6 +24,11 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 _HTTP_HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+_THS_COMPANY_HEADERS = {
+    **_HTTP_HEADERS,
+    "Referer": "https://basic.10jqka.com.cn/",
+    "Accept-Language": "zh-CN,zh;q=0.9",
+}
 
 
 def _safe_float(value: Any) -> float | None:
@@ -100,6 +106,20 @@ def _prefer_industry(current: Any, candidate: Any) -> Any:
     return current
 
 
+def _clean_html_text(value: Any) -> str:
+    text = re.sub(r"<[^>]+>", "", str(value or ""))
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _normalize_ths_industry(value: Any) -> str | None:
+    text = _clean_html_text(value)
+    if not text or text in {"-", "--", "----"}:
+        return None
+    text = re.sub(r"\s*[—＞>]\s*", " — ", text)
+    return text
+
+
 def _find_profile_index_item(index: dict[str, dict[str, Any]], symbol: str, name: str | None = None) -> dict[str, Any] | None:
     item = index.get(symbol)
     if isinstance(item, dict):
@@ -135,6 +155,7 @@ class AkShareProvider:
                 timeout_seconds,
             )
             profile = self._normalize_stock_profile(symbol, df)
+            profile = self._enrich_industry_from_ths_company(profile, timeout_seconds=2)
             profile = self._enrich_valuation_from_tencent(profile, timeout_seconds=2)
             self.health.mark_success(self.source_name)
             return self._enrich_profile_from_full_index(profile, symbol=symbol, timeout_seconds=timeout_seconds)
@@ -271,6 +292,41 @@ class AkShareProvider:
                 "source": _append_source(item.get("source"), source_name),
             })
 
+    def _enrich_industry_from_ths_company(self, profile: StockProfile | None, timeout_seconds: float = 2) -> StockProfile | None:
+        """优先用同花顺公司概况的“所属申万行业”统一行业展示口径。"""
+        if profile is None:
+            return profile
+        try:
+            industry = self._fetch_ths_company_industry(profile.symbol, timeout_seconds=timeout_seconds)
+            if not industry:
+                return profile
+            source = _append_source(profile.source, "同花顺公司概况")
+            return StockProfile(
+                **{
+                    **profile.to_dict(),
+                    "industry": industry,
+                    "source": source,
+                    "updated_at": utc_now_iso(),
+                }
+            )
+        except Exception as exc:
+            logger.debug("同花顺公司概况行业补充失败 symbol=%s error=%s", profile.symbol, _brief_error(exc), exc_info=True)
+            return profile
+
+    def _fetch_ths_company_industry(self, symbol: str, timeout_seconds: float = 2) -> str | None:
+        response = requests.get(
+            f"https://basic.10jqka.com.cn/{symbol}/company.html",
+            headers=_THS_COMPANY_HEADERS,
+            timeout=timeout_seconds,
+        )
+        response.raise_for_status()
+        response.encoding = "gbk"
+        text = response.text
+        match = re.search(r"所属申万行业：</strong>\s*<span>(.*?)</span>", text, re.S)
+        if not match:
+            return None
+        return _normalize_ths_industry(match.group(1))
+
     def _get_stock_profile_from_tencent(self, symbol: str, timeout_seconds: float = 2) -> StockProfile | None:
         """腾讯快行情 fallback：至少保证名称、价格、估值和市值可用。"""
         prefix = "sh" if symbol.startswith("6") else "bj" if symbol.startswith(("4", "8")) else "sz"
@@ -304,7 +360,10 @@ class AkShareProvider:
                 source="腾讯行情",
                 updated_at=utc_now_iso(),
             )
-            return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
+            return self._enrich_profile_from_cninfo(
+                self._enrich_industry_from_ths_company(profile, timeout_seconds=timeout_seconds),
+                timeout_seconds=timeout_seconds,
+            )
         except Exception:
             logger.warning("腾讯行情 fallback 获取基础资料失败 symbol=%s", symbol, exc_info=True)
             return None
@@ -324,7 +383,10 @@ class AkShareProvider:
                 return profile
             parts = response.text.split("~")
             if len(parts) < 47:
-                return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
+                return self._enrich_profile_from_cninfo(
+                    self._enrich_industry_from_ths_company(profile, timeout_seconds=timeout_seconds),
+                    timeout_seconds=timeout_seconds,
+                )
             float_market_cap = _safe_float(parts[44])
             market_cap = _safe_float(parts[45])
             enriched = StockProfile(
@@ -340,9 +402,11 @@ class AkShareProvider:
                     "updated_at": utc_now_iso(),
                 }
             )
+            enriched = self._enrich_industry_from_ths_company(enriched, timeout_seconds=timeout_seconds)
             return self._enrich_profile_from_cninfo(enriched, timeout_seconds=timeout_seconds)
         except Exception:
             logger.debug("腾讯估值补充失败 symbol=%s", profile.symbol, exc_info=True)
+            profile = self._enrich_industry_from_ths_company(profile, timeout_seconds=timeout_seconds)
             return self._enrich_profile_from_cninfo(profile, timeout_seconds=timeout_seconds)
 
     def _enrich_profile_from_cninfo(self, profile: StockProfile | None, timeout_seconds: float = 2) -> StockProfile | None:
@@ -353,6 +417,7 @@ class AkShareProvider:
                 profile.industry
                 and profile.listing_date
                 and not _is_coarse_industry(profile.industry)
+                and "—" in str(profile.industry)
             )
             or not AKSHARE_AVAILABLE
         ):
@@ -365,7 +430,10 @@ class AkShareProvider:
             if df is None or df.empty:
                 return profile
             row = df.iloc[0]
-            industry = _prefer_industry(profile.industry, str(row.get("所属行业") or "").strip())
+            if "同花顺公司概况" in str(profile.source or "") and not _is_missing_profile_value(profile.industry):
+                industry = profile.industry
+            else:
+                industry = _prefer_industry(profile.industry, str(row.get("所属行业") or "").strip())
             listing_date = _format_listing_date(row.get("上市日期")) or profile.listing_date
             name = str(row.get("A股简称") or "").replace(" ", "").strip() or profile.name
             company_name = str(row.get("公司名称") or "").strip()

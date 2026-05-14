@@ -123,6 +123,7 @@ class TestAkShareProvider:
             }])
 
         monkeypatch.setattr("data.providers.akshare_provider.requests.get", lambda *args, **kwargs: FakeResponse())
+        monkeypatch.setattr(provider, "_fetch_ths_company_industry", lambda symbol, timeout_seconds=2: None)
         monkeypatch.setattr(akshare_provider.ak, "stock_profile_cninfo", fake_cninfo)
 
         profile = provider._get_stock_profile_from_tencent("000027")
@@ -130,6 +131,39 @@ class TestAkShareProvider:
         assert profile.industry == "电力、热力生产和供应业"
         assert profile.listing_date == "1993-09-03"
         assert profile.source == "腾讯行情 + 巨潮资讯"
+
+    def test_ths_company_industry_parser(self):
+        provider = AkShareProvider()
+
+        class FakeResponse:
+            status_code = 200
+            text = '<td><strong class="hltip fl">所属申万行业：</strong><span>建筑材料 — 装修建材</span></td>'
+            encoding = None
+
+            def raise_for_status(self):
+                return None
+
+        def fake_get(*args, **kwargs):
+            return FakeResponse()
+
+        from data.providers import akshare_provider
+        original_get = akshare_provider.requests.get
+        akshare_provider.requests.get = fake_get
+        try:
+            assert provider._fetch_ths_company_industry("002066") == "建筑材料 — 装修建材"
+        finally:
+            akshare_provider.requests.get = original_get
+
+    def test_ths_company_industry_takes_priority(self, monkeypatch):
+        provider = AkShareProvider()
+        base = StockProfile(symbol="002066", name="瑞泰科技", industry="C 制造业", source="AKShare/东方财富")
+
+        monkeypatch.setattr(provider, "_fetch_ths_company_industry", lambda symbol, timeout_seconds=2: "建筑材料 — 装修建材")
+
+        profile = provider._enrich_industry_from_ths_company(base)
+
+        assert profile.industry == "建筑材料 — 装修建材"
+        assert "同花顺公司概况" in profile.source
 
     def test_cninfo_enrichment_replaces_coarse_industry(self, monkeypatch):
         from data.providers import akshare_provider
@@ -157,6 +191,33 @@ class TestAkShareProvider:
 
         assert profile.industry == "非金属矿物制品业"
         assert profile.listing_date == "2006-08-23"
+
+    def test_cninfo_does_not_override_ths_industry(self, monkeypatch):
+        from data.providers import akshare_provider
+
+        provider = AkShareProvider()
+        base = StockProfile(
+            symbol="688981",
+            name="中芯国际",
+            industry="电子 — 半导体",
+            listing_date="2020-07-16",
+            source="腾讯行情 + 同花顺公司概况",
+        )
+
+        def fake_cninfo(symbol):
+            assert symbol == "688981"
+            return pd.DataFrame([{
+                "A股简称": "中芯国际",
+                "所属行业": "计算机、通信和其他电子设备制造业",
+                "上市日期": "2020-07-16",
+            }])
+
+        monkeypatch.setattr(akshare_provider.ak, "stock_profile_cninfo", fake_cninfo)
+
+        profile = provider._enrich_profile_from_cninfo(base)
+
+        assert profile.industry == "电子 — 半导体"
+        assert profile.listing_date == "2020-07-16"
 
     def test_profile_index_merges_exchange_rows(self):
         provider = AkShareProvider()
@@ -387,6 +448,42 @@ class TestFundamentalDataService:
 
         assert result["industry"] == "非金属矿物制品业"
         assert result["listing_date"] == "2006-08-23"
+
+    def test_cached_non_ths_industry_triggers_provider_refresh(self, tmp_path):
+        class FakeProvider:
+            def _enrich_industry_from_ths_company(self, profile, timeout_seconds=2):
+                return profile
+
+            def get_stock_profile(self, symbol):
+                return {
+                    "symbol": symbol,
+                    "name": "瑞泰科技",
+                    "industry": "建筑材料 — 装修建材",
+                    "listing_date": "2006-08-23",
+                    "source": "AKShare/东方财富 + 同花顺公司概况 + 腾讯行情",
+                }
+
+            def get_stock_profile_index(self):
+                return {}
+
+        cache = JsonFileCache("fundamentals_test_ths_refresh", ttl_seconds=3600, cache_dir=tmp_path)
+        cache.set(
+            "CN:002066:profile",
+            {
+                "symbol": "002066",
+                "name": "瑞泰科技",
+                "industry": "装修建材",
+                "listing_date": "2006-08-23",
+                "source": "AKShare/东方财富 + 腾讯行情",
+            },
+        )
+        service = FundamentalDataService(provider=FakeProvider(), cache=cache)
+        service.index_cache = JsonFileCache("fundamentals_index_test_ths_refresh", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_profile("002066", "CN")
+
+        assert result["industry"] == "建筑材料 — 装修建材"
+        assert "同花顺公司概况" in result["source"]
 
     def test_missing_provider_profile_can_return_index_profile(self, tmp_path):
         class FakeProvider:

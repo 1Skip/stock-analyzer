@@ -33,17 +33,23 @@ class FundamentalDataService:
             return None
 
         cache_key = f"{market}:{symbol}:profile"
+        should_align_ths_industry = hasattr(self.provider, "_enrich_industry_from_ths_company")
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             cached = self._merge_profile_index_fields(cached)
+            source = str(cached.get("source") or "")
             if (
                 not _is_missing_profile_value(cached.get("industry"))
                 and not _is_coarse_industry(cached.get("industry"))
                 and not _is_missing_profile_value(cached.get("listing_date"))
+                and (not should_align_ths_industry or "同花顺公司概况" in source)
             ):
                 return cached
-            source = str(cached.get("source") or "")
-            if "腾讯行情" not in source and not _is_coarse_industry(cached.get("industry")):
+            if (
+                not should_align_ths_industry
+                and "腾讯行情" not in source
+                and not _is_coarse_industry(cached.get("industry"))
+            ):
                 return cached
 
         profile = self.provider.get_stock_profile(symbol)
