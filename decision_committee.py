@@ -537,6 +537,8 @@ def _collect_catalysts(extended_info: dict[str, Any], agents: list[AgentView]) -
     research = extended_info.get("research") or {}
     if research.get("reports"):
         catalysts.append("近期研报覆盖")
+    if extended_info.get("market_news"):
+        catalysts.append("市场快讯/宏观资讯催化")
     attribution = extended_info.get("sector_attribution") or extended_info.get("attribution") or {}
     concepts = attribution.get("concepts") or []
     if concepts:

@@ -219,6 +219,7 @@ class DailyReportService:
                 financial = info.get("financial") or {}
                 fund_flow = info.get("fund_flow") or {}
                 news = info.get("news") or []
+                market_news = info.get("market_news") or []
                 research = info.get("research") or {}
                 risk_events = info.get("risk_events") or {}
                 sector_attribution = info.get("sector_attribution") or {}
@@ -283,7 +284,13 @@ class DailyReportService:
                             lines.append(f"- 新闻：[{title}]({url})")
                         else:
                             lines.append(f"- 新闻：{title}")
-                if not metrics and not fund_flow and not news and not research and not risk_lines and not industry and not concepts:
+                if market_news:
+                    market_text = "；".join(
+                        f"{item.get('tag', '市场动态')}：{item.get('title') or item.get('summary', '')}"
+                        for item in market_news[:2]
+                    )
+                    lines.append(f"- 市场快讯：{market_text}")
+                if not metrics and not fund_flow and not news and not market_news and not research and not risk_lines and not industry and not concepts:
                     lines.append("- 暂无扩展信息")
         else:
             lines.append("- 暂无扩展信息")

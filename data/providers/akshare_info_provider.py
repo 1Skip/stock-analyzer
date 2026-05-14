@@ -36,6 +36,7 @@ class AkShareInfoProvider:
             "financial": {},
             "fund_flow": {},
             "news": [],
+            "market_news": [],
             "research": {"reports": [], "eps_consensus": {}},
             "risk_events": {"lhb": {}, "restricted_release": [], "announcements": []},
             "sector_attribution": {"industry": {}, "concepts": []},
@@ -46,6 +47,7 @@ class AkShareInfoProvider:
             "financial": lambda: self.get_financial_summary(symbol, timeout_seconds=timeout_seconds),
             "fund_flow": lambda: self.get_fund_flow_summary(symbol, timeout_seconds=timeout_seconds),
             "news": lambda: self.get_news(symbol, timeout_seconds=timeout_seconds, limit=5),
+            "market_news": lambda: self.get_market_news(timeout_seconds=timeout_seconds, limit=8),
         }
         if include_deep_layers:
             tasks.update({
@@ -111,6 +113,15 @@ class AkShareInfoProvider:
     def _fetch_stock_news_em(symbol: str) -> pd.DataFrame:
         with pd.option_context("mode.string_storage", "python"):
             return ak.stock_news_em(symbol=symbol)
+
+    def get_market_news(self, timeout_seconds: float = 4, limit: int = 8) -> list[dict[str, Any]]:
+        """获取全局市场资讯/催化消息。"""
+        try:
+            df = run_with_timeout(lambda: ak.stock_news_main_cx(), timeout_seconds)
+            return self._normalize_market_news(df, limit=limit)
+        except Exception as exc:
+            logger.info("获取市场资讯失败 error=%s", _brief_error(exc))
+            return []
 
     def get_research_summary(self, symbol: str, timeout_seconds: float = 4) -> dict[str, Any]:
         return {
@@ -193,6 +204,7 @@ class AkShareInfoProvider:
             "financial": {},
             "fund_flow": {},
             "news": [],
+            "market_news": [],
             "research": {"reports": [], "eps_consensus": {}},
             "risk_events": {"lhb": {}, "restricted_release": [], "announcements": []},
             "sector_attribution": {"industry": {}, "concepts": []},
@@ -254,6 +266,26 @@ class AkShareInfoProvider:
                 "title": str(title),
                 "date": str(row.get("发布时间") or row.get("时间") or row.get("date") or ""),
                 "url": str(row.get("新闻链接") or row.get("链接") or row.get("url") or ""),
+            })
+        return items
+
+    def _normalize_market_news(self, df: pd.DataFrame, limit: int = 8) -> list[dict[str, Any]]:
+        if df is None or df.empty:
+            return []
+
+        items = []
+        for _, row in df.head(limit).iterrows():
+            summary = self._first_value(row, ["summary", "摘要", "内容", "新闻内容"])
+            title = self._first_value(row, ["title", "标题", "新闻标题"]) or summary
+            if not title:
+                continue
+            items.append({
+                "title": str(title),
+                "summary": str(summary or title),
+                "tag": str(self._first_value(row, ["tag", "标签", "分类"]) or "市场动态"),
+                "date": str(self._first_value(row, ["date", "时间", "发布时间"]) or ""),
+                "url": str(self._first_value(row, ["url", "链接", "新闻链接"]) or ""),
+                "source": "财新数据通",
             })
         return items
 

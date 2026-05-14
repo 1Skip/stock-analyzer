@@ -26,7 +26,7 @@ class StockInfoService:
             return None
 
         layer_mode = "full" if include_deep_layers else "core"
-        cache_key = f"{market}:{symbol}:extended:v3:{layer_mode}"
+        cache_key = f"{market}:{symbol}:extended:v4:{layer_mode}"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached

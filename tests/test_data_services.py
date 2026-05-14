@@ -324,7 +324,8 @@ class TestStockInfoService:
         assert result["research"]["reports"] == []
         assert cache.get("CN:000001:extended") is None
         assert cache.get("CN:000001:extended:v2") is None
-        assert cache.get("CN:000001:extended:v3:full") == result
+        assert cache.get("CN:000001:extended:v3:full") is None
+        assert cache.get("CN:000001:extended:v4:full") == result
 
     def test_extended_info_core_cache_key(self, tmp_path):
         class FakeProvider:
@@ -337,7 +338,7 @@ class TestStockInfoService:
         result = service.get_stock_extended_info("000001", "CN", include_deep_layers=False)
 
         assert result["mode"] == "core"
-        assert cache.get("CN:000001:extended:v3:core") == result
+        assert cache.get("CN:000001:extended:v4:core") == result
 
     def test_info_service_ignores_non_cn_market(self, tmp_path):
         cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)
@@ -376,11 +377,31 @@ class TestStockInfoService:
             "url": "https://example.com/news",
         }]
 
+    def test_normalize_market_news_accepts_caixin_columns(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([{
+            "tag": "市场动态",
+            "summary": "海外流动性扰动影响风险偏好",
+            "url": "https://example.com/market",
+        }])
+
+        result = provider._normalize_market_news(df)
+
+        assert result == [{
+            "title": "海外流动性扰动影响风险偏好",
+            "summary": "海外流动性扰动影响风险偏好",
+            "tag": "市场动态",
+            "date": "",
+            "url": "https://example.com/market",
+            "source": "财新数据通",
+        }]
+
     def test_extended_info_provider_runs_layers_in_parallel(self, monkeypatch):
         provider = AkShareInfoProvider()
         monkeypatch.setattr(provider, "get_financial_summary", lambda symbol, timeout_seconds=4: {"period": "20260331"})
         monkeypatch.setattr(provider, "get_fund_flow_summary", lambda symbol, timeout_seconds=4: {"date": "2026-05-14"})
         monkeypatch.setattr(provider, "get_news", lambda symbol, timeout_seconds=4, limit=5: [{"title": "新闻"}])
+        monkeypatch.setattr(provider, "get_market_news", lambda timeout_seconds=4, limit=8: [{"title": "市场快讯"}])
         monkeypatch.setattr(provider, "get_research_summary", lambda symbol, timeout_seconds=4: {"reports": [{"title": "研报"}]})
         monkeypatch.setattr(provider, "get_risk_events", lambda symbol, timeout_seconds=4: {"announcements": [{"title": "公告"}]})
         monkeypatch.setattr(provider, "get_sector_attribution", lambda symbol, timeout_seconds=4: {"industry": {"name": "行业"}})
@@ -390,18 +411,21 @@ class TestStockInfoService:
         assert result["financial"]["period"] == "20260331"
         assert result["fund_flow"]["date"] == "2026-05-14"
         assert result["news"][0]["title"] == "新闻"
+        assert result["market_news"][0]["title"] == "市场快讯"
 
     def test_extended_info_provider_can_skip_deep_layers(self, monkeypatch):
         provider = AkShareInfoProvider()
         monkeypatch.setattr(provider, "get_financial_summary", lambda symbol, timeout_seconds=4: {"period": "20260331"})
         monkeypatch.setattr(provider, "get_fund_flow_summary", lambda symbol, timeout_seconds=4: {"date": "2026-05-14"})
         monkeypatch.setattr(provider, "get_news", lambda symbol, timeout_seconds=4, limit=5: [{"title": "新闻"}])
+        monkeypatch.setattr(provider, "get_market_news", lambda timeout_seconds=4, limit=8: [{"title": "市场快讯"}])
         monkeypatch.setattr(provider, "get_research_summary", lambda symbol, timeout_seconds=4: {"reports": [{"title": "不应调用"}]})
 
         result = provider.get_stock_extended_info("000001", timeout_seconds=1, include_deep_layers=False)
 
         assert result["financial"]["period"] == "20260331"
         assert result["news"][0]["title"] == "新闻"
+        assert result["market_news"][0]["title"] == "市场快讯"
         assert result["research"]["reports"] == []
 
     def test_normalize_risk_events(self):

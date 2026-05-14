@@ -33,6 +33,7 @@ def test_a_share_decision_builds_five_agent_views():
             "每股收益": 0.6,
         }},
         "research": {"reports": [{"title": "测试研报"}], "eps_consensus": {"values": {"2026EPS": 1.2}}},
+        "market_news": [{"title": "市场快讯"}],
         "sector_attribution": {
             "industry": {"name": "电力", "change_pct": 1.8},
             "concepts": [{"name": "绿色电力", "change_pct": 2.3}],
@@ -61,6 +62,7 @@ def test_a_share_decision_builds_five_agent_views():
     assert any("PE" in item for item in result["agents"][2]["evidence"])
     assert result["bullish_points"]
     assert result["catalysts"]
+    assert "市场快讯/宏观资讯催化" in result["catalysts"]
 
 
 def test_watchlist_decision_penalizes_risk_events():

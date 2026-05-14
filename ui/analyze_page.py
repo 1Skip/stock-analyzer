@@ -201,6 +201,30 @@ def _render_extended_info(extended_info):
             st.caption(f"来源：{extended_info.get('source') or '未知'} · 更新：{extended_info.get('updated_at') or '--'}")
 
 
+def _render_market_news(extended_info):
+    """渲染市场快讯/催化消息。"""
+    if not extended_info:
+        return
+
+    market_news = extended_info.get("market_news") or []
+    if not market_news:
+        return
+
+    with st.expander("市场快讯 / 催化消息", expanded=False):
+        st.caption("用于辅助判断市场情绪、政策/海外/宏观催化；不直接替代个股新闻。")
+        for item in market_news[:8]:
+            title = html.escape(str(item.get("title") or item.get("summary") or ""))
+            tag = html.escape(str(item.get("tag") or item.get("source") or "市场动态"))
+            date = html.escape(str(item.get("date") or ""))
+            url = str(item.get("url") or "")
+            meta = " · ".join(part for part in [tag, date] if part)
+            suffix = f" <span style='opacity:0.6'>{meta}</span>" if meta else ""
+            if url.startswith("http"):
+                st.markdown(f"- [{title}]({url}){suffix}", unsafe_allow_html=True)
+            else:
+                st.markdown(f"- {title}{suffix}", unsafe_allow_html=True)
+
+
 def _render_inline_note(message):
     """渲染与上方仪表盘保持距离的轻提示。"""
     st.markdown(
@@ -426,6 +450,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     _render_stock_profile(profile)
     if market == "CN":
         _render_extended_info(extended_info)
+        _render_market_news(extended_info)
     render_decision_dashboard(data, signals, quote, extended_info, profile)
 
     # ③ 分时图（仅A股）

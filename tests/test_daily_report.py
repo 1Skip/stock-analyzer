@@ -40,6 +40,7 @@ class TestDailyReportService:
                         "five_day_main_net_inflow": 5000000,
                     },
                     "news": [{"title": "测试新闻", "url": "https://example.com"}],
+                    "market_news": [{"tag": "市场动态", "title": "测试市场快讯", "url": "https://example.com/market"}],
                     "research": {
                         "eps_consensus": {"values": {"2026预测EPS": 1.23}},
                         "reports": [{
@@ -78,6 +79,7 @@ class TestDailyReportService:
         assert "## 研报 / 风险 / 板块归因" in content
         assert "## 操作检查清单" in content
         assert "测试新闻" in content
+        assert "测试市场快讯" in content
         assert "测试研报" in content
         assert "龙虎榜" in content
         assert "限售解禁" in content

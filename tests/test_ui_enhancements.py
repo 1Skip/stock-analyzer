@@ -256,6 +256,16 @@ def test_analyze_page_renders_extended_info_placeholder():
     assert 'extended_info = futures[\'extended_info\'].result(timeout=2.5)' in source
 
 
+def test_analyze_page_renders_market_news_section():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_market_news" in source
+    assert "市场快讯 / 催化消息" in source
+    assert "_render_market_news(extended_info)" in source
+
+
 def test_ai_analysis_ui_is_optional_auxiliary():
     from pathlib import Path
 

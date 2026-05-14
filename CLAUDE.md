@@ -62,11 +62,11 @@
 - **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；同时提交 `data/static/stock_name_index.json` 作为 GitHub Actions/离线兜底，不再靠“报一个补一个”
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
-- **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异
+- **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻/市场资讯；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异
 - **基础资料/估值**：A股个股分析页并行调用 `get_cached_stock_profile()`，AKShare 获取股票简称/行业/上市日期/股本/市值，腾讯行情补 PE/PB/换手率，辅助数据最多短暂等待，不阻塞 K线主流程
-- **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”走 `get_cached_stock_extended_info()`，Web 首屏只拉取财务、资金流和新闻三个核心层，最多短暂等待；财务展示报告期，资金展示资金流日期，新闻展示最新新闻时间或“暂无”状态；失败返回加载提示，不影响主图表和技术指标
+- **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”和“市场快讯 / 催化消息”走 `get_cached_stock_extended_info()`，Web 首屏拉取财务、资金流、东方财富个股新闻和财新数据通市场资讯核心层，最多短暂等待；失败返回加载提示，不影响主图表和技术指标
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 决策仪表盘，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
-- **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
+- **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因、财新数据通市场资讯；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
 - **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用五层 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示；日报 `DailyReportService` 已完成阶段 3 最终版决策仪表盘输出；`ai_analysis.py` 已完成阶段 4 最终版可选 LLM 多空辩论/风控经理层，未配置 `AI_API_KEY` 时自动跳过
 - **网页端状态可见性**：`ui/committee_status.py` 在侧边栏固定展示阶段 1-5 接入状态、飞书 Webhook、GitHub Actions 和 LLM 辩论开关，不依赖行情请求，避免拖慢切页。
 - **日报定时推送**：`scheduler.py` 默认按“自选股摘要 → 固定四板块推荐 → 每日完整 Markdown 日报”执行；四板块为算力租赁、电力、苹果概念、特斯拉概念，默认每板块短线 2 只 + 长线 1 只；智能推荐和推荐股推送仅包含沪深主板股票，创业板、科创板、北交所不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场观察，不做主板过滤；定时推送不再用全市场推荐股补充内容，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后定时推送被推荐股全市场扫描拖慢
