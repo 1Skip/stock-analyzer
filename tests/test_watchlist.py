@@ -31,7 +31,7 @@ def temp_watchlist_file(tmp_path, monkeypatch):
 
 class TestInitWatchlist:
 
-    def test_initializes_empty_list(self):
+    def test_initializes_empty_list(self, temp_watchlist_file):
         import watchlist
         watchlist.init_watchlist()
         assert st.session_state.watchlist == []
@@ -53,7 +53,7 @@ class TestInitWatchlist:
         watchlist.init_watchlist()
         assert st.session_state.watchlist == []
 
-    def test_idempotent(self):
+    def test_idempotent(self, temp_watchlist_file):
         """多次调用不会重置已有数据"""
         import watchlist
         watchlist.init_watchlist()
@@ -138,12 +138,12 @@ class TestRemoveFromWatchlist:
 
 class TestGetWatchlist:
 
-    def test_returns_list(self):
+    def test_returns_list(self, temp_watchlist_file):
         from watchlist import get_watchlist
         result = get_watchlist()
         assert isinstance(result, list)
 
-    def test_returns_empty_when_no_items(self):
+    def test_returns_empty_when_no_items(self, temp_watchlist_file):
         from watchlist import get_watchlist
         assert get_watchlist() == []
 
@@ -167,7 +167,7 @@ class TestClearWatchlist:
         clear_watchlist()
         assert get_watchlist() == []
 
-    def test_clear_empty_no_error(self):
+    def test_clear_empty_no_error(self, temp_watchlist_file):
         from watchlist import clear_watchlist
         success, msg = clear_watchlist()
         assert success is True
@@ -191,7 +191,7 @@ class TestIsInWatchlist:
         add_to_watchlist('000001', '平安银行', 'CN')
         assert is_in_watchlist('000001', 'CN') is True
 
-    def test_nonexistent_returns_false(self):
+    def test_nonexistent_returns_false(self, temp_watchlist_file):
         from watchlist import is_in_watchlist
         assert is_in_watchlist('999999', 'CN') is False
 

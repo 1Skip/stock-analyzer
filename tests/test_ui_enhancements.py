@@ -292,11 +292,14 @@ def test_sidebar_watchlist_shows_full_list_and_single_detail():
     from pathlib import Path
 
     source = Path("ui/sidebar.py").read_text(encoding="utf-8")
+    list_section = source.split("def display_watchlist_sidebar", 1)[1].split("def _cached_mini_analysis", 1)[0]
 
     assert 'with st.expander(f"自选股（{len(watchlist)}）")' in source
     assert "wl_pick_" in source
     assert "wl_remove_" in source
-    assert 'st.markdown("##### 摘要")' in source
+    assert "_cached_watchlist_summary(" not in list_section
+    assert "def display_watchlist_mini_panel():" in source
+    assert "result = _cached_mini_analysis(symbol, market)" in source
     assert 'st.caption("自选详情")' in source
 
 

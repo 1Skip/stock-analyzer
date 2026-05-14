@@ -34,18 +34,21 @@ def test_app_shell_uses_main_page_container():
     assert "render_committee_status_card()" in source
 
 
-def test_main_page_renders_before_slow_sidebar_widgets():
+def test_light_sidebar_renders_before_main_page():
     import inspect
     import app
 
     source = inspect.getsource(app.main)
 
     render_index = source.index("_render_main_page(page)")
-    market_index = source.index("display_market_temperature()")
     watchlist_index = source.index("display_watchlist_sidebar()")
+    source_index = source.index("display_data_source_selector()")
+    market_index = source.index("display_market_temperature()")
 
-    assert render_index < market_index
-    assert render_index < watchlist_index
+    assert watchlist_index < render_index
+    assert source_index < render_index
+    assert watchlist_index < market_index
+    assert source_index < market_index
 
 
 def test_custom_css_does_not_keep_stale_pages_visible():
@@ -150,9 +153,15 @@ def test_main_returns_immediately_after_page_change(monkeypatch):
     monkeypatch.setattr(st, "sidebar", DummySidebar())
     monkeypatch.setattr(st, "title", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(st, "caption", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(st, "radio", lambda *args, **kwargs: "股票对比", raising=False)
     monkeypatch.setattr(st, "rerun", lambda: calls.append("rerun"))
     monkeypatch.setattr(app, "_render_selected_page", lambda page: calls.append(f"render:{page}"))
+    monkeypatch.setattr(app, "render_committee_status_card", lambda: None)
+    monkeypatch.setattr(app, "display_market_temperature", lambda: None)
+    monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: None)
+    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda: None)
+    monkeypatch.setattr(app, "display_data_source_selector", lambda: None)
 
     app.main()
 
@@ -183,7 +192,7 @@ def test_main_page_uses_stable_empty_container(monkeypatch):
     assert calls == ["empty", "enter_container", "render:股票对比", "exit_container"]
 
 
-def test_page_switch_second_run_skips_slow_sidebar(monkeypatch):
+def test_page_switch_second_run_keeps_light_sidebar(monkeypatch):
     import app
     import streamlit as st
 
@@ -202,14 +211,16 @@ def test_page_switch_second_run_skips_slow_sidebar(monkeypatch):
     monkeypatch.setattr(st, "sidebar", DummySidebar())
     monkeypatch.setattr(st, "title", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: None)
+    monkeypatch.setattr(st, "caption", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(st, "radio", lambda *args, **kwargs: "股票对比", raising=False)
+    monkeypatch.setattr(app, "render_committee_status_card", lambda: None)
     monkeypatch.setattr(app, "_render_main_page", lambda page: calls.append(f"render:{page}"))
     monkeypatch.setattr(app, "display_market_temperature", lambda: calls.append("market"))
     monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: calls.append("watchlist") or None)
-    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda summaries: calls.append("mini"))
+    monkeypatch.setattr(app, "display_watchlist_mini_panel", lambda: calls.append("mini"))
     monkeypatch.setattr(app, "display_data_source_selector", lambda: calls.append("source"))
 
     app.main()
 
-    assert calls == ["render:股票对比"]
+    assert calls == ["watchlist", "mini", "source", "market", "render:股票对比"]
     assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

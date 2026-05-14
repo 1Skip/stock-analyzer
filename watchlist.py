@@ -201,14 +201,20 @@ def _save_to_file(watchlist):
         try:
             with open(_WATCHLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(watchlist, f, ensure_ascii=False, indent=2)
+            st.session_state.watchlist_file_mtime = os.path.getmtime(_WATCHLIST_FILE)
         except Exception:
             pass
 
 
 def init_watchlist():
-    """初始化自选股列表：首次调用从文件加载，后续使用 session_state"""
-    if 'watchlist' not in st.session_state:
+    """初始化自选股列表：文件变化时自动刷新 session_state。"""
+    file_mtime = os.path.getmtime(_WATCHLIST_FILE) if os.path.exists(_WATCHLIST_FILE) else None
+    if (
+        'watchlist' not in st.session_state
+        or st.session_state.get('watchlist_file_mtime') != file_mtime
+    ):
         st.session_state.watchlist = _load_from_file()
+        st.session_state.watchlist_file_mtime = file_mtime
 
 
 def add_to_watchlist(symbol, name, market='CN'):

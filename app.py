@@ -150,6 +150,15 @@ def main():
         )
         render_committee_status_card()
 
+        display_watchlist_sidebar()
+        display_watchlist_mini_panel()
+        display_data_source_selector()
+
+        if MARKET_INDEX_ENABLED:
+            display_market_temperature()
+
+        st.caption("风险提示：本系统仅供参考，不构成投资建议")
+
     if _sync_active_page(page):
         return
 
@@ -159,16 +168,6 @@ def main():
 
     if page_switch_pending:
         return
-
-    with st.sidebar:
-        if MARKET_INDEX_ENABLED:
-            display_market_temperature()
-
-        summaries = display_watchlist_sidebar()
-        display_watchlist_mini_panel(summaries)
-        display_data_source_selector()
-
-        st.caption("风险提示：本系统仅供参考，不构成投资建议")
 
 
 if __name__ == "__main__":

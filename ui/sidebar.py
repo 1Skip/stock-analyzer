@@ -1,18 +1,14 @@
 """侧边栏组件 — 大盘温度、自选股列表、mini 分析面板、数据源选择"""
-import json as _json_for_hash
 import html
 import streamlit as st
-from ui.loading import status_loading
 from config import (
-    MARKET_INDEX_ENABLED,
     INDEX_WATCHLIST,
     INDEX_CACHE_TTL,
-    CACHE_TTL_WATCHLIST_SUMMARY,
     CACHE_TTL_WATCHLIST_MINI,
 )
 from watchlist import (
-    add_to_watchlist, remove_from_watchlist,
-    get_watchlist, is_in_watchlist, get_watchlist_summary,
+    remove_from_watchlist,
+    get_watchlist, get_watchlist_summary,
 )
 from chart_utils import classify_signal
 from ui.cached_data import quote_service
@@ -58,23 +54,14 @@ def display_market_temperature():
     )
 
 
-@st.cache_data(ttl=CACHE_TTL_WATCHLIST_SUMMARY, show_spinner=False)
-def _cached_watchlist_summary(_watchlist_hash):
-    """获取自选股技术摘要（带缓存，5分钟有效）"""
-    watchlist = get_watchlist()
-    if not watchlist:
-        return []
-    return get_watchlist_summary(watchlist)
-
-
 def display_watchlist_sidebar():
-    """在侧边栏显示自选股列表 — 含实时信号和入场提示"""
+    """在侧边栏常驻显示自选股轻量列表。"""
     watchlist = get_watchlist()
 
     with st.expander(f"自选股（{len(watchlist)}）"):
         if not watchlist:
             st.caption("暂无自选股")
-            return None
+            return
 
         st.caption("点击股票查看下方详情，点右侧 × 可移除。")
         for index, raw_item in enumerate(watchlist):
@@ -93,57 +80,6 @@ def display_watchlist_sidebar():
                     remove_from_watchlist(symbol, market)
                     st.rerun()
 
-        watchlist_hash = _json_for_hash.dumps(
-            [(item['symbol'], item['market']) for item in watchlist],
-            sort_keys=True
-        )
-
-        with status_loading("\u6b63\u5728\u66f4\u65b0\u81ea\u9009\u80a1\u6458\u8981...", 15):
-            summaries = _cached_watchlist_summary(watchlist_hash)
-
-        if not summaries:
-            return None
-
-        st.markdown("##### 摘要")
-        for i, item in enumerate(summaries):
-            symbol = item['symbol']
-            name = item.get('name', symbol)
-            market = item.get('market', 'CN')
-            error = item.get('error')
-
-            with st.container(border=True):
-                col_title, col_price = st.columns([2.8, 2])
-                with col_title:
-                    st.markdown(f'<span style="font-weight:600">{html.escape(symbol)}</span> · {html.escape(name[:6])}',
-                               unsafe_allow_html=True)
-                with col_price:
-                    if item['price'] is not None:
-                        change = item.get('change_pct', 0) or 0
-                        color = "#ff3b30" if change >= 0 else "#34c759"
-                        arrow = "+" if change >= 0 else ""
-                        st.markdown(f'<span style="color:{color};font-weight:600">{arrow}{change:.2f}%</span> '
-                                   f'<span style="font-size:0.85rem">¥{item["price"]:.2f}</span>',
-                                   unsafe_allow_html=True)
-
-                if error:
-                    st.caption(f"⚠ {error}")
-                else:
-                    signal_text = item.get('signal_summary', '--')
-                    hint_text = item.get('entry_hint', '--')
-
-                    cls = classify_signal(signal_text)
-
-                    st.markdown(
-                        f'<span class="signal-badge {cls}" style="font-size:0.75rem">{html.escape(str(signal_text))}</span> '
-                        f'<span style="font-size:0.75rem;color:var(--text-color-secondary)">{html.escape(str(hint_text))}</span>',
-                        unsafe_allow_html=True
-                    )
-
-                if st.button("查看分析", key=f"wlview_{symbol}_{market}_{i}", use_container_width=True):
-                    st.session_state.wl_view_symbol = symbol
-                    st.session_state.wl_view_market = market
-
-    return summaries
 
 
 @st.cache_data(ttl=CACHE_TTL_WATCHLIST_MINI, show_spinner=False)
@@ -154,27 +90,15 @@ def _cached_mini_analysis(symbol, market):
     return results[0] if results else None
 
 
-def display_watchlist_mini_panel(summaries):
+def display_watchlist_mini_panel():
     """在侧边栏显示选中自选股的 mini 分析面板"""
     symbol = st.session_state.get('wl_view_symbol')
     market = st.session_state.get('wl_view_market')
 
-    if not symbol and summaries:
-        symbol = summaries[0].get('symbol')
-        market = summaries[0].get('market', 'CN')
-
     if not symbol:
         return
 
-    result = None
-    if summaries:
-        for s in summaries:
-            if s['symbol'] == symbol and s['market'] == market:
-                result = s
-                break
-
-    if result is None:
-        result = _cached_mini_analysis(symbol, market)
+    result = _cached_mini_analysis(symbol, market)
 
     if result is None:
         return
