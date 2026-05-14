@@ -1,18 +1,40 @@
 # Windows 快速使用指南
 
-## 自己电脑：打开就能用
+## 自己电脑：双击启动
 
-1. 双击 `start.bat`。
-2. 首次运行会自动创建 `.venv` 并安装依赖。
-3. 浏览器会自动打开 `http://localhost:8501`。
+1. 安装 Python 3.10 或以上版本，安装时勾选 `Add Python to PATH`。
+2. 双击项目根目录的 `start.bat`。
+3. 首次运行会自动创建 `.venv` 并安装依赖。
+4. 浏览器会自动打开 `http://localhost:8501`。
 
-如果希望开机后自动启动：
+## 本机开启 LLM / 飞书
+
+如果希望本机网页左侧状态卡也显示 LLM 多空辩论、飞书已配置：
+
+1. 复制项目根目录的 `.env.example`，重命名为 `.env`。
+2. 打开 `.env`，把 `AI_API_KEY` 改成你的 DeepSeek Key。
+3. 如需本机飞书推送，把 `FEISHU_WEBHOOK_URL` 改成你的飞书机器人 Webhook。
+4. 重新双击 `start.bat`。
+
+DeepSeek 官方 API 推荐本机配置：
+
+```env
+AI_DEBATE_ENABLED=true
+AI_API_KEY=sk-替换成你的DeepSeekKey
+AI_BASE_URL=https://api.deepseek.com
+AI_MODEL=deepseek/deepseek-v4-pro
+AI_DEBATE_MAX_SYMBOLS=3
+```
+
+`.env` 已被 `.gitignore` 忽略，不会提交到 GitHub。
+
+## 开机后自动启动
 
 1. 双击 `install_startup.bat`。
 2. 下次登录 Windows 后会自动启动股票分析系统。
 3. 如需取消，双击 `uninstall_startup.bat`。
 
-## 别人下载后：直接使用
+## 别人下载后直接使用
 
 1. 安装 Python 3.10 或以上版本。
 2. 安装 Python 时勾选 `Add Python to PATH`。

@@ -161,6 +161,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `DAILY_REPORT_DIR`：日报输出目录，默认 `reports/history`。
 - `AI_DEBATE_ENABLED`：日报是否启用外部 LLM 多空辩论/风控经理层，默认 `false`；开启前需配置 `AI_API_KEY`。
 - `AI_DEBATE_MAX_SYMBOLS`：每次日报最多对前 N 只自选股做 LLM 辩论，默认 `3`，用于控制 Actions 耗时和费用。
+- 本机配置可复制 `.env.example` 为 `.env`，填入 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL`、`FEISHU_WEBHOOK_URL` 等私密配置；`.env` 已加入 `.gitignore`，不会提交到 GitHub。
 
 ## 项目结构
 

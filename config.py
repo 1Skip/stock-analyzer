@@ -3,6 +3,26 @@
 所有硬编码参数统一管理，支持环境变量覆盖
 """
 import os
+from pathlib import Path
+
+
+def _load_local_env() -> None:
+    """加载项目根目录 .env，方便本机启动时读取私密配置。"""
+    env_path = Path(__file__).resolve().parent / ".env"
+    if not env_path.exists():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_local_env()
 
 # ============================================================
 # 技术指标参数
