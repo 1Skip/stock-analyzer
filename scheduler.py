@@ -60,8 +60,10 @@ def run_scheduled_analysis():
 
     try:
         from stock_recommendation import StockRecommender
+        from recommendation_service import RecommendationService
 
         recommender = StockRecommender()
+        recommendation_service = RecommendationService(recommender=recommender)
         reports = []
 
         # 优先分析自选股
@@ -109,7 +111,7 @@ def run_scheduled_analysis():
         # 固定四板块推荐：每个板块短线 2 只 + 长线 1 只（可通过环境变量覆盖）
         if SECTOR_PUSH_ENABLED:
             try:
-                sector_data = recommender.get_all_sector_recommendations(
+                sector_data = recommendation_service.run_all_sector_recommendations(
                     short_top_n=SECTOR_PUSH_SHORT_TOP_N,
                     long_top_n=SECTOR_PUSH_LONG_TOP_N,
                 )

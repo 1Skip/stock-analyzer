@@ -687,6 +687,39 @@ class TestStockInfoService:
         assert first == second
         assert calls["count"] == 1
 
+    def test_info_service_reuses_split_layer_caches(self, tmp_path):
+        calls = {"count": 0}
+
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol, include_deep_layers=True):
+                calls["count"] += 1
+                return {
+                    "symbol": symbol,
+                    "financial": {"metrics": {"归母净利润": 1}},
+                    "fund_flow": {"main_net_inflow": 30_000_000},
+                    "news": [],
+                    "market_news": [],
+                    "research": {"reports": []},
+                    "dividend": {},
+                    "risk_events": {"announcements": []},
+                    "sector_attribution": {"industry": {}, "concepts": []},
+                }
+
+        cache = JsonFileCache("stock_info_split_bundle", ttl_seconds=0, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+        service.financial_cache = JsonFileCache("stock_financial_split", ttl_seconds=3600, cache_dir=tmp_path)
+        service.fund_flow_cache = JsonFileCache("stock_fund_flow_split", ttl_seconds=3600, cache_dir=tmp_path)
+        service.research_cache = JsonFileCache("stock_research_split", ttl_seconds=3600, cache_dir=tmp_path)
+        service.risk_cache = JsonFileCache("stock_risk_split", ttl_seconds=3600, cache_dir=tmp_path)
+
+        first = service.get_stock_extended_info("000001", "CN")
+        second = service.get_stock_extended_info("000001", "CN")
+
+        assert first["financial"] == second["financial"]
+        assert second["fund_flow"]["main_net_inflow"] == 30_000_000
+        assert second["risk_events"]["announcements"] == []
+        assert calls["count"] == 1
+
     def test_extended_info_uses_v3_cache_key(self, tmp_path):
         class FakeProvider:
             def get_stock_extended_info(self, symbol, include_deep_layers=True):

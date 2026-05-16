@@ -5,6 +5,8 @@ import json
 import os
 import re
 import threading
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -52,15 +54,16 @@ class JsonFileCache:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock = _get_lock(self.path)
         with lock:
-            payload = self._read_unlocked()
-            payload[_safe_key(key)] = {
-                "updated_at": datetime.now().isoformat(),
-                "value": value,
-            }
-            tmp_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
-            with open(tmp_path, "w", encoding="utf-8") as file:
-                json.dump(payload, file, ensure_ascii=False)
-            os.replace(tmp_path, self.path)
+            with self._process_lock():
+                payload = self._read_unlocked()
+                payload[_safe_key(key)] = {
+                    "updated_at": datetime.now().isoformat(),
+                    "value": value,
+                }
+                tmp_path = self.path.with_suffix(f"{self.path.suffix}.{os.getpid()}.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as file:
+                    json.dump(payload, file, ensure_ascii=False)
+                os.replace(tmp_path, self.path)
 
     def _read(self) -> dict[str, Any]:
         lock = _get_lock(self.path)
@@ -77,3 +80,33 @@ class JsonFileCache:
         except Exception:
             return {}
 
+    @contextmanager
+    def _process_lock(self):
+        """A small cross-process lock for read-modify-write JSON updates."""
+        lock_path = self.path.with_suffix(f"{self.path.suffix}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + 30
+        fd = None
+        while fd is None:
+            try:
+                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            except FileExistsError:
+                if time.monotonic() > deadline:
+                    try:
+                        if time.time() - lock_path.stat().st_mtime > 60:
+                            lock_path.unlink(missing_ok=True)
+                            continue
+                    except Exception:
+                        pass
+                    raise TimeoutError(f"cache lock timeout: {lock_path}")
+                time.sleep(0.05)
+        try:
+            yield
+        finally:
+            try:
+                os.close(fd)
+            finally:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass

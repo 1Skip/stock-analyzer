@@ -1,9 +1,7 @@
 """智能推荐页面 — 多策略智能选股推荐"""
 import html
-import concurrent.futures
 import streamlit as st
-from stock_recommendation import StockRecommender
-from ui.cached_data import quote_service
+from recommendation_service import RecommendationService
 from ui.loading import status_loading
 
 
@@ -18,6 +16,8 @@ def _format_progress_message(strategy, sector, stage, metrics):
         "light_passed": "轻筛通过",
         "shortlist": "深度候选",
         "deep_checked": "深度检查",
+        "deep_total": "深度总数",
+        "deep_done": "已深查",
         "result_count": "最终命中",
     }
     for key, label in label_map.items():
@@ -48,63 +48,12 @@ def _make_progress_callback(progress_placeholder, strategy, sector):
 
 def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=None):
     """后台生成推荐列表。"""
-    recommender = StockRecommender()
-    diagnostics = {}
-    if strategy == "短线":
-        if sector == "全部":
-            recommended = recommender.get_short_term_recommendations(num_stocks)
-            title = "短线推荐"
-        else:
-            recommended = recommender.get_sector_short_term_recommendations(sector, num_stocks)
-            title = f"{sector} 短线推荐"
-    else:
-        if strategy == "长线":
-            if sector == "全部":
-                recommended = recommender.get_long_term_recommendations(num_stocks)
-                title = "长线推荐"
-            else:
-                recommended = recommender.get_sector_long_term_recommendations(sector, num_stocks)
-                title = f"{sector} 长线推荐"
-        elif strategy == "激进突破型":
-            if sector == "全部":
-                recommended = recommender.get_aggressive_breakout_recommendations(num_stocks, progress_callback=progress_callback)
-                title = "激进突破型"
-            else:
-                recommended = recommender.get_sector_aggressive_breakout_recommendations(sector, num_stocks, progress_callback=progress_callback)
-                title = f"{sector} 激进突破型"
-            diagnostics = recommender.last_aggressive_diagnostics
-        elif strategy == "多因子稳健型":
-            if sector == "全部":
-                recommended = recommender.get_multi_factor_recommendations(num_stocks, progress_callback=progress_callback)
-                title = "多因子稳健型"
-            else:
-                recommended = recommender.get_sector_multi_factor_recommendations(sector, num_stocks, progress_callback=progress_callback)
-                title = f"{sector} 多因子稳健型"
-            diagnostics = recommender.last_multi_factor_diagnostics
-        else:
-            recommended = recommender.get_long_term_recommendations(num_stocks)
-            title = "长线推荐"
-    if recommended:
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    quote_service.get_batch_realtime_quotes,
-                    [s['symbol'] for s in recommended],
-                    "CN",
-                )
-                quotes = future.result(timeout=3)
-            for s in recommended:
-                if s['symbol'] in quotes:
-                    s['latest_price'] = quotes[s['symbol']]['price']
-                    s['change_pct'] = quotes[s['symbol']]['change_pct']
-        except Exception:
-            pass
-
-    return {
-        "recommended": recommended,
-        "title": title,
-        "diagnostics": diagnostics,
-    }
+    return RecommendationService().run(
+        strategy,
+        sector,
+        num_stocks,
+        progress_callback=progress_callback,
+    )
 
 
 def _render_multi_factor_diagnostics(diagnostics):
@@ -317,11 +266,17 @@ def recommended_stocks_page():
     if 'rec_results' not in st.session_state:
         st.session_state.rec_results = None
 
+    if not st.session_state.rec_results:
+        latest_result = RecommendationService().latest(strategy, sector, num_stocks)
+        if latest_result:
+            st.session_state.rec_results = latest_result
+            st.session_state.rec_data_loaded = True
+
     col1, col2 = st.columns([1, 4])
     with col1:
         if st.button("刷新数据", type="secondary"):
             with status_loading("正在刷新智能推荐本地K线缓存，请稍候...", 20):
-                cache_result = StockRecommender().refresh_strategy_kline_cache()
+                cache_result = RecommendationService().refresh_strategy_kline_cache()
             st.session_state.rec_data_loaded = False
             st.session_state.rec_results = None
             st.success(

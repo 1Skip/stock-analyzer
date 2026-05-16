@@ -2057,8 +2057,10 @@ class StockRecommender:
         failures = diagnostics.setdefault("deep_failures", {})
         failures[reason] = failures.get(reason, 0) + 1
 
-    def _run_strategy_pool(self, strategy_name, stocks, num_stocks, analyzer):
+    def _run_strategy_pool(self, strategy_name, stocks, num_stocks, analyzer, progress_callback=None, progress_stage=None):
         results = []
+        completed = 0
+        total = len(stocks or [])
 
         def analyze_one(stock):
             try:
@@ -2069,9 +2071,20 @@ class StockRecommender:
         with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(analyze_one, s): s for s in stocks}
             for future in as_completed(futures):
+                completed += 1
                 result = future.result()
                 if result:
                     results.append(result)
+                if progress_callback and progress_stage and (completed == total or completed % 25 == 0):
+                    percent = 85 + int(10 * completed / total) if total else 95
+                    _emit_progress(
+                        progress_callback,
+                        progress_stage,
+                        min(percent, 95),
+                        deep_total=total,
+                        deep_done=completed,
+                        result_count=len(results),
+                    )
 
         results.sort(key=lambda x: x['score'], reverse=True)
         return results[:num_stocks]
@@ -2108,6 +2121,8 @@ class StockRecommender:
             stocks,
             num_stocks,
             lambda stock: self._analyze_multi_factor(stock['code'], stock=stock, diagnostics=diagnostics),
+            progress_callback=progress_callback,
+            progress_stage="深度检查",
         )
         diagnostics["result_count"] = len(results)
         self.last_multi_factor_diagnostics = diagnostics
@@ -2128,6 +2143,8 @@ class StockRecommender:
             stocks,
             num_stocks,
             lambda stock: self._analyze_multi_factor(stock['code'], stock=stock, sector_name=sector_name, diagnostics=diagnostics),
+            progress_callback=progress_callback,
+            progress_stage="深度检查",
         )
         diagnostics["result_count"] = len(results)
         self.last_multi_factor_diagnostics = diagnostics

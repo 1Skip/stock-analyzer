@@ -67,6 +67,14 @@ type: project
 - 推送内容包含买入观察点、卖出纪律、风险提示。
 - 自选股摘要、推荐股推送和日报继续同步交易计划卡片、风控防御看板。
 
+### 7. 推荐服务层、缓存拆分与页面复用
+
+- 新增 `recommendation_service.py`，网页智能推荐和固定四板块推送共用同一套推荐分发入口；服务层只负责路由策略、刷新最终实时价、持久化结果，不改变 `StockRecommender` 内的选股条件和评分规则。
+- 智能推荐页面改为调用 `RecommendationService`；相同“策略 + 板块 + 数量”的最近结果会写入 `recommendation_results` 缓存，页面刷新或切页回来可直接展示，避免短时间内重复全量扫描。
+- 扩展信息缓存拆分为财务、资金流、研报/分红/板块归因、公告/风险事件等独立缓存，并保留旧的整包扩展信息缓存兼容路径；资金流默认 3600 秒，财务/研报/风险事件默认 86400 秒。
+- `JsonFileCache` 增加跨进程写锁，降低多因子深度检查子进程并发写缓存时互相覆盖、导致缓存条目缩水的问题。
+- 多因子深度检查进度新增 `deep_total` / `deep_done` / `result_count` 逐批更新，页面不再长时间只停在“深度检查 N”；本次没有截断候选，也没有降低全市场覆盖率。
+
 ## 今日 Bug 修复清单
 
 - 修复周末伪 K 线被纳入策略的问题：策略 K 线统一剔除周六/周日，周末缓存键回滚到最近交易日。
@@ -76,6 +84,8 @@ type: project
 - 修复策略扫描池过窄导致推荐数量不足、两种模式容易推荐同一只的问题，改为按沪深主板 + 创业板策略池扫描。
 - 修复接口失败时缺少诊断的问题，增加股票池、市值过滤、K 线轻筛、深度检查等阶段统计。
 - 修复激进型切换数据源优化后无结果的问题，补齐实时价量合并和策略诊断。
+- 修复扩展信息缓存容易被多进程并发写覆盖的问题，避免多因子深度检查后缓存条目异常缩水、后续查询又变慢。
+- 修复智能推荐页面刷新/切页后相同查询容易重复跑的问题，改为优先读取最近一次同条件推荐结果缓存。
 
 ## 协作约束更新
 
@@ -94,8 +104,10 @@ type: project
 ## 验证记录
 
 - `py -m pytest tests/test_stock_recommendation.py tests/test_notification.py tests/test_ui_enhancements.py -q` → `213 passed`。
+- `py -m pytest tests/test_recommendation_service.py tests/test_data_services.py::TestStockInfoService tests/test_ui_enhancements.py::test_recommend_page_uses_real_stage_progress tests/test_ui_enhancements.py::test_recommend_page_filters_removed_multi_factor_fields tests/test_stock_recommendation.py -q` → `152 passed`。
 
 ## 后续注意
 
 - 提交前不要加入 `.env`、`.cache/`、`.venv/`、`watchlist.json`、`reports/history/` 等本地运行文件。
 - README 中的智能推荐策略必须与代码实现保持一致，不能保留旧版资金流/消息催化/破板过滤描述。
+- 用户说“更新推送”时，按固定流程执行：同步本轮新增需求和已解决 bug 到 `docs/memory/`，更新 README 对应说明，然后提交并推送到 GitHub；不得记录未确认建议或未完成事项。
