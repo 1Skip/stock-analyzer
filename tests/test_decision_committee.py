@@ -65,6 +65,25 @@ def test_a_share_decision_builds_five_agent_views():
     assert "市场快讯/宏观资讯催化" in result["catalysts"]
 
 
+def test_a_share_decision_ignores_zero_quote_price():
+    data = pd.DataFrame([{
+        "close": 10.5,
+        "boll_upper": 12.0,
+        "boll_mid": 10.0,
+        "boll_lower": 8.0,
+        "ma20": 10.0,
+    }])
+
+    result = build_a_share_decision(
+        data,
+        {"recommendation": "偏多信号"},
+        {"price": 0, "change": -100},
+    )
+
+    assert result["key_levels"]["price"] == 10.5
+    assert result["entry_hint"] != "等待有效价格数据"
+
+
 def test_watchlist_decision_penalizes_risk_events():
     item = {
         "symbol": "000001",

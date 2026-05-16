@@ -34,6 +34,18 @@ def test_app_shell_uses_main_page_container():
     assert "render_committee_status_card()" in source
 
 
+def test_page_switch_does_not_clear_page_cache_state():
+    import inspect
+    import app
+
+    source = inspect.getsource(app._sync_active_page)
+
+    assert "st.session_state.pop" not in source
+    assert "analyzed_data" not in source
+    assert "hot_data" not in source
+    assert "rec_results" not in source
+
+
 def test_light_sidebar_renders_before_main_page():
     import inspect
     import app
@@ -75,7 +87,7 @@ def test_committee_status_css_exists():
     assert "committee-stage-row" in CUSTOM_CSS
 
 
-def test_page_switch_clears_inactive_state_and_reruns(monkeypatch):
+def test_page_switch_preserves_page_state_and_reruns(monkeypatch):
     import app
     import streamlit as st
 
@@ -93,10 +105,10 @@ def test_page_switch_clears_inactive_state_and_reruns(monkeypatch):
 
     assert changed is True
     assert st.session_state["_active_page"] == "股票对比"
-    assert "hot_data" not in st.session_state
-    assert "hot_data_loaded" not in st.session_state
-    assert "rec_results" not in st.session_state
-    assert "analyzed_data" not in st.session_state
+    assert st.session_state["hot_data"] == {"old": True}
+    assert st.session_state["hot_data_loaded"] is True
+    assert st.session_state["rec_results"] == {"old": True}
+    assert "analyzed_data" in st.session_state
     assert reruns == [True]
 
 

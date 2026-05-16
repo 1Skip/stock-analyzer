@@ -40,43 +40,11 @@ from ui.ai_analysis_ui import AI_MODEL_OPTIONS, _detect_provider  # noqa: F401
 from ui.analyze_page import _validate_symbol, display_signals  # noqa: F401
 
 
-_PAGE_SCOPED_STATE_KEYS = {
-    "个股分析": {
-        "analyzed_data",
-        "analyzed_signals",
-        "analyzed_quote",
-        "analyzed_stock_name",
-        "analyzed_profile",
-        "analyzed_extended_info",
-        "quick_match_caption",
-        "pending_quick_match",
-        "trigger_analysis",
-        "scroll_to_results",
-    },
-    "热门板块": {
-        "hot_data_loaded",
-        "hot_data",
-    },
-    "智能推荐": {
-        "rec_data_loaded",
-        "rec_results",
-    },
-}
-
 _PAGE_SWITCH_PENDING_KEY = "_page_switch_pending"
 
 
-def _clear_inactive_page_state(active_page):
-    """清理非当前页面的展示态，防止切页后旧结果被复用或残留。"""
-    for page_name, keys in _PAGE_SCOPED_STATE_KEYS.items():
-        if page_name == active_page:
-            continue
-        for key in keys:
-            st.session_state.pop(key, None)
-
-
 def _sync_active_page(page):
-    """切换主页面时先清理旧页面状态，再 rerun 让前端卸载旧 DOM。"""
+    """切换主页面时 rerun 卸载旧 DOM，同时保留各页面已加载状态。"""
     if "_active_page" not in st.session_state:
         st.session_state["_active_page"] = page
         return False
@@ -84,7 +52,6 @@ def _sync_active_page(page):
         return False
     st.session_state["_active_page"] = page
     st.session_state[_PAGE_SWITCH_PENDING_KEY] = True
-    _clear_inactive_page_state(page)
     st.rerun()
     return True
 

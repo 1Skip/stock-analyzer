@@ -1123,7 +1123,7 @@ class StockDataFetcher:
         return None
 
     def get_batch_realtime_quotes(self, symbols, market="CN"):
-        """批量获取实时行情，并行新浪HTTP调用（每只~200ms）
+        """批量获取实时行情，优先新浪批量HTTP分片请求。
         返回 {symbol: {price, change_pct}}，查不到的 symbol 不在结果中
         """
         result = {}
@@ -1132,18 +1132,63 @@ class StockDataFetcher:
 
         import concurrent.futures as _cf
 
+        def _sina_code(symbol):
+            if symbol.startswith('6'):
+                prefix = 'sh'
+            elif symbol.startswith('0') or symbol.startswith('3'):
+                prefix = 'sz'
+            elif symbol.startswith('4') or symbol.startswith('8'):
+                prefix = 'bj'
+            else:
+                prefix = 'sz'
+            return f"{prefix}{symbol}"
+
+        def _parse_sina_quote(symbol, raw):
+            if not raw:
+                return None
+            try:
+                data = raw.split(',')
+                if len(data) >= 33 and data[3]:
+                    price = float(data[3])
+                    prev_close = float(data[2])
+                    return {
+                        'symbol': symbol,
+                        'name': data[0],
+                        'price': price,
+                        'open': float(data[1]),
+                        'high': float(data[4]),
+                        'low': float(data[5]),
+                        'volume': int(float(data[8]) / 100),
+                        'prev_close': prev_close,
+                        'change_pct': round((price / prev_close - 1) * 100, 2),
+                    }
+            except Exception:
+                return None
+            return None
+
+        def _fetch_chunk(chunk):
+            chunk_result = {}
+            try:
+                code_to_symbol = {_sina_code(symbol): symbol for symbol in chunk}
+                url = "https://hq.sinajs.cn/list=" + ",".join(code_to_symbol.keys())
+                headers = {
+                    'Referer': 'https://finance.sina.com.cn',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+                response = _session.get(url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    for code, raw in re.findall(r'var hq_str_([a-z]{2}\d{6})="([^"]*)"', response.text):
+                        symbol = code_to_symbol.get(code)
+                        parsed = _parse_sina_quote(symbol, raw) if symbol else None
+                        if parsed:
+                            chunk_result[symbol] = parsed
+            except Exception:
+                pass
+            return chunk_result
+
         def _fetch_one(symbol):
             try:
-                # 确定交易所前缀
-                if symbol.startswith('6'):
-                    prefix = 'sh'
-                elif symbol.startswith('0') or symbol.startswith('3'):
-                    prefix = 'sz'
-                elif symbol.startswith('4') or symbol.startswith('8'):
-                    prefix = 'bj'
-                else:
-                    prefix = 'sz'
-                url = f"https://hq.sinajs.cn/list={prefix}{symbol}"
+                url = f"https://hq.sinajs.cn/list={_sina_code(symbol)}"
                 headers = {
                     'Referer': 'https://finance.sina.com.cn',
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -1151,28 +1196,32 @@ class StockDataFetcher:
                 response = _session.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
                     match = re.search(r'"([^"]*)"', response.text)
-                    if match:
-                        data = match.group(1).split(',')
-                        if len(data) >= 33 and data[3]:
-                            price = float(data[3])
-                            prev_close = float(data[2])
-                            return symbol, {
-                                'price': price,
-                                'change_pct': round((price / prev_close - 1) * 100, 2),
-                            }
+                    parsed = _parse_sina_quote(symbol, match.group(1) if match else "")
+                    if parsed:
+                        return symbol, parsed
             except Exception:
                 pass
             return symbol, None
 
-        with _cf.ThreadPoolExecutor(max_workers=10) as executor:
-            futures = {executor.submit(_fetch_one, s): s for s in symbols}
+        chunks = [symbols[i:i + 80] for i in range(0, len(symbols), 80)]
+        with _cf.ThreadPoolExecutor(max_workers=6) as executor:
+            futures = {executor.submit(_fetch_chunk, chunk): chunk for chunk in chunks}
             for future in _cf.as_completed(futures, timeout=8):
                 try:
-                    symbol, data = future.result(timeout=5)
-                    if data is not None:
-                        result[symbol] = data
+                    result.update(future.result(timeout=5) or {})
                 except Exception:
                     pass
+        missing_symbols = [symbol for symbol in symbols if symbol not in result]
+        if missing_symbols:
+            with _cf.ThreadPoolExecutor(max_workers=10) as executor:
+                futures = {executor.submit(_fetch_one, symbol): symbol for symbol in missing_symbols[:200]}
+                for future in _cf.as_completed(futures, timeout=8):
+                    try:
+                        symbol, data = future.result(timeout=5)
+                        if data is not None:
+                            result[symbol] = data
+                    except Exception:
+                        pass
         return result
 
     def get_index_realtime(self, symbol):

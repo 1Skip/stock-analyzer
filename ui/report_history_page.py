@@ -19,6 +19,12 @@ def _list_reports() -> list[Path]:
     return sorted(reports, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
+def _generate_today_report_task():
+    from reports.daily_report_service import DailyReportService
+
+    return DailyReportService().save_markdown(include_recommendations=False)
+
+
 def report_history_page() -> None:
     st.markdown('<h1 class="main-header">历史日报</h1>', unsafe_allow_html=True)
     st.caption("查看每日 Markdown 决策仪表盘，支持预览和下载。")
@@ -28,15 +34,14 @@ def report_history_page() -> None:
     with col_generate:
         if st.button("生成今日日报", type="primary", use_container_width=True):
             with status_loading("\u6b63\u5728\u751f\u6210\u65e5\u62a5...", 20):
-                from reports.daily_report_service import DailyReportService
-
-                paths = DailyReportService().save_markdown(include_recommendations=False)
+                paths = _generate_today_report_task()
             st.success(f"已生成：{paths.get('dated')}")
             st.rerun()
     with col_refresh:
         if st.button("刷新列表", use_container_width=False):
             st.rerun()
 
+    reports = _list_reports()
     if not reports:
         st.info("还没有日报。可以点击「生成今日日报」，或运行 `python main.py --daily-report`。")
         return

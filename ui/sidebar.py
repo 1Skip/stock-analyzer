@@ -18,10 +18,16 @@ def _open_watchlist_stock_in_main(symbol, market, name=None):
     st.session_state.analyze_symbol = symbol
     st.session_state.analyze_symbol_input = symbol
     st.session_state.analyze_market = market
-    st.session_state.trigger_analysis = True
-    st.session_state.scroll_to_results = True
+    st.session_state.analyze_market_select = market
+    st.session_state.pop("trigger_analysis", None)
+    st.session_state.pop("scroll_to_results", None)
+    st.session_state.pop("quick_match_caption", None)
     st.session_state.pending_main_page = "个股分析"
-    st.session_state.quick_match_caption = f"已从自选股打开：{name or symbol} ({symbol})"
+    st.session_state.pending_watchlist_analysis = {
+        "symbol": symbol,
+        "market": market,
+        "name": name or symbol,
+    }
 
 
 def display_market_temperature():

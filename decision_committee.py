@@ -54,7 +54,7 @@ def build_a_share_decision(
     profile = profile or {}
     latest = _latest_row(data)
     indicators = indicators or _extract_indicators(latest)
-    price = _number(quote.get("price")) or _number(latest.get("close"))
+    price = _positive_number(quote.get("price")) or _positive_number(latest.get("close"))
     change_pct = _number(quote.get("change")) or _number(quote.get("change_pct"))
     recommendation = str(signals.get("recommendation") or signals.get("signal_summary") or "观望")
 
@@ -426,6 +426,13 @@ def _number(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _positive_number(value: Any) -> float | None:
+    number = _number(value)
+    if number is None or number <= 0:
+        return None
+    return number
 
 
 def _contains(text: str, keywords: tuple[str, ...]) -> bool:

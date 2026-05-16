@@ -59,6 +59,47 @@ def _resolve_setup_model(api_key):
     return "默认配置", model_key, True
 
 
+def _clean_ai_text(text):
+    """清理模型返回中的 Markdown 标题前缀。"""
+    if not isinstance(text, str):
+        return text
+    return re.sub(r'^#{1,3}\s*', '', text, flags=re.MULTILINE).strip()
+
+
+def _has_meaningful_content(value):
+    """判断模型返回值是否包含可展示内容。"""
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(_has_meaningful_content(item) for item in value.values())
+    if isinstance(value, (list, tuple, set)):
+        return any(_has_meaningful_content(item) for item in value)
+    return value is not None
+
+
+def _agent_has_displayable_content(agent_result):
+    """判断单个 Agent 是否有结构化内容、原文或错误信息可展示。"""
+    if not agent_result:
+        return False
+    return (
+        _has_meaningful_content(agent_result.get("structured", {}))
+        or _has_meaningful_content(agent_result.get("content", ""))
+        or _has_meaningful_content(agent_result.get("error", ""))
+    )
+
+
+def _render_agent_fallback(agent_result, label):
+    """在结构化字段为空时展示原始内容或失败原因，避免空白面板。"""
+    content = agent_result.get("content", "") if agent_result else ""
+    error = agent_result.get("error", "") if agent_result else ""
+    if _has_meaningful_content(content):
+        st.markdown(_clean_ai_text(content))
+    elif _has_meaningful_content(error):
+        st.caption(f"{label}未生成：{error}")
+    else:
+        st.caption(f"{label}暂无可展示内容：模型返回了空字段，请重试或更换模型。")
+
+
 def _show_setup_form(symbol="", period=""):
     """显示 API Key 配置表单，并根据 Key 自动匹配模型。"""
     st.markdown("#### 设置 API Key")
@@ -134,19 +175,14 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
     # 单Agent 结果渲染
     result = st.session_state[cache_key]
     if result:
-        def _clean(text):
-            if not isinstance(text, str):
-                return text
-            return re.sub(r'^#{1,3}\s*', '', text, flags=re.MULTILINE)
-
         st.markdown("#### 核心结论")
-        st.markdown(_clean(result.get("核心结论", "无")))
+        st.markdown(_clean_ai_text(result.get("核心结论", "无")))
 
         risks = result.get("风险提示", [])
         if risks:
             st.markdown("#### 风险提示")
             for r in risks:
-                st.markdown(f"- {_clean(r)}")
+                st.markdown(f"- {_clean_ai_text(r)}")
 
         levels = result.get("关键点位", {})
         if levels:
@@ -159,7 +195,7 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
         suggestion = result.get("操作参考", "")
         if suggestion:
             st.markdown("#### 操作参考")
-            st.markdown(_clean(suggestion))
+            st.markdown(_clean_ai_text(suggestion))
 
         st.caption(f"模型: {model_label} | AI 辅助解读，仅作解释补充，不构成投资建议")
 
@@ -171,7 +207,7 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
         decision = multi_result.get("decision", {})
 
         dec_struct = decision.get("structured", {})
-        if dec_struct:
+        if _has_meaningful_content(dec_struct):
             conclusion = dec_struct.get("核心结论", "")
             score = dec_struct.get("技术面评分", "")
             confidence = dec_struct.get("信心度", "")
@@ -180,42 +216,61 @@ def _show_analysis_ui(data, signals, symbol, stock_name, period, api_key, model)
                 score_badge = {"偏多": "🟢", "偏空": "🔴", "中性": "🟡"}.get(score, "")
                 conf_badge = {"高": "高", "中": "中", "低": "低"}.get(confidence, confidence)
                 st.markdown(f"{score_badge} {conclusion}（信心度: {conf_badge}）")
+        elif _agent_has_displayable_content(decision):
+            st.markdown("#### 核心结论")
+            _render_agent_fallback(decision, "综合决策")
 
         tech_struct = tech.get("structured", {})
-        if tech_struct:
+        tech_items = [("MACD解读", "MACD"), ("RSI解读", "RSI"),
+                      ("KDJ解读", "KDJ"), ("布林带解读", "布林带"),
+                      ("均线解读", "均线"), ("指标一致性", "一致性")]
+        has_tech_fields = any(_has_meaningful_content(tech_struct.get(key, "")) for key, _ in tech_items)
+        if has_tech_fields or _agent_has_displayable_content(tech):
             with st.expander("技术指标解读", expanded=False):
-                for key, label in [("MACD解读", "MACD"), ("RSI解读", "RSI"),
-                                   ("KDJ解读", "KDJ"), ("布林带解读", "布林带"),
-                                   ("均线解读", "均线"), ("指标一致性", "一致性")]:
+                rendered = False
+                for key, label in tech_items:
                     val = tech_struct.get(key, "")
-                    if val:
+                    if _has_meaningful_content(val):
                         st.markdown(f"- **{label}**: {val}")
+                        rendered = True
+                if not rendered:
+                    _render_agent_fallback(tech, "技术指标解读")
 
         risk_struct = risk.get("structured", {})
-        if risk_struct:
+        has_risk_fields = any(_has_meaningful_content(risk_struct.get(key, "")) for key in [
+            "风险等级", "风险因素", "矛盾信号", "关注点位"
+        ])
+        if has_risk_fields or _agent_has_displayable_content(risk):
             with st.expander("风险评估", expanded=False):
+                rendered = False
                 risk_level = risk_struct.get("风险等级", "")
-                if risk_level:
+                if _has_meaningful_content(risk_level):
                     level_emoji = {"低": "🟢", "中": "🟡", "高": "🔴"}.get(risk_level, "")
                     st.markdown(f"**风险等级**: {level_emoji} {risk_level}")
+                    rendered = True
 
                 factors = risk_struct.get("风险因素", [])
-                if factors:
+                if _has_meaningful_content(factors):
                     for f in factors:
                         st.markdown(f"- {f}")
+                    rendered = True
 
                 conflict = risk_struct.get("矛盾信号", "")
-                if conflict:
+                if _has_meaningful_content(conflict):
                     st.markdown(f"**矛盾信号**: {conflict}")
+                    rendered = True
 
                 levels = risk_struct.get("关注点位", {})
-                if levels:
+                if _has_meaningful_content(levels):
                     cols = st.columns(len(levels))
                     for i, (name, value) in enumerate(levels.items()):
                         with cols[i]:
                             st.metric(name, value)
+                    rendered = True
+                if not rendered:
+                    _render_agent_fallback(risk, "风险评估")
 
-        if dec_struct:
+        if _has_meaningful_content(dec_struct):
             suggestion = dec_struct.get("操作参考", "")
             if suggestion:
                 st.markdown("#### 操作参考")

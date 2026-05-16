@@ -12,6 +12,7 @@ from ui.compare_page import (
 )
 from ui.report_history_page import _list_reports
 from ui.stock_search import parse_suggestion_label, suggest_stock_inputs
+from ui.ai_analysis_ui import _agent_has_displayable_content, _has_meaningful_content
 
 
 def test_stock_search_suggests_popular_cn_aliases():
@@ -20,6 +21,167 @@ def test_stock_search_suggests_popular_cn_aliases():
     assert result[0]["symbol"] == "600519"
     assert result[0]["name"] == "\u8d35\u5dde\u8305\u53f0"
     assert parse_suggestion_label(result[0]["label"]) == ("600519", "\u8d35\u5dde\u8305\u53f0")
+
+
+def test_ai_analysis_empty_structured_fields_are_not_meaningful():
+    empty_structured = {
+        "MACD解读": "",
+        "RSI解读": " ",
+        "风险因素": [],
+        "关注点位": {},
+    }
+
+    assert not _has_meaningful_content(empty_structured)
+    assert _has_meaningful_content({"MACD解读": "金叉形成"})
+
+
+def test_ai_analysis_agent_fallback_content_is_displayable():
+    empty_structured_agent = {
+        "structured": {"风险等级": "", "风险因素": [], "关注点位": {}},
+        "content": "",
+        "error": "",
+    }
+    raw_content_agent = {
+        "structured": {"风险等级": "", "风险因素": [], "关注点位": {}},
+        "content": "模型返回了原始风险说明",
+        "error": "",
+    }
+
+    assert not _agent_has_displayable_content(empty_structured_agent)
+    assert _agent_has_displayable_content(raw_content_agent)
+
+
+def test_long_running_pages_use_stable_loading_contexts():
+    from pathlib import Path
+
+    pages = [
+        Path("ui/analyze_page.py"),
+        Path("ui/hot_stocks_page.py"),
+        Path("ui/recommend_page.py"),
+        Path("ui/compare_page.py"),
+        Path("backtest_ui.py"),
+        Path("ui/report_history_page.py"),
+    ]
+
+    for page in pages:
+        source = page.read_text(encoding="utf-8")
+        assert "ui.background_tasks" not in source
+        assert "status_loading" in source or "_render_analysis_loading" in source or "_render_hot_loading" in source
+
+
+def test_analyze_page_keeps_analyzed_target_separate_from_input():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "st.session_state.analyzed_symbol = symbol" in source
+    assert "st.session_state.analyzed_market = market" in source
+    assert "st.session_state.analyzed_period = period" in source
+    assert "cached_symbol = st.session_state.get(\"analyzed_symbol\"" in source
+
+
+def test_analyze_page_uses_single_unified_target_header():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_analysis_target_header" in source
+    assert "当前分析标的" in source
+    assert "个股分析标的" not in source
+    assert "analyzed_target = _get_analyzed_target()" in source
+
+
+def test_analyze_page_hides_stale_result_when_input_changes():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _is_current_input_analyzed" in source
+    assert "analyzed_target = _get_analyzed_target() if _is_current_input_analyzed() else None" in source
+    assert "has_fresh_task_result" in source
+    assert "if _is_current_input_analyzed() or has_fresh_task_result" in source
+    assert "def _clear_analyzed_result" in source
+    assert "_clear_analyzed_result()" in source
+
+
+def test_analyze_page_syncs_cached_result_when_returning_to_page():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _sync_analyze_input_to_cached_result" in source
+    assert "st.session_state.analyze_symbol_input = analyzed_symbol" in source
+    assert "if not pending_watchlist_analysis and not pending_quick_match:" in source
+    assert "_sync_analyze_input_to_cached_result()" in source
+
+
+def test_recommend_page_shows_multi_factor_diagnostics():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_multi_factor_diagnostics" in source
+    assert "筛选诊断" in source
+    assert "主要卡点" in source
+    assert 'st.session_state.rec_results.get("diagnostics")' in source
+
+
+def test_recommend_page_uses_real_stage_progress():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _make_progress_callback" in source
+    assert "def _format_progress_message" in source
+    assert "阶段：" in source
+    assert "股票池" in source
+    assert "市值通过" in source
+    assert "轻筛通过" in source
+    assert "深度检查" in source
+    assert "progress_callback=progress_callback" in source
+    assert 'with status_loading(f"\\u6b63\\u5728\\u5206\\u6790' not in source
+
+
+def test_recommend_page_filters_removed_multi_factor_fields():
+    from ui.recommend_page import _filter_removed_multi_factor_fields
+
+    stock = {
+        "strategy_checks": {
+            "市值<300亿": True,
+            "个股资金流入": False,
+            "消息/公告/研报催化": False,
+            "近7日涨停活跃": True,
+            "连涨3日": True,
+        },
+        "strategy_details": {
+            "个股资金流": "数据缺失/接口失败",
+            "消息催化": "旧字段",
+            "催化依据": "旧字段",
+            "近7日涨停": "是",
+            "主力净流入趋势": "3000 万",
+        },
+    }
+
+    filtered = _filter_removed_multi_factor_fields(stock, "多因子稳健型")
+
+    assert "个股资金流入" not in filtered["strategy_checks"]
+    assert "消息/公告/研报催化" not in filtered["strategy_checks"]
+    assert "近7日涨停活跃" not in filtered["strategy_checks"]
+    assert "个股资金流" not in filtered["strategy_details"]
+    assert "消息催化" not in filtered["strategy_details"]
+    assert "催化依据" not in filtered["strategy_details"]
+    assert "近7日涨停" not in filtered["strategy_details"]
+    assert filtered["strategy_checks"]["连涨3日"] is True
+    assert filtered["strategy_details"]["主力净流入趋势"] == "3000 万"
+
+
+def test_recommend_page_uses_intelligent_stock_picking_title():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "智能选股推荐" in source
+    assert "龙头股推荐" not in source
 
 
 def test_stock_search_tolerates_common_near_match():
@@ -203,6 +365,25 @@ def test_decision_snapshot_exposes_stage2_dashboard_fields():
         assert {"name", "weight", "raw_score", "score_delta", "confidence", "evidence", "warnings"} <= set(agent)
 
 
+def test_decision_snapshot_falls_back_to_kline_when_quote_price_is_zero():
+    data = pd.DataFrame([{
+        "close": 16.8,
+        "boll_upper": 18.0,
+        "boll_mid": 16.5,
+        "boll_lower": 15.0,
+        "ma20": 16.4,
+    }])
+
+    snapshot = build_decision_snapshot(
+        data=data,
+        signals={"recommendation": "偏多信号"},
+        quote={"price": 0, "high": 0, "low": 0, "open": 0, "change": -100},
+    )
+
+    assert snapshot["key_levels"]["price"] == 16.8
+    assert snapshot["entry_hint"] != "等待有效价格数据"
+
+
 def test_decision_dashboard_stage2_css_classes_exist():
     for class_name in [
         "decision-hero",
@@ -368,6 +549,66 @@ def test_defense_dashboard_distinguishes_source_failure_from_empty_data():
     assert metrics["Beta"]["status_label"] == "接口失败"
 
 
+def test_defense_dashboard_peg_falls_back_to_financial_growth():
+    snapshot = {
+        "score": 60,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {"price": 12.0},
+        "risk_alerts": [],
+    }
+    extended_info = {
+        "financial": {"metrics": {"净利润同比": 30}},
+        "research": {"eps_consensus": {"status": "source_empty", "reason": "一致预期暂无"}},
+    }
+    defense = build_defense_dashboard(
+        snapshot,
+        data=None,
+        benchmark_data=None,
+        extended_info=extended_info,
+        profile={"pe_ttm": 15},
+    )
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert metrics["PEG"]["value"] == "0.50"
+    assert metrics["PEG"]["status"] == "derived"
+    assert "财务摘要净利润同比" in metrics["PEG"]["note"]
+
+
+def test_defense_dashboard_peg_uses_financial_growth_aliases_and_history():
+    snapshot = {
+        "score": 60,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {"price": 12.0},
+        "risk_alerts": [],
+    }
+    alias_defense = build_defense_dashboard(
+        snapshot,
+        data=None,
+        benchmark_data=None,
+        extended_info={"financial": {"metrics": {"归母净利润增长率(%)": 25}}},
+        profile={"pe_ttm": 20},
+    )
+    alias_metrics = {item["name"]: item for item in alias_defense["core_metrics"]}
+
+    history_defense = build_defense_dashboard(
+        snapshot,
+        data=None,
+        benchmark_data=None,
+        extended_info={"financial": {"history": [{"归母净利润": 100}, {"归母净利润": 150}]}},
+        profile={"pe_ttm": 20},
+    )
+    history_metrics = {item["name"]: item for item in history_defense["core_metrics"]}
+
+    assert alias_metrics["PEG"]["value"] == "0.80"
+    assert "归母净利润增长率" in alias_metrics["PEG"]["note"]
+    assert history_metrics["PEG"]["value"] == "0.40"
+    assert "近两期归母净利润增速" in history_metrics["PEG"]["note"]
+
+
 def test_decision_dashboard_trade_plan_css_classes_exist():
     from pathlib import Path
 
@@ -485,11 +726,10 @@ def test_analyze_page_uses_code_name_title_card():
 
     source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
 
-    assert "个股分析标的" in source
-    assert "当前标的" in source
-    assert "def _render_current_stock_header" in source
+    assert "当前分析标的" in source
+    assert "def _render_analysis_target_header" in source
     assert "display_name = stock_name if stock_name and stock_name != symbol else" in source
-    assert "{html.escape(symbol)}{f\" · {html.escape(display_name)}\" if display_name else \"\"}" in source
+    assert "{html.escape(str(symbol or \"--\"))}{f\" · {html.escape(str(display_name))}\" if display_name else \"\"}" in source
 
 
 def test_analyze_page_renders_market_news_section():
@@ -566,9 +806,22 @@ def test_sidebar_watchlist_click_opens_main_analysis():
     assert "def _open_watchlist_stock_in_main" in source
     assert "st.session_state.analyze_symbol = symbol" in source
     assert "st.session_state.analyze_symbol_input = symbol" in source
-    assert "st.session_state.trigger_analysis = True" in source
+    assert "st.session_state.pending_watchlist_analysis" in source
+    assert 'st.session_state.pop("trigger_analysis", None)' in source
     assert 'st.session_state.pending_main_page = "个股分析"' in source
     assert "_open_watchlist_stock_in_main(symbol, market, name)" in source
+
+
+def test_analyze_page_consumes_watchlist_analysis_once():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert 'pending_watchlist_analysis = st.session_state.pop("pending_watchlist_analysis", None)' in source
+    assert 'st.session_state.trigger_analysis = True' in source
+    assert 'st.session_state.scroll_to_results = True' in source
+    assert 'st.session_state.analyze_market_select = st.session_state.analyze_market' in source
+    assert '_clear_analyzed_result()' in source.split('pending_watchlist_analysis = st.session_state.pop("pending_watchlist_analysis", None)', 1)[1].split('pending_quick_match =', 1)[0]
 
 
 def test_sidebar_watchlist_click_does_not_keep_mini_panel_state():
@@ -599,11 +852,25 @@ def test_backtest_page_resolves_name_and_renders_target_header():
     assert "def _resolve_backtest_target" in source
     assert "resolve_cached_stock_input(query, market)" in source
     assert "股票代码或名称" in source
-    assert 'with st.form("backtest_form")' in source
+    assert 'with st.form("backtest_form", clear_on_submit=False)' in source
     assert 'st.form_submit_button("开始回测"' in source
     assert "回测标的" in source
     assert "_render_backtest_target_header(symbol, stock_name, market" in source
-    assert "adapter.save_results(symbol, market, output)" in source
+    assert "BacktestAdapter().save_results(symbol, market, output)" in source
+
+
+def test_backtest_page_keeps_input_and_result_state_separate():
+    from pathlib import Path
+
+    source = Path("backtest_ui.py").read_text(encoding="utf-8")
+
+    assert 'key="bt_symbol_input"' in source
+    assert 'value="000001"' not in source
+    assert "def _backtest_target_matches_input" in source
+    assert "_clear_backtest_result()" in source
+    assert "status_loading" in source
+    assert "ui.background_tasks" not in source
+    assert "_backtest_target_matches_input(current_result, symbol_input, market, period, eval_window)" in source
 
 
 def test_settings_page_documents_wechat_push_setup():

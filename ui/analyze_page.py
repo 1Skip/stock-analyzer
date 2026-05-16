@@ -75,6 +75,59 @@ def _format_money(value):
     return _format_large_number(value)
 
 
+def _safe_number(value):
+    try:
+        if value is None:
+            return None
+        number = float(value)
+        if np.isnan(number) or np.isinf(number):
+            return None
+        return number
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_valid_quote(quote):
+    """过滤实时行情接口返回的 0 价/空价，避免覆盖真实 K 线收盘价。"""
+    if not isinstance(quote, dict):
+        return False
+    price = _safe_number(quote.get("price"))
+    if price is None or price <= 0:
+        return False
+    high = _safe_number(quote.get("high"))
+    low = _safe_number(quote.get("low"))
+    open_price = _safe_number(quote.get("open"))
+    if high is not None and high <= 0:
+        return False
+    if low is not None and low <= 0:
+        return False
+    if open_price is not None and open_price <= 0:
+        return False
+    return True
+
+
+def _quote_from_last_row(data):
+    """实时行情不可用时，用历史 K 线最后一根生成真实兜底 quote。"""
+    if data is None or data.empty:
+        return None
+    last_row = data.iloc[-1]
+    price = _safe_number(last_row.get("close"))
+    if price is None or price <= 0:
+        return None
+    prev_row = data.iloc[-2] if len(data) > 1 else last_row
+    prev_close = _safe_number(prev_row.get("close"))
+    change = (price - prev_close) / prev_close * 100 if prev_close and prev_close > 0 else 0
+    return {
+        "price": price,
+        "high": _safe_number(last_row.get("high")) or price,
+        "low": _safe_number(last_row.get("low")) or price,
+        "open": _safe_number(last_row.get("open")) or price,
+        "volume": int(_safe_number(last_row.get("volume")) or 0),
+        "change": change,
+        "source": "历史K线兜底",
+    }
+
+
 def _latest_news_date(news):
     """返回新闻列表中的最新可见日期。"""
     candidates = []
@@ -434,61 +487,115 @@ def _render_current_stock_header(symbol: str, market: str, period: str, stock_na
     )
 
 
-def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
-    """渲染个股分析结果 — Apple×Tesla 分层布局"""
-    st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
-    st.divider()
+def _get_analyzed_target():
+    """返回已完成分析对应的代码、名称、市场和周期。"""
+    if st.session_state.get("analyzed_data") is None:
+        return None
+    symbol = st.session_state.get("analyzed_symbol") or st.session_state.get("analyze_symbol")
+    market = st.session_state.get("analyzed_market") or st.session_state.get("analyze_market", "CN")
+    period = st.session_state.get("analyzed_period") or st.session_state.get("analyze_period", "1y")
+    stock_name = st.session_state.get("analyzed_stock_name") or symbol
+    return symbol, stock_name, market, period
 
-    # ① 标题行
-    col_title, col_watchlist = st.columns([3, 1])
+
+def _clear_analyzed_result():
+    """清除已完成分析缓存，避免新输入时旧结果串台。"""
+    for key in [
+        "analyzed_symbol",
+        "analyzed_market",
+        "analyzed_period",
+        "analyzed_data",
+        "analyzed_signals",
+        "analyzed_quote",
+        "analyzed_stock_name",
+        "analyzed_profile",
+        "analyzed_extended_info",
+        "analyzed_intraday_data",
+    ]:
+        st.session_state.pop(key, None)
+
+
+def _is_current_input_analyzed():
+    """判断当前输入框/市场/周期是否仍对应已完成分析结果。"""
+    target = _resolve_watchlist_target(
+        st.session_state.get("analyze_symbol_input", st.session_state.get("analyze_symbol", "")),
+        st.session_state.get("analyze_market", "CN"),
+    )
+    input_symbol = target[0] if target else str(st.session_state.get("analyze_symbol_input", "")).strip()
+    return (
+        input_symbol == st.session_state.get("analyzed_symbol")
+        and st.session_state.get("analyze_market") == st.session_state.get("analyzed_market")
+        and st.session_state.get("analyze_period") == st.session_state.get("analyzed_period")
+    )
+
+
+def _sync_analyze_input_to_cached_result():
+    """页面切回个股分析时，确保顶部输入/当前标的与已分析结果一致。"""
+    if st.session_state.get("analyzed_data") is None:
+        return
+    analyzed_symbol = st.session_state.get("analyzed_symbol")
+    analyzed_market = st.session_state.get("analyzed_market")
+    analyzed_period = st.session_state.get("analyzed_period")
+    if not analyzed_symbol:
+        return
+    st.session_state.analyze_symbol = analyzed_symbol
+    st.session_state.analyze_symbol_input = analyzed_symbol
+    if analyzed_market:
+        st.session_state.analyze_market = analyzed_market
+        st.session_state.analyze_market_select = analyzed_market
+    if analyzed_period:
+        st.session_state.analyze_period = analyzed_period
+        st.session_state.analyze_period_select = analyzed_period
+
+
+def _render_analysis_target_header(symbol, stock_name, market, period, *, show_watchlist=True):
+    """统一展示股票代码和股票名称，避免页面出现两个标的栏。"""
+    display_name = stock_name if stock_name and stock_name != symbol else ""
+    market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+    col_title, col_watchlist = st.columns([3, 1]) if show_watchlist else (st.container(), None)
     with col_title:
-        display_name = stock_name if stock_name and stock_name != symbol else ""
-        market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
         st.markdown(
             f"""
             <div style="margin:0 0 12px;padding:14px 16px;border-radius:14px;
                         border:1px solid rgba(85,199,255,0.18);
                         background:linear-gradient(135deg,rgba(85,199,255,0.13),rgba(5,13,24,0.78));
                         box-shadow:0 12px 30px rgba(0,0,0,0.20);">
-              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">个股分析标的</div>
+              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">当前分析标的</div>
               <div style="font-size:1.32rem;font-weight:700;line-height:1.3;">
-                {html.escape(symbol)}{f" · {html.escape(display_name)}" if display_name else ""}
+                {html.escape(str(symbol or "--"))}{f" · {html.escape(str(display_name))}" if display_name else ""}
               </div>
-              <div style="font-size:0.85rem;opacity:0.65;margin-top:4px;">{html.escape(market_label)} · {html.escape(period)}</div>
+              <div style="font-size:0.85rem;opacity:0.65;margin-top:4px;">{html.escape(market_label)} · {html.escape(str(period))}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
-    with col_watchlist:
-        if is_in_watchlist(symbol, market):
-            if st.button("移除自选", key="remove_watchlist"):
-                success, msg = remove_from_watchlist(symbol, market)
-                if success:
-                    st.success(msg)
-                    st.rerun()
-        else:
-            if st.button("加入自选", key="add_watchlist"):
-                success, msg = add_to_watchlist(symbol, stock_name, market)
-                if success:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.warning(msg)
+    if show_watchlist and col_watchlist is not None:
+        with col_watchlist:
+            if is_in_watchlist(symbol, market):
+                if st.button("移除自选", key=f"remove_watchlist_{market}_{symbol}"):
+                    success, msg = remove_from_watchlist(symbol, market)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+            else:
+                if st.button("加入自选", key=f"add_watchlist_{market}_{symbol}"):
+                    success, msg = add_to_watchlist(symbol, stock_name, market)
+                    if success:
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.warning(msg)
+
+
+def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
+    """渲染个股分析结果 — Apple×Tesla 分层布局"""
+    st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
+    st.divider()
 
 
     # ② 核心指标 — 最新价
-    last_row = data.iloc[-1] if data is not None and not data.empty else None
-    if quote is None and last_row is not None:
-        prev_row = data.iloc[-2] if len(data) > 1 else last_row
-        change = (last_row['close'] - prev_row['close']) / prev_row['close'] * 100 if prev_row['close'] != 0 else 0
-        quote = {
-            'price': last_row['close'],
-            'high': last_row['high'],
-            'low': last_row['low'],
-            'open': last_row['open'],
-            'volume': int(last_row['volume']),
-            'change': change,
-        }
+    if not _is_valid_quote(quote):
+        quote = _quote_from_last_row(data)
 
     if quote:
         col_price, col_h, col_l, col_v, col_o = st.columns([2, 1, 1, 1, 1])
@@ -625,6 +732,154 @@ def _render_analysis_loading(container, symbol, market, step, percent):
         )
 
 
+def _run_stock_analysis_task(symbol, market, period):
+    """后台执行个股分析，避免切页中断并确保代码/名称成对写回。"""
+    original_query = str(symbol or "").strip()
+    symbol = original_query
+    resolved_name = None
+
+    has_chinese = any('一' <= c <= '鿿' for c in symbol)
+    if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
+        result = resolve_cached_stock_input(symbol, market)
+        if result:
+            resolved_name = result[1]
+            symbol = result[0]
+        elif has_chinese:
+            return {
+                "error": f"未找到匹配「{symbol}」的股票，请使用6位代码搜索或检查名称是否正确",
+                "query": original_query,
+                "market": market,
+                "period": period,
+            }
+
+    is_valid, err_msg = _validate_symbol(symbol, market)
+    if not is_valid:
+        return {
+            "error": f"输入的股票代码格式有误，{err_msg}",
+            "query": original_query,
+            "symbol": symbol,
+            "market": market,
+            "period": period,
+        }
+
+    info = {'shortName': symbol, 'symbol': symbol}
+    data = None
+    quote = None
+    intraday_data = None
+    profile = None
+    extended_info = None
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    futures = {}
+    try:
+        futures = {
+            'info': executor.submit(get_cached_stock_info, symbol, market),
+            'data': executor.submit(get_cached_stock_data, symbol, '1y', market),
+            'quote': executor.submit(get_cached_realtime_quote, symbol, market),
+        }
+        if market == "CN":
+            futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+            futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
+            futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+
+        try:
+            data = futures['data'].result(timeout=20)
+        except Exception:
+            data = None
+
+        try:
+            info_result = futures['info'].result(timeout=0.2)
+            if info_result:
+                info = info_result
+        except Exception:
+            info = {'shortName': symbol, 'symbol': symbol}
+
+        try:
+            quote = futures['quote'].result(timeout=0.2)
+        except Exception:
+            quote = None
+
+        try:
+            if 'intraday' in futures:
+                intraday_data = futures['intraday'].result(timeout=0.2)
+        except Exception:
+            intraday_data = None
+
+        try:
+            if 'profile' in futures:
+                profile = futures['profile'].result(timeout=2.5)
+        except Exception:
+            profile = {"loading": True, "source": "基础资料服务"}
+
+        try:
+            if 'extended_info' in futures:
+                extended_info = futures['extended_info'].result(timeout=2.5)
+        except Exception:
+            extended_info = {"loading": True, "source": "AKShare"}
+    finally:
+        for future in futures.values():
+            if not future.done():
+                future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    if data is None or data.empty:
+        return {
+            "error": f"未能获取到 {symbol} 的数据，请检查股票代码、市场选择或网络连接",
+            "query": original_query,
+            "symbol": symbol,
+            "market": market,
+            "period": period,
+        }
+
+    if not _is_valid_quote(quote):
+        quote = _quote_from_last_row(data)
+
+    if quote and data is not None and not data.empty:
+        today = pd.Timestamp.now().normalize()
+        if data.index[-1].normalize() == today:
+            idx = data.index[-1]
+            data.loc[idx, 'close'] = quote['price']
+            data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
+            data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
+            data.loc[idx, 'volume'] = quote.get('volume', data.loc[idx, 'volume'])
+        else:
+            realtime_row = pd.DataFrame({
+                'open': [quote['open']],
+                'high': [quote['high']],
+                'low': [quote['low']],
+                'close': [quote['price']],
+                'volume': [quote['volume']]
+            }, index=[pd.Timestamp.now()])
+            data = pd.concat([data, realtime_row])
+
+    stock_name = resolved_name or symbol
+    if isinstance(info, dict):
+        stock_name = info.get('shortName') or info.get('longName') or stock_name
+    if stock_name == symbol and market == "CN":
+        name_result = resolve_cached_stock_input(symbol, market)
+        if name_result:
+            stock_name = name_result[1]
+    elif stock_name == symbol:
+        stock_name = symbol
+
+    data = TechnicalIndicators.calculate_all(data)
+    signals = TechnicalIndicators.get_signals(data)
+
+    return {
+        "query": original_query,
+        "symbol": symbol,
+        "market": market,
+        "period": period,
+        "stock_name": stock_name,
+        "data": data,
+        "signals": signals,
+        "quote": quote,
+        "intraday_data": intraday_data,
+        "profile": profile,
+        "extended_info": extended_info,
+    }
+
+
 def analyze_stock_page():
     """个股分析页面"""
     st.markdown('<h1 class="main-header">股票技术分析</h1>', unsafe_allow_html=True)
@@ -641,6 +896,20 @@ def analyze_stock_page():
         st.session_state.analyze_selected_suggestion = ""
     if 'quick_stock_query' not in st.session_state:
         st.session_state.quick_stock_query = ""
+    pending_watchlist_analysis = st.session_state.pop("pending_watchlist_analysis", None)
+    if pending_watchlist_analysis:
+        st.session_state.analyze_symbol = pending_watchlist_analysis["symbol"]
+        st.session_state.analyze_symbol_input = pending_watchlist_analysis["symbol"]
+        st.session_state.analyze_market = pending_watchlist_analysis.get("market", "CN")
+        st.session_state.analyze_market_select = st.session_state.analyze_market
+        st.session_state.quick_stock_query = ""
+        st.session_state.trigger_analysis = True
+        st.session_state.scroll_to_results = True
+        st.session_state.quick_match_caption = (
+            f"已从自选股打开：{pending_watchlist_analysis.get('name') or pending_watchlist_analysis['symbol']} "
+            f"({pending_watchlist_analysis['symbol']})"
+        )
+        _clear_analyzed_result()
     pending_quick_match = st.session_state.pop("pending_quick_match", None)
     if pending_quick_match:
         st.session_state.analyze_symbol = pending_quick_match["symbol"]
@@ -650,12 +919,16 @@ def analyze_stock_page():
         st.session_state.quick_match_caption = (
             f"已选择：{pending_quick_match['name']} ({pending_quick_match['symbol']})"
         )
+    if not pending_watchlist_analysis and not pending_quick_match:
+        _sync_analyze_input_to_cached_result()
 
     def on_market_change():
         st.session_state.analyze_market = st.session_state.analyze_market_select
+        _clear_analyzed_result()
 
     def on_period_change():
         st.session_state.analyze_period = st.session_state.analyze_period_select
+        _clear_analyzed_result()
 
     # ================================================================
     # 搜索区域 — 主搜索框 + 辅助选项
@@ -680,19 +953,23 @@ def analyze_stock_page():
     if submitted:
         st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
         st.session_state.trigger_analysis = True
+        _clear_analyzed_result()
 
-    current_header_name = st.session_state.get("analyzed_stock_name")
-    current_header_symbol = st.session_state.get("analyze_symbol_input", st.session_state.analyze_symbol)
-    if st.session_state.get("analyzed_data") is None:
+    analyzed_target = _get_analyzed_target() if _is_current_input_analyzed() else None
+    if analyzed_target:
+        _render_analysis_target_header(*analyzed_target)
+    else:
+        current_header_name = None
+        current_header_symbol = st.session_state.get("analyze_symbol_input", st.session_state.analyze_symbol)
         target = _resolve_watchlist_target(current_header_symbol, st.session_state.analyze_market)
         if target:
             current_header_symbol, current_header_name = target
-    _render_current_stock_header(
-        current_header_symbol,
-        st.session_state.analyze_market,
-        st.session_state.analyze_period,
-        current_header_name,
-    )
+        _render_current_stock_header(
+            current_header_symbol,
+            st.session_state.analyze_market,
+            st.session_state.analyze_period,
+            current_header_name,
+        )
 
     quick_match_caption = st.session_state.pop("quick_match_caption", None)
     if quick_match_caption:
@@ -803,194 +1080,52 @@ def analyze_stock_page():
     analyze_clicked = st.session_state.pop('trigger_analysis', False)
 
     if analyze_clicked:
+        _clear_analyzed_result()
         loading_panel = st.empty()
-        _render_analysis_loading(loading_panel, symbol, market, "正在识别输入并准备分析...", 2)
-
-        # 名称→代码解析（A股支持输入中文名称）
-        resolved_name = None
-        has_chinese = any('一' <= c <= '鿿' for c in symbol)
-        if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
-            if has_chinese:
-                _render_analysis_loading(loading_panel, symbol, market, "正在按股票名称匹配代码...", 8)
-                result = resolve_cached_stock_input(symbol, market)
-                if result:
-                    resolved_name = result[1]
-                    symbol = result[0]
-                    st.session_state.analyze_symbol = symbol
-                    st.caption(f"已识别: {resolved_name} ({symbol})")
-                else:
-                    st.error(f"未找到匹配「{symbol}」的股票，请使用6位代码搜索或检查名称是否正确")
-                    loading_panel.empty()
-                    st.stop()
-            else:
-                _render_analysis_loading(loading_panel, symbol, market, "正在解析股票代码...", 8)
-                result = resolve_cached_stock_input(symbol, market)
-                if result:
-                    resolved_name = result[1]
-                    symbol = result[0]
-                    st.session_state.analyze_symbol = symbol
-                    st.caption(f"已识别: {resolved_name} ({symbol})")
-
-        is_valid, err_msg = _validate_symbol(symbol, market)
-        if not is_valid:
-            st.error(f"输入的股票代码格式有误，{err_msg}")
-            loading_panel.empty()
-            st.stop()
-
-        _render_analysis_loading(loading_panel, symbol, market, "正在并发获取股票数据...", 12)
-
-        info = {'shortName': symbol, 'symbol': symbol}
-        data = None
-        quote = None
-        intraday_data = None
-        profile = None
-        extended_info = None
-
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
-        futures = {}
-        try:
-            futures = {
-                'info': executor.submit(get_cached_stock_info, symbol, market),
-                'data': executor.submit(get_cached_stock_data, symbol, '1y', market),
-                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
-            }
-            if market == "CN":
-                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
-                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
-                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
-
-            try:
-                data = futures['data'].result(timeout=20)
-            except Exception:
-                data = None
-            _render_analysis_loading(loading_panel, symbol, market, "历史行情已返回，正在读取股票资料...", 45)
-
-            try:
-                info_result = futures['info'].result(timeout=0.2)
-                if info_result:
-                    info = info_result
-            except Exception:
-                info = {'shortName': symbol, 'symbol': symbol}
-            _render_analysis_loading(loading_panel, symbol, market, "正在获取实时行情...", 50)
-
-            try:
-                quote = futures['quote'].result(timeout=0.2)
-            except Exception:
-                quote = None
-            _render_analysis_loading(loading_panel, symbol, market, "正在补充基础资料、分时和扩展信息...", 55)
-
-            try:
-                if 'intraday' in futures:
-                    intraday_data = futures['intraday'].result(timeout=0.2)
-            except Exception:
-                intraday_data = None
-
-            try:
-                if 'profile' in futures:
-                    profile = futures['profile'].result(timeout=2.5)
-            except Exception:
-                profile = {"loading": True, "source": "基础资料服务"}
-
-            try:
-                if 'extended_info' in futures:
-                    extended_info = futures['extended_info'].result(timeout=2.5)
-            except Exception:
-                extended_info = {"loading": True, "source": "AKShare"}
-        finally:
-            for future in futures.values():
-                if not future.done():
-                    future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
-        if data is None or data.empty:
-            st.error(f"未能获取到 {symbol} 的数据，请检查：\n1. 股票代码是否正确\n2. 市场选择是否正确\n3. 网络连接是否正常")
-            loading_panel.empty()
-            return
-
-        data_source = data.attrs.get('data_source', '未知')
-        offline_mode = data.attrs.get('offline_mode', False)
-        is_fallback = "AKShare" not in data_source and not offline_mode
-
-        if offline_mode:
-            st.caption(f"🔴 离线缓存 · {data_source}")
-        elif is_fallback:
-            st.caption(f"🟡 备选数据源 · {data_source}")
-        else:
-            st.caption(f"数据源 · {data_source}")
-
-        _render_analysis_loading(loading_panel, symbol, market, "正在合并实时行情...", 65)
-        if quote and data is not None and not data.empty:
-            today = pd.Timestamp.now().normalize()
-            if data.index[-1].normalize() == today:
-                idx = data.index[-1]
-                data.loc[idx, 'close'] = quote['price']
-                data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
-                data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
-                data.loc[idx, 'volume'] = quote.get('volume', data.loc[idx, 'volume'])
-            else:
-                realtime_row = pd.DataFrame({
-                    'open': [quote['open']],
-                    'high': [quote['high']],
-                    'low': [quote['low']],
-                    'close': [quote['price']],
-                    'volume': [quote['volume']]
-                }, index=[pd.Timestamp.now()])
-                data = pd.concat([data, realtime_row])
-        _render_analysis_loading(loading_panel, symbol, market, "正在识别股票名称和检查数据完整性...", 75)
-        stock_name = resolved_name or symbol
-        if isinstance(info, dict):
-            stock_name = info.get('shortName') or info.get('longName') or stock_name
-        if stock_name == symbol and market == "CN":
-            name_result = resolve_cached_stock_input(symbol, market)
-            if name_result:
-                stock_name = name_result[1]
-        elif stock_name == symbol:
-            stock_name = symbol
-
-        short_history_notice = _build_short_history_notice(symbol, stock_name, len(data), period)
-        if short_history_notice:
-            st.info(short_history_notice)
-
-        _render_analysis_loading(loading_panel, symbol, market, "正在计算技术指标（MACD/RSI/KDJ/BOLL/MA）...", 82)
-        data = TechnicalIndicators.calculate_all(data)
-
-        _render_analysis_loading(loading_panel, symbol, market, "正在生成交易信号和决策仪表盘...", 92)
-        signals = TechnicalIndicators.get_signals(data)
-
-        if 'error' in signals:
-            st.warning(f"指标计算问题：{signals['error']}")
-
-        _render_analysis_loading(loading_panel, symbol, market, "正在渲染图表...", 99)
-
-        st.session_state.analyzed_data = data
-        st.session_state.analyzed_signals = signals
-        st.session_state.analyzed_quote = quote
-        st.session_state.analyzed_stock_name = stock_name
-        st.session_state.analyzed_profile = profile
-        st.session_state.analyzed_extended_info = extended_info
-
-        period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
-        cutoff = data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
-        display_data = data[data.index >= cutoff] if len(data[data.index >= cutoff]) >= 10 else data
-
-        _render_analysis_results(display_data, signals, quote, symbol, stock_name, market, period, intraday_data=intraday_data, profile=profile, extended_info=extended_info)
-
+        _render_analysis_loading(loading_panel, symbol, market, "正在并发获取行情、资料和指标...", 18)
+        task_result = _run_stock_analysis_task(symbol, market, period)
         loading_panel.empty()
+        if task_result.get("error"):
+            st.error(task_result["error"])
+        else:
+            symbol = task_result["symbol"]
+            market = task_result["market"]
+            period = task_result["period"]
+            st.session_state.analyze_symbol = symbol
+            st.session_state.analyzed_symbol = symbol
+            st.session_state.analyzed_market = market
+            st.session_state.analyzed_period = period
+            st.session_state.analyzed_data = task_result["data"]
+            st.session_state.analyzed_signals = task_result["signals"]
+            st.session_state.analyzed_quote = task_result["quote"]
+            st.session_state.analyzed_stock_name = task_result["stock_name"]
+            st.session_state.analyzed_profile = task_result["profile"]
+            st.session_state.analyzed_extended_info = task_result["extended_info"]
+            st.session_state.analyzed_intraday_data = task_result["intraday_data"]
 
     # rerun 恢复
-    if not analyze_clicked:
+    has_fresh_task_result = (
+        st.session_state.get("analyzed_data") is not None
+        and st.session_state.get("analyze_symbol") == st.session_state.get("analyzed_symbol")
+    )
+    if _is_current_input_analyzed() or has_fresh_task_result:
         cached_data = st.session_state.get("analyzed_data")
         if cached_data is not None:
+            cached_symbol = st.session_state.get("analyzed_symbol", st.session_state.analyze_symbol)
+            cached_market = st.session_state.get("analyzed_market", market)
+            cached_period = st.session_state.get("analyzed_period", period)
             period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
-            cutoff = cached_data.index[-1] - pd.Timedelta(days=period_days.get(period, 365))
+            cutoff = cached_data.index[-1] - pd.Timedelta(days=period_days.get(cached_period, 365))
             display_data = cached_data[cached_data.index >= cutoff] if len(cached_data[cached_data.index >= cutoff]) >= 10 else cached_data
             _render_analysis_results(
                 display_data,
                 st.session_state.get("analyzed_signals", {}),
                 st.session_state.get("analyzed_quote"),
-                symbol,
+                cached_symbol,
                 st.session_state.get("analyzed_stock_name", ""),
-                market,
-                period,
+                cached_market,
+                cached_period,
+                intraday_data=st.session_state.get("analyzed_intraday_data"),
                 profile=st.session_state.get("analyzed_profile"),
                 extended_info=st.session_state.get("analyzed_extended_info"),
             )

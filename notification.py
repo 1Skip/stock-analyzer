@@ -130,7 +130,7 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         "特斯拉概念": "🚗",
     }
 
-    title = "📊 板块龙头推荐 — 短线/长线"
+    title = "📊 板块策略推荐 — 短线/长线/突破/稳健"
 
     body_lines = []
     for sector_name in ["算力租赁", "电力", "苹果概念", "特斯拉概念"]:
@@ -141,23 +141,14 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         icon = SECTOR_ICONS.get(sector_name, "📌")
         body_lines.append(f"## {icon} {sector_name}")
 
-        # 短线
-        short_stocks = data.get('短线', [])
-        if short_stocks:
-            body_lines.append("**短线**")
-            for stock in short_stocks:
-                body_lines.extend(_build_sector_stock_lines(stock))
-        else:
-            body_lines.append(f"**短线**: 暂无推荐")
-
-        # 长线
-        long_stocks = data.get('长线', [])
-        if long_stocks:
-            body_lines.append("**长线**")
-            for stock in long_stocks:
-                body_lines.extend(_build_sector_stock_lines(stock))
-        else:
-            body_lines.append(f"**长线**: 暂无推荐")
+        for strategy_name in ["短线", "长线", "激进突破型", "多因子稳健型"]:
+            stocks = data.get(strategy_name, [])
+            if stocks:
+                body_lines.append(f"**{strategy_name}**")
+                for stock in stocks:
+                    body_lines.extend(_build_sector_stock_lines(stock))
+            else:
+                body_lines.append(f"**{strategy_name}**: 暂无推荐")
 
         body_lines.append("")
 
@@ -185,6 +176,17 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         f"｜{strategy or '推荐'}｜评分 {score}｜{rating}"
     )
     lines = [header]
+    checks = stock.get("strategy_checks") or {}
+    details = stock.get("strategy_details") or {}
+    if checks:
+        passed = [name for name, ok in checks.items() if ok]
+        missing = [name for name, ok in checks.items() if not ok]
+        lines.append(f"  策略命中: {', '.join(passed) if passed else '暂无'}")
+        if missing:
+            lines.append(f"  缺失/未通过: {', '.join(missing)}")
+    for key in ["买入观察", "卖出纪律", "市值过滤", "技术说明", "财务确认", "连涨3日", "主力净流入趋势", "15日涨停", "风险排除"]:
+        if details.get(key):
+            lines.append(f"  {key}: {details[key]}")
 
     try:
         from decision_committee import build_watchlist_decision

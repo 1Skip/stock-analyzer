@@ -277,7 +277,7 @@ class TestBuildSectorReport:
         from notification import build_sector_report
         data = self._make_sector_data()
         title, body = build_sector_report(data)
-        assert "板块龙头推荐" in title
+        assert "板块策略推荐" in title
         assert len(body) > 0
 
     def test_includes_sector_names(self):
@@ -301,6 +301,41 @@ class TestBuildSectorReport:
         title, body = build_sector_report(data)
         assert "短线" in body
         assert "长线" in body
+
+    def test_includes_new_strategy_details(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        data["算力租赁"]["激进突破型"] = [{
+            'symbol': '300001',
+            'name': '测试创业板',
+            'latest_price': 12.3,
+            'change_pct': 3.2,
+            'strategy': '激进突破型',
+            'score': 92,
+            'rating': '强突破候选',
+            'strategy_checks': {'市值<300亿': True, '均线多头排列': True, '突破20日新高': True, '明显放量': True},
+            'strategy_details': {'买入观察': '突破确认后观察买入', '市值过滤': '总市值 120.00 亿', '近7日涨停': '是'},
+        }]
+        data["算力租赁"]["多因子稳健型"] = [{
+            'symbol': '300002',
+            'name': '测试多因子',
+            'latest_price': 10.0,
+            'change_pct': 1.0,
+            'strategy': '多因子稳健型',
+            'score': 88,
+            'rating': '多因子共振',
+            'strategy_checks': {'均线金叉+放量': True, '财务确认': True, '连涨3日': True, '主力净流入趋势≥3000万': True, '15日内涨停': True},
+            'strategy_details': {'主力净流入趋势': '3000 万', '财务确认': '最新净利润未亏损（1000000）', '15日涨停': '近15日出现涨停 1 次'},
+        }]
+
+        _, body = build_sector_report(data)
+
+        assert "激进突破型" in body
+        assert "多因子稳健型" in body
+        assert "策略命中" in body
+        assert "市值过滤" in body
+        assert "主力净流入趋势" in body
+        assert "15日涨停" in body
 
     def test_includes_stock_info(self):
         from notification import build_sector_report
@@ -345,5 +380,5 @@ class TestBuildSectorReport:
     def test_empty_data_still_returns_valid(self):
         from notification import build_sector_report
         title, body = build_sector_report({})
-        assert "板块龙头推荐" in title
+        assert "板块策略推荐" in title
         assert isinstance(body, str)

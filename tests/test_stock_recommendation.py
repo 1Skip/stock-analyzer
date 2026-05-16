@@ -656,6 +656,865 @@ class TestGetShortTermRecommendations:
             assert result[0]['score'] >= result[-1]['score']
 
 
+class TestStrategyRecommendations:
+
+    def test_strategy_pool_includes_chinext_and_excludes_star_board(self, recommender, monkeypatch):
+        pool = [
+            {'code': '300750', 'name': '宁德时代'},
+            {'code': '688981', 'name': '中芯国际'},
+            {'code': '000001', 'name': '平安银行'},
+        ]
+        monkeypatch.setattr('stock_recommendation.get_popular_cn_stocks', lambda: pool)
+        monkeypatch.setattr('stock_recommendation.CN_STOCK_NAMES_EXTENDED', {})
+        monkeypatch.setattr('stock_recommendation.StockDataFetcher._load_stock_name_index', lambda max_age_hours=48: [])
+
+        result = recommender._get_strategy_popular_cn_stocks()
+
+        assert [item['code'] for item in result] == ['300750', '000001']
+
+    def test_aggressive_breakout_requires_three_technical_conditions(self, recommender):
+        dates = pd.date_range('2026-01-01', periods=30, freq='B')
+        close = np.linspace(10, 13, 30)
+        volume = np.full(30, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+
+        pattern = recommender._evaluate_breakout_pattern(data)
+
+        assert pattern["matched"] == 3
+        assert pattern["conditions"]["均线多头排列"] is True
+        assert pattern["conditions"]["突破20日新高"] is True
+        assert pattern["conditions"]["明显放量"] is True
+
+    def test_strategy_stock_data_uses_sina_then_tencent_before_eastmoney(self, recommender, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        calls = []
+        data = pd.DataFrame({
+            'open': np.linspace(10, 12, 20),
+            'high': np.linspace(10.2, 12.2, 20),
+            'low': np.linspace(9.8, 11.8, 20),
+            'close': np.linspace(10, 12, 20),
+            'volume': np.full(20, 1000000),
+        }, index=pd.date_range('2026-01-01', periods=20, freq='B'))
+
+        def fail_sina(self, symbol, period, **kwargs):
+            calls.append("sina")
+            return None
+
+        def ok_tencent(self, symbol, period, **kwargs):
+            calls.append("tencent")
+            return data
+
+        def fail_eastmoney(self, symbol, period, **kwargs):
+            calls.append("eastmoney")
+            return None
+
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_sina_fallback", fail_sina)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare", ok_tencent)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare_em", fail_eastmoney)
+        monkeypatch.setattr(recommender, "_load_strategy_kline_cache", lambda cache_key: None)
+        monkeypatch.setattr(recommender, "_save_strategy_kline_cache", lambda cache_key, data: None)
+
+        result = recommender._get_strategy_stock_data("002001")
+
+        pd.testing.assert_frame_equal(result, data)
+        assert result.attrs["data_source"] == "腾讯财经"
+        assert calls == ["sina", "tencent"]
+
+    def test_realtime_quote_does_not_append_weekend_fake_bar(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-05-13', periods=3, freq='B')
+        data = pd.DataFrame({
+            'open': [10, 10.5, 11],
+            'high': [10.2, 10.8, 11.2],
+            'low': [9.8, 10.2, 10.8],
+            'close': [10, 10.6, 11],
+            'volume': [1000000, 1200000, 1500000],
+        }, index=dates)
+
+        class DummyFetcher:
+            def get_realtime_quote(self, symbol, market):
+                return {
+                    "price": 11,
+                    "open": 11,
+                    "high": 11.2,
+                    "low": 10.8,
+                    "volume": 15000,
+                }
+
+        class FakeTimestamp(pd.Timestamp):
+            @classmethod
+            def now(cls, tz=None):
+                return cls("2026-05-16 10:00:00")
+
+        monkeypatch.setattr(pd, "Timestamp", FakeTimestamp)
+
+        result = recommender._merge_realtime_quote(data.copy(), DummyFetcher(), "002001", "CN")
+
+        assert len(result) == len(data)
+        assert result.index[-1] == dates[-1]
+
+    def test_strategy_stock_data_drops_weekend_bars(self, recommender):
+        data = pd.DataFrame({
+            'open': [10, 10.5, 11],
+            'high': [10.2, 10.8, 11.2],
+            'low': [9.8, 10.2, 10.8],
+            'close': [10, 10.6, 11],
+            'volume': [1000000, 1200000, 1],
+        }, index=pd.to_datetime(["2026-05-15", "2026-05-16", "2026-05-17"]))
+
+        result = recommender._drop_weekend_bars(data)
+
+        assert list(result.index.strftime("%Y-%m-%d")) == ["2026-05-15"]
+
+    def test_multi_factor_extended_info_subprocess_failure_is_contained(self, recommender, monkeypatch):
+        import subprocess
+
+        def fake_run(*args, **kwargs):
+            return subprocess.CompletedProcess(args=args, returncode=3221225477, stdout="", stderr="mini_racer.dll crashed")
+
+        monkeypatch.setattr("stock_recommendation.subprocess.run", fake_run)
+
+        result = recommender._get_multi_factor_extended_info("002001")
+
+        assert result["status"] == "source_failed"
+        assert "mini_racer" in result["reason"]
+
+    def test_multi_factor_financial_condition_accepts_non_loss(self, recommender):
+        ok, note = recommender._evaluate_fundamental_condition({
+            "metrics": {"归母净利润": 1000000}
+        })
+
+        assert ok is True
+        assert "未亏损" in note
+
+    def test_multi_factor_ma_volume_is_independent_from_breakout(self, recommender):
+        dates = pd.date_range('2026-01-01', periods=30, freq='B')
+        close = np.r_[np.linspace(10, 12, 10), [13.2], np.linspace(11.2, 12.1, 19)]
+        volume = np.full(30, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+
+        breakout = recommender._evaluate_breakout_pattern(data)
+        ok, note, volume_ratio = recommender._evaluate_ma_volume_condition(data)
+
+        assert breakout["conditions"]["突破20日新高"] is False
+        assert ok is True
+        assert volume_ratio >= 1.2
+
+    def test_multi_factor_uses_7_day_limit_up(self, recommender):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-8] = close[-9] * 1.1
+        close[-7:] = np.linspace(close[-8] * 0.99, close[-8] * 1.01, 7)
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': np.full(40, 1000000),
+        }, index=dates)
+
+        assert recommender._has_recent_limit_up(data, days=30) is True
+        assert recommender._has_recent_limit_up(data, days=7) is False
+
+    def test_latest_limit_status_detects_limit_up_and_broken_limit(self, recommender):
+        dates = pd.date_range('2026-01-01', periods=3, freq='B')
+        limit_up = pd.DataFrame({
+            'open': [10, 10.2, 10.5],
+            'high': [10.2, 10.4, 11.1],
+            'low': [9.8, 10.0, 10.4],
+            'close': [10, 10, 11.0],
+            'volume': [100, 100, 100],
+        }, index=dates)
+        broken_limit = limit_up.copy()
+        broken_limit.loc[dates[-1], 'close'] = 10.6
+
+        assert recommender._latest_limit_status(limit_up)["limit_up"] is True
+        assert recommender._latest_limit_status(broken_limit)["broken_limit"] is True
+
+    def test_small_cap_filter_requires_market_cap_below_300_yi(self, recommender, monkeypatch):
+        monkeypatch.setattr(
+            'stock_recommendation._fetch_tencent_market_cap',
+            lambda symbol: (29_900_000_000, "测试股", "腾讯行情"),
+        )
+
+        passed, market_cap, note, profile = recommender._passes_small_cap_filter("300750")
+
+        assert passed is True
+        assert market_cap == 29_900_000_000
+        assert "299.00" in note
+
+    def test_small_cap_filter_rejects_large_market_cap(self, recommender, monkeypatch):
+        monkeypatch.setattr(
+            'stock_recommendation._fetch_tencent_market_cap',
+            lambda symbol: (30_000_000_000, "测试股", "腾讯行情"),
+        )
+
+        passed, market_cap, note, profile = recommender._passes_small_cap_filter("300750")
+
+        assert passed is False
+        assert market_cap == 30_000_000_000
+
+    def test_aggressive_breakout_rejects_large_market_cap(self, recommender, monkeypatch):
+        monkeypatch.setattr(
+            'stock_recommendation._fetch_tencent_market_cap',
+            lambda symbol: (50_000_000_000, "测试股", "腾讯行情"),
+        )
+
+        result = recommender._analyze_aggressive_breakout("300750", stock={"name": "测试股"})
+
+        assert result is None
+
+    def test_strategy_pool_uses_full_stock_name_index(self, recommender, monkeypatch):
+        monkeypatch.setattr(
+            'stock_recommendation.get_popular_cn_stocks',
+            lambda: [{"code": "000001", "name": "平安银行"}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockDataFetcher._load_stock_name_index',
+            lambda max_age_hours=48: [
+                {"code": "600088", "name": "中视传媒"},
+                {"code": "688981", "name": "中芯国际"},
+            ],
+        )
+
+        result = recommender._get_strategy_popular_cn_stocks()
+
+        codes = [item["code"] for item in result]
+        assert "000001" in codes
+        assert "600088" in codes
+        assert "688981" not in codes
+
+    def test_aggressive_breakout_checks_market_cap_after_technical_match(self, recommender, monkeypatch):
+        stocks = [
+            {"code": "300750", "name": "技术未过"},
+            {"code": "002415", "name": "技术通过"},
+        ]
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_aggressive_breakout_technical",
+            lambda stock, market='CN', sector_name=None, realtime_quotes=None: {
+                "stock": stock,
+                "symbol": stock["code"],
+                "sector_name": sector_name,
+                "pattern": {
+                    "latest": pd.Series({
+                        "close": 10,
+                        "ma5": 10,
+                        "ma10": 9,
+                        "ma20": 8,
+                        "macd": 0,
+                        "macd_signal": 0,
+                        "macd_hist": 0,
+                        "rsi": 50,
+                        "rsi_6": 50,
+                        "rsi_12": 50,
+                        "rsi_24": 50,
+                        "kdj_k": 50,
+                        "kdj_d": 45,
+                        "kdj_j": 60,
+                        "boll_upper": 11,
+                        "boll_mid": 10,
+                        "boll_lower": 9,
+                        "boll_width": 0.1,
+                        "boll_percent": 50,
+                    }),
+                    "conditions": {"均线多头排列": True, "突破20日新高": True, "明显放量": True},
+                    "matched": 3,
+                    "volume_ratio": 1.5,
+                    "change_pct": 2.0,
+                    "recent_high_20": 10,
+                },
+            } if stock["code"] == "002415" else None,
+        )
+        checked = []
+        monkeypatch.setattr(
+            recommender,
+            "_passes_small_cap_filter",
+            lambda symbol, market='CN': checked.append(symbol) or (True, 20_000_000_000, "总市值 200.00 亿", {"market_cap": 20_000_000_000}),
+        )
+
+        result = recommender.get_aggressive_breakout_recommendations(num_stocks=5)
+
+        assert [item["symbol"] for item in result] == ["002415"]
+        assert checked == ["002415"]
+
+    def test_aggressive_breakout_uses_full_strategy_pool_without_limit(self, recommender, monkeypatch):
+        calls = []
+        stocks = [{"code": f"002{i:03d}", "name": f"候选{i}"} for i in range(3)]
+        monkeypatch.setattr(
+            recommender,
+            "_get_strategy_popular_cn_stocks",
+            lambda limit=None: calls.append(limit) or stocks,
+        )
+        monkeypatch.setattr(recommender, "_run_aggressive_breakout_pool", lambda stocks, num_stocks, diagnostics=None, progress_callback=None: [])
+
+        result = recommender.get_aggressive_breakout_recommendations(num_stocks=5)
+
+        assert result == []
+        assert calls == [None]
+
+    def test_aggressive_breakout_records_diagnostics(self, recommender, monkeypatch):
+        stocks = [{"code": "002415", "name": "候选A"}, {"code": "002001", "name": "候选B"}]
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_aggressive_breakout_technical",
+            lambda stock, market='CN', sector_name=None, realtime_quotes=None: {
+                "stock": stock,
+                "symbol": stock["code"],
+                "sector_name": sector_name,
+                "pattern": {
+                    "latest": pd.Series({
+                        "close": 10,
+                        "ma5": 10,
+                        "ma10": 9,
+                        "ma20": 8,
+                        "macd": 0,
+                        "macd_signal": 0,
+                        "macd_hist": 0,
+                        "rsi": 50,
+                        "rsi_6": 50,
+                        "rsi_12": 50,
+                        "rsi_24": 50,
+                        "kdj_k": 50,
+                        "kdj_d": 45,
+                        "kdj_j": 60,
+                        "boll_upper": 11,
+                        "boll_mid": 10,
+                        "boll_lower": 9,
+                        "boll_width": 0.1,
+                        "boll_percent": 50,
+                    }),
+                    "conditions": {"均线多头排列": True, "突破20日新高": True, "明显放量": True},
+                    "matched": 3,
+                    "volume_ratio": 1.5,
+                    "change_pct": 2.0,
+                    "recent_high_20": 10,
+                },
+            } if stock["code"] == "002415" else None,
+        )
+        monkeypatch.setattr(
+            recommender,
+            "_passes_small_cap_filter",
+            lambda symbol, market='CN': (True, 20_000_000_000, "总市值 200.00 亿", {"market_cap": 20_000_000_000}),
+        )
+
+        result = recommender.get_aggressive_breakout_recommendations(num_stocks=5)
+
+        assert [item["symbol"] for item in result] == ["002415"]
+        assert recommender.last_aggressive_diagnostics["raw_pool"] == 2
+        assert recommender.last_aggressive_diagnostics["technical_passed"] == 1
+        assert recommender.last_aggressive_diagnostics["result_count"] == 1
+
+    def test_multi_factor_shortlist_avoids_deep_fetch_for_non_shortlisted(self, recommender, monkeypatch):
+        stocks = [
+            {"code": "002001", "name": "候选A"},
+            {"code": "002002", "name": "候选B"},
+            {"code": "300001", "name": "候选C"},
+        ]
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(recommender, "_prefilter_small_cap_stocks", lambda stocks, market='CN': stocks)
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_multi_factor_light",
+            lambda stock, market='CN', sector_name=None, realtime_quotes=None: {
+                "stock": stock,
+                "light_score": {"002001": 90, "002002": 70, "300001": 0}[stock["code"]],
+            } if stock["code"] != "300001" else None,
+        )
+        analyzed = []
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_multi_factor",
+            lambda symbol, stock=None, sector_name=None, diagnostics=None: analyzed.append(symbol) or None,
+        )
+
+        result = recommender.get_multi_factor_recommendations(num_stocks=1)
+
+        assert result == []
+        assert analyzed == ["002001", "002002"]
+
+    def test_multi_factor_uses_full_strategy_pool_without_limit(self, recommender, monkeypatch):
+        calls = []
+        stocks = [{"code": f"002{i:03d}", "name": f"候选{i}"} for i in range(3)]
+        monkeypatch.setattr(
+            recommender,
+            "_get_strategy_popular_cn_stocks",
+            lambda limit=None: calls.append(limit) or stocks,
+        )
+        monkeypatch.setattr(recommender, "_shortlist_multi_factor_candidates", lambda stocks, num_stocks, diagnostics=None, progress_callback=None: [])
+
+        result = recommender.get_multi_factor_recommendations(num_stocks=5)
+
+        assert result == []
+        assert calls == [None]
+
+    def test_multi_factor_emits_stage_progress(self, recommender, monkeypatch):
+        stocks = [{"code": "002001", "name": "候选A"}]
+        events = []
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(recommender, "_prefilter_small_cap_stocks", lambda stocks, market='CN': stocks)
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_multi_factor_light",
+            lambda stock, market='CN', sector_name=None, realtime_quotes=None: {
+                "passed": True,
+                "stock": stock,
+                "light_score": 80,
+            },
+        )
+        monkeypatch.setattr(recommender, "_analyze_multi_factor", lambda symbol, stock=None, sector_name=None, diagnostics=None: None)
+
+        result = recommender.get_multi_factor_recommendations(
+            num_stocks=1,
+            progress_callback=lambda stage, percent, metrics: events.append((stage, percent, metrics)),
+        )
+
+        assert result == []
+        stages = [event[0] for event in events]
+        assert "股票池" in stages
+        assert "市值过滤" in stages
+        assert "K线轻筛" in stages
+        assert "深度检查" in stages
+        assert "完成" in stages
+
+    def test_aggressive_breakout_emits_stage_progress(self, recommender, monkeypatch):
+        stocks = [{"code": "002415", "name": "候选A"}]
+        events = []
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(recommender, "_analyze_aggressive_breakout_technical", lambda stock, market='CN', sector_name=None, realtime_quotes=None: None)
+
+        result = recommender.get_aggressive_breakout_recommendations(
+            num_stocks=1,
+            progress_callback=lambda stage, percent, metrics: events.append((stage, percent, metrics)),
+        )
+
+        assert result == []
+        stages = [event[0] for event in events]
+        assert "股票池" in stages
+        assert "当日实时价量" in stages
+        assert "K线轻筛" in stages
+        assert "市值过滤" in stages
+        assert "完成" in stages
+
+    def test_multi_factor_allows_missing_bonus_catalyst_and_limit_up(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-20:] = np.linspace(10, 13, 20)
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 30_000_000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [],
+                "market_news": [],
+                "research": {"reports": []},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is not None
+        assert result["required_checks"]["市值<300亿"] is True
+        assert "个股资金流入" not in result["core_checks"]
+        assert "消息/公告/研报催化" not in result["strategy_checks"]
+        assert "消息催化" not in result["strategy_details"]
+        assert result["rating"] == "多因子共振"
+
+    def test_multi_factor_score_mode_accepts_three_of_five_core_factors(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 13, 40)
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 30_000_000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [],
+                "market_news": [],
+                "research": {"reports": []},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is not None
+        assert result["core_matched"] >= 3
+        assert result["score"] >= 70
+        assert result["core_checks"]["主力净流入趋势≥3000万"] is True
+        assert "消息/公告/研报催化" not in result["core_checks"]
+
+    def test_multi_factor_score_mode_rejects_below_three_core_factors(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 13, 40)
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        diagnostics = {}
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {},
+                "financial": {"metrics": {"归母净利润": -1000000}},
+                "news": [],
+                "market_news": [],
+                "research": {"reports": []},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock, diagnostics=diagnostics)
+
+        assert result is None
+        assert any(reason.startswith("评分不足") for reason in diagnostics["deep_failures"])
+
+    def test_multi_factor_requires_new_fund_and_activity_conditions(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-15] = close[-16] * 1.1
+        close[-14:-4] = np.linspace(close[-15] * 0.98, 11.2, 10)
+        close[-4:] = [11.2, 11.4, 11.7, 12.0]
+        high = close + 0.2
+        high[-15] = close[-16] * 1.1
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': high,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 30_000_000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [{"title": "利好新闻", "date": pd.Timestamp.now().strftime("%Y-%m-%d")}],
+                "market_news": [],
+                "research": {"reports": []},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is not None
+        assert result["core_checks"]["连涨3日"] is True
+        assert result["core_checks"]["主力净流入趋势≥3000万"] is True
+        assert result["core_checks"]["15日内涨停"] is True
+        assert "消息/公告/研报催化" not in result["strategy_checks"]
+        assert "个股资金流入" not in result["strategy_checks"]
+
+    def test_multi_factor_limit_up_factor_accepts_intraday_touch(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-15] = close[-16] * 1.03
+        high = close + 0.2
+        high[-15] = close[-16] * 1.1
+        close[-4:] = [11.2, 11.4, 11.7, 12.0]
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': high,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 30_000_000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is not None
+        assert result["core_checks"]["15日内涨停"] is True
+        assert "近15日出现涨停" in result["strategy_details"]["15日涨停"]
+
+    def test_multi_factor_rejects_latest_limit_up_or_broken_limit(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-20:] = np.linspace(10, 13, 20)
+        close[-2] = 10
+        close[-1] = 10.6
+        high = close + 0.2
+        high[-1] = 11.0
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': high,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 1000000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [],
+                "market_news": [],
+                "research": {"reports": []},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is None
+
+    def test_multi_factor_records_diagnostics_when_no_results(self, recommender, monkeypatch):
+        stocks = [{"code": "002001", "name": "候选A"}]
+        monkeypatch.setattr(recommender, "_get_strategy_popular_cn_stocks", lambda limit=None: stocks)
+        monkeypatch.setattr(recommender, "_prefilter_small_cap_stocks", lambda stocks, market='CN': stocks)
+        monkeypatch.setattr(
+            recommender,
+            "_analyze_multi_factor_light",
+            lambda stock, market='CN', sector_name=None, realtime_quotes=None: {"passed": False, "reason": "K线接口失败"},
+        )
+
+        result = recommender.get_multi_factor_recommendations(num_stocks=5)
+
+        assert result == []
+        assert recommender.last_multi_factor_diagnostics["raw_pool"] == 1
+        assert recommender.last_multi_factor_diagnostics["light_failures"]["K线接口失败"] == 1
+        assert recommender.last_multi_factor_diagnostics["result_count"] == 0
+
+    def test_multi_factor_ignores_research_catalyst_as_core_condition(self, recommender, monkeypatch):
+        dates = pd.date_range(pd.Timestamp.now().normalize() - pd.Timedelta(days=60), periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-7] = close[-8] * 1.1
+        close[-6:] = np.linspace(close[-7] * 0.99, close[-7] * 1.01, 6)
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 1000000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [],
+                "market_news": [],
+                "research": {"reports": [{
+                    "title": "测试研报",
+                    "date": (pd.Timestamp.now().normalize() - pd.Timedelta(days=20)).strftime("%Y-%m-%d"),
+                }]},
+                "risk_events": {"announcements": []},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is not None
+        assert "消息/公告/研报催化" not in result["strategy_checks"]
+        assert "消息催化" not in result["strategy_details"]
+        assert "催化依据" not in result["strategy_details"]
+
+    def test_multi_factor_catalyst_basis_classifies_positive_and_risk(self, recommender, monkeypatch):
+        dates = pd.date_range(pd.Timestamp.now().normalize() - pd.Timedelta(days=60), periods=40, freq='B')
+        close = np.linspace(10, 12, 40)
+        close[-7] = close[-8] * 1.1
+        close[-6:] = np.linspace(close[-7] * 0.99, close[-7] * 1.01, 6)
+        volume = np.full(40, 1000000)
+        volume[-1] = 1500000
+        data = pd.DataFrame({
+            'open': close - 0.1,
+            'high': close + 0.2,
+            'low': close - 0.2,
+            'close': close,
+            'volume': volume,
+        }, index=dates)
+        stock = {
+            "code": "002001",
+            "name": "测试股",
+            "_market_cap": 20_000_000_000,
+            "_cap_note": "总市值 200.00 亿",
+            "_profile": {"market_cap": 20_000_000_000},
+            "_prefetched_data": data,
+        }
+        today = pd.Timestamp.now().strftime("%Y-%m-%d")
+        monkeypatch.setattr(
+            recommender,
+            "_get_multi_factor_extended_info",
+            lambda symbol, market='CN': {
+                "fund_flow": {"main_net_inflow": 1000000},
+                "financial": {"metrics": {"归母净利润": 1000000}},
+                "news": [{"title": "公司签订重大合同订单", "date": today, "source": "东方财富个股新闻"}],
+                "market_news": [],
+                "research": {"reports": [{
+                    "title": "机构覆盖首次给予买入评级",
+                    "date": today,
+                    "org": "测试证券",
+                }]},
+                "risk_events": {"announcements": [{"title": "关于诉讼进展公告", "date": today, "source": "东方财富个股公告"}]},
+            },
+        )
+
+        result = recommender._analyze_multi_factor("002001", stock=stock)
+
+        assert result is None
+
+    def test_strategy_kline_uses_local_cache_before_api(self, recommender, monkeypatch):
+        dates = pd.date_range("2026-01-01", periods=30, freq="B")
+        data = pd.DataFrame({
+            "open": np.linspace(10, 12, 30),
+            "high": np.linspace(10.2, 12.2, 30),
+            "low": np.linspace(9.8, 11.8, 30),
+            "close": np.linspace(10, 12, 30),
+            "volume": np.full(30, 1000000),
+        }, index=dates)
+        monkeypatch.setattr(recommender, "_load_strategy_kline_cache", lambda cache_key: data.copy())
+        called = {"api": False}
+        class DummyFetcher:
+            def _get_cn_stock_data_sina_fallback(self, symbol, period):
+                called["api"] = True
+                return None
+            def _get_cn_stock_data_akshare(self, symbol, period):
+                called["api"] = True
+                return None
+            def _get_cn_stock_data_akshare_em(self, symbol, period):
+                called["api"] = True
+                return None
+            def _load_offline_cache(self, symbol):
+                called["api"] = True
+                return None
+
+        result = recommender._get_strategy_stock_data("002001", fetcher=DummyFetcher())
+
+        assert result is not None
+        assert len(result) == 30
+        assert result.attrs["data_source"] == "策略K线本地缓存"
+        assert called["api"] is False
+
+    def test_all_sector_recommendations_include_new_strategies(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.SECTOR_STOCKS', {"测试板块": [{'code': '300750', 'name': '宁德时代'}]})
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_short_term_recommendations', lambda self, sector_name, num_stocks=5: [])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_long_term_recommendations', lambda self, sector_name, num_stocks=5: [])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations', lambda self, sector_name, num_stocks=5: [{"strategy": "激进突破型"}])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations', lambda self, sector_name, num_stocks=5: [{"strategy": "多因子稳健型"}])
+
+        result = recommender.get_all_sector_recommendations(short_top_n=1, long_top_n=1)
+
+        assert result["测试板块"]["激进突破型"][0]["strategy"] == "激进突破型"
+        assert result["测试板块"]["多因子稳健型"][0]["strategy"] == "多因子稳健型"
+
+
 # ============================================================
 # TestGetSectorShortTerm
 # ============================================================
@@ -1273,6 +2132,10 @@ class TestGetAllSectorRecommendations:
                             lambda self, code, market='CN': _mock_short_analysis(code))
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
                             lambda self, code, market='CN': _mock_long_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
         result = recommender.get_all_sector_recommendations()
         assert isinstance(result, dict)
         for sector in ['苹果概念', '特斯拉概念', '电力', '算力租赁']:
@@ -1283,6 +2146,10 @@ class TestGetAllSectorRecommendations:
                             lambda self, code, market='CN': _mock_short_analysis(code))
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
                             lambda self, code, market='CN': _mock_long_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
         result = recommender.get_all_sector_recommendations()
         for sector, data in result.items():
             assert '短线' in data
@@ -1295,6 +2162,10 @@ class TestGetAllSectorRecommendations:
                             lambda self, code, market='CN': _mock_short_analysis(code))
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
                             lambda self, code, market='CN': _mock_long_analysis(code))
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
+        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
+                            lambda self, sector_name, num_stocks=5: [])
         result = recommender.get_all_sector_recommendations()
         for sector, data in result.items():
             for s in data['短线']:

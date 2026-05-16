@@ -357,6 +357,85 @@ def _eps_growth_from_consensus(extended_info: dict[str, Any]) -> float | None:
     return (latest / previous - 1) * 100
 
 
+def _growth_from_financial_metrics(extended_info: dict[str, Any], profile: dict[str, Any]) -> tuple[float | None, str | None]:
+    metrics = ((extended_info.get("financial") or {}).get("metrics") or {})
+    candidates = [
+        ("归属于母公司所有者的净利润同比", "财务摘要归母净利润同比"),
+        ("归属母公司股东的净利润同比", "财务摘要归母净利润同比"),
+        ("归母净利润增长率", "财务摘要归母净利润增长率"),
+        ("归母净利润增长率(%)", "财务摘要归母净利润增长率"),
+        ("归母净利润同比", "财务摘要归母净利润同比"),
+        ("PARENT_NETPROFIT_YOY", "财务摘要归母净利润同比"),
+        ("净利润增长率", "财务摘要净利润增长率"),
+        ("净利润增长率(%)", "财务摘要净利润增长率"),
+        ("净利润同比", "财务摘要净利润同比"),
+        ("扣非净利润同比", "财务摘要扣非净利润同比"),
+        ("扣非归母净利润同比", "财务摘要扣非归母净利润同比"),
+        ("EPS同比", "财务摘要EPS同比"),
+        ("每股收益同比", "财务摘要EPS同比"),
+        ("基本每股收益同比", "财务摘要EPS同比"),
+        ("每股收益增长率", "财务摘要EPS增长率"),
+        ("营业总收入同比", "财务摘要营收同比"),
+        ("营业收入同比", "财务摘要营收同比"),
+    ]
+    for key, label in candidates:
+        for source in (metrics, profile):
+            if not isinstance(source, dict):
+                continue
+            for source_key, raw_value in source.items():
+                if key == str(source_key) or key in str(source_key):
+                    value = _num(raw_value)
+                    if value is not None:
+                        return value, label
+    history = ((extended_info.get("financial") or {}).get("history") or [])
+    if isinstance(history, list) and len(history) >= 2:
+        rows = [row for row in history if isinstance(row, dict)]
+        for key, label in [
+            ("归母净利润", "财务摘要近两期归母净利润增速"),
+            ("净利润", "财务摘要近两期净利润增速"),
+            ("每股收益", "财务摘要近两期EPS增速"),
+            ("EPS", "财务摘要近两期EPS增速"),
+        ]:
+            points = []
+            for row in rows:
+                matched_value = None
+                for row_key, row_value in row.items():
+                    if key == str(row_key) or key in str(row_key):
+                        matched_value = _num(row_value)
+                        break
+                if matched_value is not None:
+                    points.append(matched_value)
+            if len(points) >= 2 and points[-2] > 0:
+                growth = (points[-1] / points[-2] - 1) * 100
+                return growth, label
+    return None, None
+
+
+def _peg_from_sources(extended_info: dict[str, Any], profile: dict[str, Any]) -> tuple[float | None, str | None, str]:
+    pe = _num(profile.get("pe_ttm") or profile.get("pe"))
+    eps_consensus = (extended_info.get("research") or {}).get("eps_consensus") or {}
+    if pe is None:
+        return None, None, "缺PE，暂不计算"
+
+    eps_growth = _eps_growth_from_consensus(extended_info)
+    if eps_growth is not None:
+        if eps_growth > 0:
+            return pe / eps_growth, "一致预期EPS增速", "PE ÷ 一致预期EPS增速"
+        return None, "一致预期EPS增速", "一致预期EPS增速不为正，暂不计算"
+
+    financial_growth, financial_source = _growth_from_financial_metrics(extended_info, profile)
+    if financial_growth is not None:
+        if financial_growth > 0:
+            return pe / financial_growth, financial_source, f"PE ÷ {financial_source}"
+        return None, financial_source, f"{financial_source}不为正，暂不计算"
+
+    if eps_consensus.get("status") == "source_failed":
+        return None, None, f"已有PE；EPS源失败：{eps_consensus.get('reason') or '接口异常'}"
+    if eps_consensus.get("status") == "source_empty":
+        return None, None, eps_consensus.get("reason") or "已有PE，EPS源未返回可计算字段"
+    return None, None, "已有PE，缺EPS/财务增速，不编造"
+
+
 def _status_label(status: str | None) -> str:
     labels = {
         "ok": "已获取",
@@ -505,12 +584,10 @@ def _build_core_metrics(
     profile = profile or {}
     pe = _num(profile.get("pe_ttm") or profile.get("pe"))
     eps_consensus = (extended_info.get("research") or {}).get("eps_consensus") or {}
-    eps_growth = _eps_growth_from_consensus(extended_info)
-    peg = pe / eps_growth if pe is not None and eps_growth is not None and eps_growth > 0 else None
+    peg, peg_source, peg_note = _peg_from_sources(extended_info, profile)
     if peg is not None:
-        peg_note = "PE ÷ 一致预期EPS增速"
         peg_status = "derived"
-    elif pe is None and eps_growth is None:
+    elif pe is None:
         if eps_consensus.get("status") == "source_failed":
             peg_note = f"缺PE；EPS源失败：{eps_consensus.get('reason') or '接口异常'}"
             peg_status = "source_failed"
@@ -520,21 +597,12 @@ def _build_core_metrics(
         else:
             peg_note = "缺PE和EPS增速，不编造"
             peg_status = "missing"
-    elif pe is None:
-        peg_note = "缺PE，暂不计算"
-        peg_status = "missing"
-    elif eps_growth is None:
+    elif peg_source is None and eps_consensus.get("status") in {"source_failed", "source_empty"}:
         if eps_consensus.get("status") == "source_failed":
-            peg_note = f"已有PE；EPS源失败：{eps_consensus.get('reason') or '接口异常'}"
             peg_status = "source_failed"
-        elif eps_consensus.get("status") == "source_empty":
-            peg_note = eps_consensus.get("reason") or "已有PE，EPS源未返回可计算字段"
-            peg_status = "source_empty"
         else:
-            peg_note = "已有PE，缺EPS增速，不编造"
-            peg_status = "missing"
+            peg_status = "source_empty"
     else:
-        peg_note = "EPS增速不为正，暂不计算"
         peg_status = "source_empty"
     price = _num((snapshot.get("key_levels") or {}).get("price"))
     dividend_yield, dividend_status = _extract_dividend_yield(extended_info, profile, price)
