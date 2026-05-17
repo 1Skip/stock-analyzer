@@ -3,11 +3,14 @@
 所有硬编码参数统一管理，支持环境变量覆盖
 """
 import os
+import sys
 from pathlib import Path
 
 
 def _load_local_env() -> None:
     """加载项目根目录 .env，方便本机启动时读取私密配置。"""
+    if "pytest" in sys.modules:
+        return
     env_path = Path(__file__).resolve().parent / ".env"
     if not env_path.exists():
         return
@@ -185,7 +188,7 @@ LONG_TERM_WEIGHTS = {
 # ============================================================
 AI_ENABLED = os.getenv("AI_ENABLED", "true").lower() == "true"
 AI_MODEL = os.getenv("AI_MODEL", "deepseek/deepseek-chat")
-AI_API_KEY = os.getenv("AI_API_KEY", None)
+AI_API_KEY = None if "pytest" in sys.modules else os.getenv("AI_API_KEY", None)
 AI_BASE_URL = os.getenv("AI_BASE_URL", None)
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
 AI_MAX_TOKENS = int(os.getenv("AI_MAX_TOKENS", "1024"))
@@ -206,6 +209,15 @@ DATA_SOURCE_PRIORITY = ["akshare", "sina", "yfinance"]
 SCHEDULE_TIME = os.getenv("SCHEDULE_TIME", "15:30")  # 收盘后30分钟
 SCHEDULE_RUN_IMMEDIATELY = os.getenv("SCHEDULE_RUN_IMMEDIATELY", "false").lower() == "true"
 SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "false").lower() == "true"
+
+# T+1 推荐计划自动预生成配置。只提前运行既有推荐策略，不改变选股条件。
+T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "false").lower() == "true"
+T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
+T1_PLAN_STRATEGY = os.getenv("T1_PLAN_STRATEGY", "多因子稳健型")
+T1_PLAN_SECTOR = os.getenv("T1_PLAN_SECTOR", "全部")
+T1_PLAN_NUM_STOCKS = int(os.getenv("T1_PLAN_NUM_STOCKS", "5"))
+T1_PLAN_PREHEAT_KLINE = os.getenv("T1_PLAN_PREHEAT_KLINE", "true").lower() == "true"
+T1_PLAN_PREHEAT_EXTENDED_INFO = os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO", "true").lower() == "true"
 
 # ============================================================
 # 通知推送配置

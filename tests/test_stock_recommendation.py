@@ -786,6 +786,28 @@ class TestStrategyRecommendations:
         assert result["status"] == "source_failed"
         assert "mini_racer" in result["reason"]
 
+    def test_multi_factor_extended_info_uses_cache_before_subprocess(self, recommender, monkeypatch):
+        class CachedInfoService:
+            def get_cached_stock_extended_info(self, symbol, market="CN", include_deep_layers=True):
+                return {
+                    "symbol": symbol,
+                    "source": "layered_cache",
+                    "financial": {},
+                    "fund_flow": {},
+                    "risk_events": {"announcements": []},
+                }
+
+        def fail_run(*args, **kwargs):
+            raise AssertionError("subprocess should not run on cache hit")
+
+        monkeypatch.setattr(recommender, "_stock_info_service", CachedInfoService())
+        monkeypatch.setattr("stock_recommendation.subprocess.run", fail_run)
+
+        result = recommender._get_multi_factor_extended_info("002001")
+
+        assert result["source"] == "layered_cache"
+        assert result["symbol"] == "002001"
+
     def test_multi_factor_financial_condition_accepts_non_loss(self, recommender):
         ok, note = recommender._evaluate_fundamental_condition({
             "metrics": {"归母净利润": 1000000}

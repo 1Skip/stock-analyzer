@@ -48,12 +48,88 @@ def _make_progress_callback(progress_placeholder, strategy, sector):
 
 def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=None):
     """后台生成推荐列表。"""
-    return RecommendationService().run(
+    return RecommendationService().run_t1_plan(
         strategy,
         sector,
         num_stocks,
         progress_callback=progress_callback,
     )
+
+
+def _request_key(strategy, sector, num_stocks):
+    return f"{strategy}:{sector}:{int(num_stocks or 0)}"
+
+
+def _format_request_key_label(request_key):
+    if not request_key:
+        return "--"
+    parts = str(request_key).split(":")
+    if len(parts) != 3:
+        return str(request_key)
+    strategy, sector, num_stocks = parts
+    return f"{strategy} / {sector} / {num_stocks}只"
+
+
+def _result_matches_request(result, request_key):
+    if not isinstance(result, dict):
+        return False
+    result_key = _request_key(result.get("strategy"), result.get("sector"), result.get("num_stocks"))
+    return result_key == request_key
+
+
+def _render_t1_plan_meta(result):
+    if not isinstance(result, dict) or result.get("mode") != "T+1_PLAN":
+        return
+    generated = result.get("generated_at") or "--"
+    base_date = result.get("generated_trade_date") or "--"
+    plan_date = result.get("plan_for_trade_date") or "--"
+    metrics = result.get("generation_metrics") or {}
+    data_status = result.get("data_status") or {}
+    st.info(
+        f"T+1 推荐计划：生成时间 {generated}｜基准交易日 {base_date}｜计划入场日 {plan_date}。"
+        "推荐列表不会因入场检查而改变。"
+    )
+    source = data_status.get("source") or "--"
+    trigger = metrics.get("trigger") or "--"
+    elapsed = metrics.get("elapsed_seconds")
+    elapsed_text = f"{elapsed:.2f}s" if isinstance(elapsed, (int, float)) else "--"
+    st.caption(f"缓存状态：{source}；生成触发：{trigger}；生成耗时：{elapsed_text}")
+    cache_metrics = data_status.get("cache_read_metrics") or {}
+    cache_elapsed = cache_metrics.get("elapsed_seconds")
+    if isinstance(cache_elapsed, (int, float)):
+        st.caption(f"缓存读取耗时：{cache_elapsed:.3f}s；未重新扫描股票池；实时行情未参与选股。")
+    preheat = data_status.get("preheat") or {}
+    if preheat:
+        st.caption(
+            f"预热状态：K线缓存 {preheat.get('kline_cache')}；"
+            f"扩展信息缓存 {preheat.get('extended_info_cache')}"
+        )
+
+
+def _render_entry_check(entry_check):
+    if not isinstance(entry_check, dict):
+        return
+    status = entry_check.get("status")
+    message = entry_check.get("message") or ""
+    if status != "ok":
+        st.warning(message)
+        return
+    source = entry_check.get("source") or "--"
+    checked_at = entry_check.get("checked_at") or "--"
+    st.success(f"{message}｜实时来源：{source}｜检查时间：{checked_at}")
+    rows = []
+    for item in entry_check.get("items") or []:
+        rows.append({
+            "代码": item.get("symbol"),
+            "名称": item.get("name"),
+            "检查结果": item.get("status"),
+            "原因": item.get("reason"),
+            "计划价": item.get("plan_price"),
+            "当前价": item.get("latest_price"),
+            "涨跌幅": f"{item.get('change_pct'):+.2f}%" if item.get("change_pct") is not None else "--",
+        })
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
 def _render_multi_factor_diagnostics(diagnostics):
@@ -266,47 +342,113 @@ def recommended_stocks_page():
     if 'rec_results' not in st.session_state:
         st.session_state.rec_results = None
 
-    if not st.session_state.rec_results:
-        latest_result = RecommendationService().latest(strategy, sector, num_stocks)
-        if latest_result:
+    if 'rec_entry_check' not in st.session_state:
+        st.session_state.rec_entry_check = None
+    if 'rec_is_running' not in st.session_state:
+        st.session_state.rec_is_running = False
+    if 'rec_last_error' not in st.session_state:
+        st.session_state.rec_last_error = None
+    if 'rec_active_request_key' not in st.session_state:
+        st.session_state.rec_active_request_key = None
+
+    service = RecommendationService()
+    current_request_key = _request_key(strategy, sector, num_stocks)
+    running_request_key = st.session_state.get("rec_active_request_key")
+    is_current_request_running = bool(st.session_state.rec_is_running and running_request_key == current_request_key)
+    is_other_request_running = bool(st.session_state.rec_is_running and running_request_key != current_request_key)
+    running_label = _format_request_key_label(running_request_key)
+    if st.session_state.rec_results and not _result_matches_request(st.session_state.rec_results, current_request_key):
+        st.session_state.rec_results = None
+        st.session_state.rec_data_loaded = False
+        st.session_state.rec_entry_check = None
+    if not st.session_state.rec_results and not st.session_state.rec_is_running:
+        latest_result = service.latest_t1_plan(strategy, sector, num_stocks)
+        if latest_result and _result_matches_request(latest_result, current_request_key):
             st.session_state.rec_results = latest_result
             st.session_state.rec_data_loaded = True
+            pass
 
-    col1, col2 = st.columns([1, 4])
+    col1, col2, col3 = st.columns([1, 1.2, 3])
     with col1:
-        if st.button("刷新数据", type="secondary"):
+        if st.button("刷新数据", type="secondary", disabled=st.session_state.rec_is_running):
             with status_loading("正在刷新智能推荐本地K线缓存，请稍候...", 20):
-                cache_result = RecommendationService().refresh_strategy_kline_cache()
+                cache_result = service.refresh_strategy_kline_cache()
             st.session_state.rec_data_loaded = False
             st.session_state.rec_results = None
+            st.session_state.rec_entry_check = None
+            st.session_state.rec_last_error = None
             st.success(
                 f"本地K线缓存已刷新：成功 {cache_result.get('refreshed', 0)} / "
                 f"{cache_result.get('total', 0)}，失败 {cache_result.get('failed', 0)}"
             )
 
-    generate_clicked = st.button("生成推荐", type="primary")
+    with col2:
+        entry_check_clicked = st.button(
+            "检查当前是否适合入场",
+            type="secondary",
+            disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
+        )
+
+    generate_label = "生成 T+1 推荐计划"
+    if is_current_request_running:
+        generate_label = "本策略生成中..."
+    elif is_other_request_running:
+        generate_label = "其他计划生成中"
+    generate_clicked = st.button(
+        generate_label,
+        type="primary",
+        disabled=st.session_state.rec_is_running,
+    )
 
     if generate_clicked:
         st.session_state.rec_results = None
         st.session_state.rec_data_loaded = False
+        st.session_state.rec_entry_check = None
+        st.session_state.rec_last_error = None
+        st.session_state.rec_is_running = True
+        st.session_state.rec_active_request_key = current_request_key
         progress_placeholder = st.empty()
         progress_callback = _make_progress_callback(progress_placeholder, strategy, sector)
         progress_callback("启动", 5, {})
         try:
-            st.session_state.rec_results = _run_recommendation_task(
+            result = _run_recommendation_task(
                 strategy,
                 sector,
                 num_stocks,
                 progress_callback=progress_callback,
             )
-            st.session_state.rec_data_loaded = True
+            if _result_matches_request(result, current_request_key):
+                st.session_state.rec_results = result
+                st.session_state.rec_data_loaded = True
+            else:
+                st.session_state.rec_last_error = "推荐结果与当前筛选条件不匹配，已丢弃旧结果。"
+        except Exception as exc:
+            st.session_state.rec_last_error = f"生成 T+1 推荐计划失败：{exc}"
         finally:
+            st.session_state.rec_is_running = False
+            if st.session_state.get("rec_active_request_key") == current_request_key:
+                st.session_state.rec_active_request_key = None
             progress_placeholder.empty()
 
-    if not st.session_state.rec_data_loaded:
-        st.info("选择策略和板块后，点击“生成推荐”开始分析。")
+    if entry_check_clicked:
+        st.session_state.rec_entry_check = service.check_entry_plan(st.session_state.rec_results)
 
-    if st.session_state.rec_results:
+    if st.session_state.rec_last_error:
+        st.error(st.session_state.rec_last_error)
+
+    if is_current_request_running:
+        st.info("当前策略正在生成 T+1 推荐计划，完成前不会展示旧推荐或旧诊断。")
+        return
+    if is_other_request_running:
+        st.info(f"其他 T+1 计划正在生成：{running_label}。当前策略尚未开始生成，完成后可再点击生成。")
+
+    if not st.session_state.rec_data_loaded:
+        st.info("选择策略和板块后，点击“生成 T+1 推荐计划”开始收盘后/盘后计划分析。")
+
+    if st.session_state.rec_results and _result_matches_request(st.session_state.rec_results, current_request_key):
+        _render_t1_plan_meta(st.session_state.rec_results)
+        st.caption("已读取 T+1 推荐计划缓存；未重新扫描股票池。只有点击“生成 T+1 推荐计划”才会重新运行策略。")
+        _render_entry_check(st.session_state.rec_entry_check)
         display_recommendation_list(
             st.session_state.rec_results["recommended"],
             st.session_state.rec_results["title"],

@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from technical_indicators import TechnicalIndicators
 from ui.cached_data import quote_service, resolve_cached_stock_input
-from ui.loading import status_loading
+from ui.loading import make_progress_reporter
 from ui.analyze_page import _validate_symbol
 
 
@@ -276,8 +276,18 @@ def resolve_compare_inputs(raw_inputs, market, limit=5):
     return resolved, warnings
 
 
-def _run_compare_task(raw_symbols, market):
+def _emit_progress(progress_callback, stage, percent, **metrics):
+    if not callable(progress_callback):
+        return
+    try:
+        progress_callback(stage, percent, metrics)
+    except Exception:
+        pass
+
+
+def _run_compare_task(raw_symbols, market, progress_callback=None):
     """后台执行股票对比数据获取和指标计算。"""
+    _emit_progress(progress_callback, "解析输入", 5, total=len(raw_symbols or []))
     resolved_stocks, warnings = resolve_compare_inputs(raw_symbols, market, limit=5)
     symbols = [item["symbol"] for item in resolved_stocks]
     names_by_symbol = {item["symbol"]: item["name"] for item in resolved_stocks}
@@ -287,6 +297,7 @@ def _run_compare_task(raw_symbols, market):
         else f"{item['name']} ({item['symbol']})"
         for item in resolved_stocks
     ]
+    _emit_progress(progress_callback, "解析完成", 15, recognized=len(symbols))
 
     if len(symbols) < 2:
         return {
@@ -296,18 +307,22 @@ def _run_compare_task(raw_symbols, market):
         }
 
     stocks_to_fetch = [{'code': s, 'name': names_by_symbol.get(s, s)} for s in symbols]
+    _emit_progress(progress_callback, "批量获取历史K线", 30, total=len(stocks_to_fetch))
     results = quote_service.fetch_multiple_stocks(
         stocks_to_fetch, period='1y', market=market, max_workers=5
     )
+    fetched_count = sum(1 for item in results.values() if item and item.get("success"))
+    _emit_progress(progress_callback, "历史K线完成", 55, done=fetched_count, total=len(symbols))
 
     comparison_data = []
     trend_metrics = []
     history_by_symbol = {}
     errors = []
-    for symbol in symbols:
+    for index, symbol in enumerate(symbols, 1):
         result = results.get(symbol)
         if result and result['success']:
             try:
+                _emit_progress(progress_callback, "计算指标", 55 + int(30 * index / max(1, len(symbols))), done=index, total=len(symbols))
                 data = TechnicalIndicators.calculate_all(result['data'])
                 history_by_symbol[symbol] = result['data']
                 latest = data.iloc[-1]
@@ -347,6 +362,7 @@ def _run_compare_task(raw_symbols, market):
         else:
             errors.append(f"获取 {symbol} 数据失败")
 
+    _emit_progress(progress_callback, "生成对比结果", 95, result_count=len(comparison_data))
     return {
         "warnings": warnings,
         "recognized": recognized,
@@ -415,8 +431,20 @@ def compare_stocks_page():
 
     if st.button("开始对比", type="primary"):
         raw_symbols = [s.strip() for s in symbols_input.strip().split('\n') if s.strip()]
-        with status_loading(f"\u6b63\u5728\u5e76\u53d1\u83b7\u53d6 {len(raw_symbols)} \u53ea\u80a1\u7968\u6570\u636e...", 20):
-            st.session_state.compare_result = _run_compare_task(raw_symbols, market)
+        progress_panel = st.empty()
+        progress = make_progress_reporter(
+            progress_panel,
+            "正在执行股票对比",
+            context=f"{len(raw_symbols)} 只股票",
+        )
+        progress.update("启动", 3)
+        st.session_state.compare_result = _run_compare_task(
+            raw_symbols,
+            market,
+            progress_callback=lambda stage, percent, metrics=None: progress.update(stage, percent, metrics),
+        )
+        progress.complete("完成")
+        progress_panel.empty()
 
     if st.session_state.get("compare_result"):
         _render_compare_result(st.session_state.compare_result)

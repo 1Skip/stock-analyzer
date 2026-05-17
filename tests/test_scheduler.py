@@ -33,12 +33,41 @@ class TestSchedulerImport:
 
     def test_scheduler_imports_cleanly(self):
         """scheduler 模块可正常导入"""
-        from scheduler import run_scheduled_analysis, start_scheduler
+        from scheduler import run_scheduled_analysis, start_scheduler, run_t1_plan_preheat
         assert callable(run_scheduled_analysis)
         assert callable(start_scheduler)
+        assert callable(run_t1_plan_preheat)
 
 
 class TestRunScheduledAnalysis:
+
+    def test_t1_plan_preheat_calls_service_without_realtime_selection(self, monkeypatch):
+        """T+1 预生成只调用推荐服务生成计划，不执行入场实时检查。"""
+        fake_service = MagicMock()
+        fake_service.run_t1_plan.return_value = {
+            "recommended": [{"symbol": "002001"}],
+            "generation_metrics": {"elapsed_seconds": 1.2},
+        }
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGY", "多因子稳健型")
+        monkeypatch.setattr("scheduler.T1_PLAN_SECTOR", "全部")
+        monkeypatch.setattr("scheduler.T1_PLAN_NUM_STOCKS", 5)
+        monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_KLINE", True)
+        monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_EXTENDED_INFO", True)
+        monkeypatch.setattr("recommendation_service.RecommendationService", lambda: fake_service)
+
+        from scheduler import run_t1_plan_preheat
+        plan = run_t1_plan_preheat()
+
+        assert plan["recommended"][0]["symbol"] == "002001"
+        fake_service.run_t1_plan.assert_called_once_with(
+            "多因子稳健型",
+            "全部",
+            5,
+            trigger="scheduler",
+            preheat_kline=True,
+            preheat_extended_info=True,
+        )
+        fake_service.check_entry_plan.assert_not_called()
 
     def test_no_notify_channels_skips_push(self, sector_data):
         """通知未开启时不调用发送"""
@@ -83,7 +112,7 @@ class TestRunScheduledAnalysis:
             mock_push.assert_called_once()
             title, body = mock_push.call_args.args
             assert title.startswith("📊 每日选股报告")
-            assert "板块龙头推荐" in body
+            assert "板块策略推荐" in body
             assert "浪潮信息" in body
 
     def test_generic_recommendations_are_not_used(self, sector_data):
@@ -221,6 +250,25 @@ class TestStartScheduler:
             mock_schedule.every.return_value.day.at.assert_called_with("15:30")
 
 
+    def test_t1_preheat_schedule_setup_when_enabled(self):
+        """开启 T1_PLAN_AUTO_ENABLED 时额外注册 T+1 预生成任务。"""
+        with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
+             patch("scheduler.SCHEDULE_TIME", "15:30"), \
+             patch("scheduler.T1_PLAN_AUTO_ENABLED", True), \
+             patch("scheduler.T1_PLAN_SCHEDULE_TIME", "15:45"), \
+             patch("scheduler.schedule") as mock_schedule, \
+             patch("scheduler.signal.signal"), \
+             patch("scheduler.time.sleep", side_effect=StopIteration):
+            from scheduler import start_scheduler
+            try:
+                start_scheduler()
+            except StopIteration:
+                pass
+            at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
+            assert "15:30" in at_calls
+            assert "15:45" in at_calls
+
+
 class TestWatchlistPriority:
 
     def test_load_watchlist_empty(self, monkeypatch):
@@ -278,7 +326,7 @@ class TestWatchlistPriority:
         mock_push.assert_called_once()
         body = mock_push.call_args.args[1]
         assert "平安银行" in body
-        assert "板块龙头推荐" in body
+        assert "板块策略推荐" in body
         assert "交易计划卡片" in body
         assert "风控防御看板" in body
         assert "资金博弈溯源" in body

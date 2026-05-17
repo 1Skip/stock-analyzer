@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import concurrent.futures
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Callable
+import time
+import requests
 
 from config import CACHE_TTL_RECOMMENDATION_RESULTS
 from data.cache import JsonFileCache
@@ -12,6 +14,111 @@ from stock_recommendation import StockRecommender
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        number = float(value)
+        if number != number:
+            return None
+        return number
+    except (TypeError, ValueError):
+        return None
+
+
+def _fetch_eastmoney_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch A-share realtime quotes from Eastmoney via AKShare."""
+    symbols = [str(symbol or "").strip() for symbol in symbols if symbol]
+    if not symbols:
+        return {}
+    try:
+        import akshare as ak  # type: ignore
+
+        spot_df = ak.stock_zh_a_spot_em()
+    except Exception:
+        return {}
+    if spot_df is None or getattr(spot_df, "empty", True):
+        return {}
+
+    wanted = set(symbols)
+    result: dict[str, dict[str, Any]] = {}
+    for _, row in spot_df.iterrows():
+        symbol = str(row.get("代码") or "").strip()
+        if symbol not in wanted:
+            continue
+        result[symbol] = {
+            "symbol": symbol,
+            "name": row.get("名称") or symbol,
+            "price": _safe_float(row.get("最新价")),
+            "change_pct": _safe_float(row.get("涨跌幅")),
+            "open": _safe_float(row.get("今开")),
+            "prev_close": _safe_float(row.get("昨收")),
+            "high": _safe_float(row.get("最高")),
+            "low": _safe_float(row.get("最低")),
+            "volume": _safe_float(row.get("成交量")),
+            "turnover_rate": _safe_float(row.get("换手率")),
+            "market_cap": _safe_float(row.get("总市值")),
+            "source": "东方财富实时行情",
+        }
+    return result
+
+
+def _fetch_tencent_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
+    """Fetch A-share realtime quotes from Tencent's lightweight quote endpoint."""
+    symbols = [str(symbol or "").strip() for symbol in symbols if symbol]
+    if not symbols:
+        return {}
+
+    def tencent_code(symbol: str) -> str:
+        if symbol.startswith("6"):
+            return f"sh{symbol}"
+        if symbol.startswith(("4", "8")):
+            return f"bj{symbol}"
+        return f"sz{symbol}"
+
+    result: dict[str, dict[str, Any]] = {}
+    try:
+        code_to_symbol = {tencent_code(symbol): symbol for symbol in symbols}
+        response = requests.get(
+            "https://qt.gtimg.cn/q=" + ",".join(code_to_symbol.keys()),
+            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stockapp.finance.qq.com/"},
+            timeout=5,
+        )
+        if response.status_code != 200:
+            return {}
+        for line in response.text.splitlines():
+            raw = line.split('"', 2)[1] if '"' in line else ""
+            parts = raw.split("~")
+            if len(parts) < 46:
+                continue
+            code = parts[2] if len(parts) > 2 else ""
+            symbol = code[-6:] if code else ""
+            if symbol not in symbols:
+                continue
+            price = _safe_float(parts[3])
+            prev_close = _safe_float(parts[4])
+            change_pct = _safe_float(parts[32])
+            if change_pct is None and price is not None and prev_close:
+                change_pct = (price / prev_close - 1) * 100
+            result[symbol] = {
+                "symbol": symbol,
+                "name": parts[1] or symbol,
+                "price": price,
+                "change_pct": change_pct,
+                "open": _safe_float(parts[5]),
+                "prev_close": prev_close,
+                "high": _safe_float(parts[33]),
+                "low": _safe_float(parts[34]),
+                "volume": _safe_float(parts[6]),
+                "turnover_rate": _safe_float(parts[38]),
+                "market_cap": (_safe_float(parts[45]) or 0) * 1e8 if _safe_float(parts[45]) else None,
+                "source": "腾讯行情",
+            }
+    except Exception:
+        return {}
+    return result
 
 
 class RecommendationService:
@@ -29,6 +136,7 @@ class RecommendationService:
             "recommendation_results",
             CACHE_TTL_RECOMMENDATION_RESULTS,
         )
+        self.plan_cache = JsonFileCache("recommendation_t1_plans", 86400 * 14)
 
     def run(
         self,
@@ -64,6 +172,111 @@ class RecommendationService:
     def latest(self, strategy: str, sector: str, num_stocks: int) -> dict[str, Any] | None:
         cached = self.result_cache.get(self._cache_key(strategy, sector, num_stocks))
         return cached if isinstance(cached, dict) else None
+
+    def run_t1_plan(
+        self,
+        strategy: str,
+        sector: str,
+        num_stocks: int,
+        progress_callback: ProgressCallback | None = None,
+        *,
+        trigger: str = "manual",
+        preheat_kline: bool = False,
+        preheat_extended_info: bool = False,
+    ) -> dict[str, Any]:
+        """Generate and persist a T+1 plan without changing strategy rules."""
+        started = time.perf_counter()
+        preheat_status: dict[str, Any] = {
+            "trigger": trigger,
+            "kline_cache": "not_requested",
+            "extended_info_cache": "not_requested",
+        }
+        if preheat_kline:
+            preheat_status["kline_cache"] = self._preheat_kline_cache()
+
+        result = self.run(
+            strategy,
+            sector,
+            num_stocks,
+            progress_callback=progress_callback,
+            use_cache=False,
+        )
+        if preheat_extended_info:
+            preheat_status["extended_info_cache"] = self._preheat_extended_info_cache(result.get("recommended"))
+
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        plan = self._wrap_t1_plan(result, strategy, sector, num_stocks)
+        plan["generation_metrics"] = {
+            "trigger": trigger,
+            "elapsed_ms": elapsed_ms,
+            "elapsed_seconds": round(elapsed_ms / 1000, 2),
+            "selection_source": "StockRecommender existing strategy",
+            "realtime_used_for_selection": False,
+            "scan_scope_changed": False,
+        }
+        plan["data_status"].update({
+            "source": "fresh_scan",
+            "preheat": preheat_status,
+        })
+        self.plan_cache.set(self._plan_cache_key(strategy, sector, num_stocks), plan)
+        return plan
+
+    def latest_t1_plan(self, strategy: str, sector: str, num_stocks: int) -> dict[str, Any] | None:
+        started = time.perf_counter()
+        cached = self.plan_cache.get(self._plan_cache_key(strategy, sector, num_stocks))
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        if not isinstance(cached, dict):
+            return None
+        cached = dict(cached)
+        data_status = dict(cached.get("data_status") or {})
+        data_status["source"] = "t1_plan_cache"
+        data_status["cache_read_metrics"] = {
+            "elapsed_ms": elapsed_ms,
+            "elapsed_seconds": round(elapsed_ms / 1000, 3),
+            "realtime_used_for_selection": False,
+            "scan_scope_changed": False,
+        }
+        cached["data_status"] = data_status
+        return cached
+
+    def check_entry_plan(self, plan: dict[str, Any] | None) -> dict[str, Any]:
+        """Check whether planned stocks are still executable; never re-pick stocks."""
+        if not isinstance(plan, dict):
+            return {
+                "status": "no_plan",
+                "message": "暂无 T+1 推荐计划，无法执行入场检查。",
+                "items": [],
+            }
+        recommended = plan.get("recommended") or []
+        symbols = [str(item.get("symbol") or "").strip() for item in recommended if item.get("symbol")]
+        if not symbols:
+            return {
+                "status": "empty_plan",
+                "message": "T+1 推荐计划为空，无法执行入场检查。",
+                "items": [],
+            }
+        quotes, source = self._fetch_entry_realtime_quotes(symbols)
+        if not isinstance(quotes, dict) or not quotes:
+            return {
+                "status": "realtime_unavailable",
+                "message": "实时行情不可用，仅展示昨晚 T+1 推荐计划；本次不生成入场建议，请以券商行情为准。",
+                "checked_at": datetime.now().isoformat(timespec="seconds"),
+                "source": source or "全部实时源失败",
+                "items": [],
+            }
+
+        items = []
+        for stock in recommended:
+            symbol = str(stock.get("symbol") or "").strip()
+            quote = quotes.get(symbol) or {}
+            items.append(self._build_entry_check_item(stock, quote))
+        return {
+            "status": "ok",
+            "message": "入场检查完成：检查结果只用于执行判断，不改变昨晚推荐列表。",
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "source": source,
+            "items": items,
+        }
 
     def refresh_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
         return self.recommender.refresh_strategy_kline_cache(*args, **kwargs)
@@ -161,6 +374,193 @@ class RecommendationService:
         except Exception:
             return
 
+    def _preheat_kline_cache(self) -> dict[str, Any]:
+        try:
+            result = self.refresh_strategy_kline_cache()
+            return {
+                "status": "ok",
+                "total": result.get("total", 0),
+                "refreshed": result.get("refreshed", 0),
+                "failed": result.get("failed", 0),
+            }
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
+
+    def _preheat_extended_info_cache(self, recommended: list[dict[str, Any]] | None) -> dict[str, Any]:
+        stocks = recommended or []
+        if not stocks:
+            return {"status": "skipped", "reason": "empty_recommendation", "total": 0, "refreshed": 0, "failed": 0}
+        try:
+            from data.services.info_service import StockInfoService
+            info_service = StockInfoService()
+            refreshed = 0
+            failed = 0
+            for stock in stocks:
+                symbol = str((stock or {}).get("symbol") or "").strip()
+                if not symbol:
+                    continue
+                try:
+                    payload = info_service.get_stock_extended_info(symbol, "CN", include_deep_layers=True)
+                    if isinstance(payload, dict):
+                        refreshed += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+            return {"status": "ok", "total": len(stocks), "refreshed": refreshed, "failed": failed}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc), "total": len(stocks), "refreshed": 0, "failed": len(stocks)}
+
+    def _fetch_entry_realtime_quotes(self, symbols: list[str]) -> tuple[dict[str, dict[str, Any]], str]:
+        quotes = _fetch_eastmoney_realtime_quotes(symbols)
+        if quotes:
+            return quotes, "东方财富实时行情"
+        try:
+            quotes = self.quote_service.get_batch_realtime_quotes(symbols, "CN")
+        except Exception:
+            quotes = {}
+        if quotes:
+            for item in quotes.values():
+                if isinstance(item, dict):
+                    item.setdefault("source", "新浪财经")
+            return quotes, "新浪财经"
+        quotes = _fetch_tencent_realtime_quotes(symbols)
+        if quotes:
+            return quotes, "腾讯行情"
+        return {}, "全部实时源失败"
+
+    def _wrap_t1_plan(self, result: dict[str, Any], strategy: str, sector: str, num_stocks: int) -> dict[str, Any]:
+        now = datetime.now()
+        generated_trade_date = now.date().isoformat()
+        plan_for_trade_date = self._next_trade_date(now).date().isoformat()
+        plan = dict(result)
+        plan.update({
+            "mode": "T+1_PLAN",
+            "generated_at": now.isoformat(timespec="seconds"),
+            "generated_trade_date": generated_trade_date,
+            "plan_for_trade_date": plan_for_trade_date,
+            "strategy": str(strategy or "短线"),
+            "sector": str(sector or "全部"),
+            "num_stocks": int(num_stocks or 5),
+            "data_status": {
+                "kline_cache": "ready",
+                "extended_info_cache": "ready",
+                "realtime_check": "not_checked",
+            },
+        })
+        return plan
+
+    @staticmethod
+    def _next_trade_date(now: datetime) -> datetime:
+        candidate = now + timedelta(days=1)
+        while candidate.weekday() >= 5:
+            candidate += timedelta(days=1)
+        return candidate
+
+    @staticmethod
+    def _build_entry_check_item(stock: dict[str, Any], quote: dict[str, Any]) -> dict[str, Any]:
+        symbol = stock.get("symbol")
+        name = stock.get("name") or symbol
+        latest_price = _safe_float(quote.get("price"))
+        change_pct = _safe_float(quote.get("change_pct"))
+        plan_price = _safe_float(stock.get("latest_price") or stock.get("price"))
+        open_price = _safe_float(quote.get("open"))
+        prev_close = _safe_float(quote.get("prev_close"))
+        high_price = _safe_float(quote.get("high"))
+        low_price = _safe_float(quote.get("low"))
+        volume = _safe_float(quote.get("volume"))
+        indicators = stock.get("indicators") if isinstance(stock.get("indicators"), dict) else {}
+        boll_lower = _safe_float(indicators.get("boll_lower"))
+        risky_notice = RecommendationService._entry_risk_notice(stock)
+        status = "可按计划观察"
+        reason = "实时价格未明显偏离昨晚计划。"
+        if latest_price is None:
+            status = "暂缓入场"
+            reason = "实时价格缺失，无法判断当前买点。"
+        elif RecommendationService._is_st_or_delisting_name(name):
+            status = "暂缓入场"
+            reason = "股票名称含 ST/退市风险标识，入场前需先核对风险提示。"
+        elif risky_notice:
+            status = "暂缓入场"
+            reason = f"发现风险公告：{risky_notice}，暂不生成入场建议。"
+        elif RecommendationService._looks_suspended_or_no_trade(quote, latest_price, open_price, high_price, low_price, volume):
+            status = "暂缓入场"
+            reason = "实时行情显示无成交或无有效交易，疑似停牌/未正常交易，暂缓入场。"
+        elif open_price is not None and prev_close and prev_close > 0 and (open_price / prev_close - 1) * 100 >= 5:
+            gap_pct = (open_price / prev_close - 1) * 100
+            status = "等待回落"
+            reason = f"今日高开 {gap_pct:.2f}%，超过计划节奏，等待回落再观察。"
+        elif change_pct is not None and change_pct >= 5:
+            status = "等待回落"
+            reason = f"当前涨幅 {change_pct:.2f}%，追高风险较高。"
+        elif change_pct is not None and change_pct <= -5:
+            status = "暂缓入场"
+            reason = f"当前跌幅 {change_pct:.2f}%，走势弱于计划假设。"
+        elif boll_lower is not None and latest_price < boll_lower:
+            status = "暂缓入场"
+            reason = f"当前价格跌破 BOLL 下轨支撑 {boll_lower:.2f}，需等待支撑确认。"
+        elif plan_price:
+            try:
+                drift_pct = (float(latest_price) / float(plan_price) - 1) * 100
+                if drift_pct >= 5:
+                    status = "等待回落"
+                    reason = f"当前价较计划价高 {drift_pct:.2f}%，不建议追高。"
+                elif drift_pct <= -5:
+                    status = "暂缓入场"
+                    reason = f"当前价较计划价低 {abs(drift_pct):.2f}%，需确认支撑。"
+            except Exception:
+                pass
+        return {
+            "symbol": symbol,
+            "name": name,
+            "status": status,
+            "reason": reason,
+            "plan_price": plan_price,
+            "latest_price": latest_price,
+            "change_pct": change_pct,
+            "quote": quote,
+        }
+
+    @staticmethod
+    def _is_st_or_delisting_name(name: Any) -> bool:
+        text = str(name or "").upper()
+        return "ST" in text or "退" in text
+
+    @staticmethod
+    def _looks_suspended_or_no_trade(
+        quote: dict[str, Any],
+        latest_price: float | None,
+        open_price: float | None,
+        high_price: float | None,
+        low_price: float | None,
+        volume: float | None,
+    ) -> bool:
+        if "volume" not in quote or volume is None or volume != 0:
+            return False
+        if latest_price in (None, 0) or open_price in (None, 0) or high_price in (None, 0) or low_price in (None, 0):
+            return True
+        return open_price == high_price == low_price == latest_price
+
+    @staticmethod
+    def _entry_risk_notice(stock: dict[str, Any]) -> str | None:
+        risk_events = stock.get("risk_events") if isinstance(stock.get("risk_events"), dict) else None
+        if risk_events is None and isinstance(stock.get("extended_info"), dict):
+            risk_events = stock["extended_info"].get("risk_events")
+        announcements = (risk_events or {}).get("announcements") if isinstance(risk_events, dict) else []
+        risky_keywords = ("减持", "立案", "处罚", "风险", "诉讼", "亏损", "退市", "监管", "问询", "警示")
+        for item in announcements or []:
+            if isinstance(item, dict):
+                text = " ".join(str(item.get(key) or "") for key in ("title", "type", "summary", "content"))
+            else:
+                text = str(item or "")
+            if any(keyword in text for keyword in risky_keywords):
+                return text[:80]
+        return None
+
     @staticmethod
     def _cache_key(strategy: str, sector: str, num_stocks: int) -> str:
         return f"CN:{strategy}:{sector}:{int(num_stocks or 0)}"
+
+    @staticmethod
+    def _plan_cache_key(strategy: str, sector: str, num_stocks: int) -> str:
+        return f"CN:{strategy}:{sector}:{int(num_stocks or 0)}:T1"

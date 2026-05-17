@@ -357,6 +357,64 @@ def _eps_growth_from_consensus(extended_info: dict[str, Any]) -> float | None:
     return (latest / previous - 1) * 100
 
 
+def _consensus_eps_for_year(extended_info: dict[str, Any], target_year: str = "2026") -> float | None:
+    values = ((extended_info.get("research") or {}).get("eps_consensus") or {}).get("values") or {}
+    for label, value in values.items():
+        label_text = str(label)
+        if target_year in label_text and ("EPS" in label_text.upper() or "每股收益" in label_text):
+            eps = _num(value)
+            if eps is not None and eps > 0:
+                return eps
+    return None
+
+
+def _profit_cagr_from_financial_history(extended_info: dict[str, Any], periods: int = 3) -> float | None:
+    history = ((extended_info.get("financial") or {}).get("history") or [])
+    if not isinstance(history, list) or len(history) < 2:
+        return None
+
+    points = []
+    for row in history:
+        if not isinstance(row, dict):
+            continue
+        value = None
+        for key, raw_value in row.items():
+            key_text = str(key)
+            if any(alias in key_text for alias in ("归母净利润", "归属于母公司所有者的净利润", "PARENT_NETPROFIT")):
+                value = _num(raw_value)
+                break
+        if value is not None:
+            points.append(value)
+
+    if len(points) < 2:
+        return None
+    points = points[-periods:]
+    first = points[0]
+    last = points[-1]
+    years = len(points) - 1
+    if first is None or last is None or first <= 0 or last <= 0 or years <= 0:
+        return None
+    return (last / first) ** (1 / years) - 1
+
+
+def _astock_peg_from_sources(
+    extended_info: dict[str, Any],
+    profile: dict[str, Any],
+    price: float | None = None,
+) -> tuple[float | None, str | None, str]:
+    price = _num(price) or _num(profile.get("latest_price") or profile.get("price"))
+    eps_2026 = _consensus_eps_for_year(extended_info, "2026")
+    profit_cagr = _profit_cagr_from_financial_history(extended_info, periods=3)
+    if price is None or price <= 0:
+        return None, None, "缺当前价，无法按 astock-peg 口径计算"
+    if eps_2026 is None:
+        return None, None, "缺2026一致预期EPS，无法按 astock-peg 口径计算"
+    if profit_cagr is None or profit_cagr <= 0:
+        return None, None, "缺近3年归母净利润正增长CAGR，无法按 astock-peg 口径计算"
+    forward_pe = price / eps_2026
+    return forward_pe / (profit_cagr * 100), "astock-peg", "前瞻PE=当前价/2026一致预期EPS；PEG=前瞻PE/近3年归母净利润CAGR"
+
+
 def _growth_from_financial_metrics(extended_info: dict[str, Any], profile: dict[str, Any]) -> tuple[float | None, str | None]:
     metrics = ((extended_info.get("financial") or {}).get("metrics") or {})
     candidates = [
@@ -411,9 +469,39 @@ def _growth_from_financial_metrics(extended_info: dict[str, Any], profile: dict[
     return None, None
 
 
-def _peg_from_sources(extended_info: dict[str, Any], profile: dict[str, Any]) -> tuple[float | None, str | None, str]:
+def _direct_peg_from_sources(extended_info: dict[str, Any], profile: dict[str, Any]) -> tuple[float | None, str | None]:
+    candidates = [
+        (profile, "基础资料"),
+        (extended_info.get("profile") or {}, "扩展基础资料"),
+        ((extended_info.get("financial") or {}).get("metrics") or {}, "财务摘要"),
+        ((extended_info.get("research") or {}).get("eps_consensus") or {}, "一致预期"),
+    ]
+    for source, label in candidates:
+        if not isinstance(source, dict):
+            continue
+        for key, raw_value in source.items():
+            key_text = str(key).strip().lower()
+            if key_text in {"peg", "peg_ratio"} or "peg" in key_text or "市盈率相对盈利增长比率" in str(key):
+                value = _num(raw_value)
+                if value is not None and value > 0:
+                    return value, label
+    return None, None
+
+
+def _peg_from_sources(
+    extended_info: dict[str, Any],
+    profile: dict[str, Any],
+    price: float | None = None,
+) -> tuple[float | None, str | None, str]:
+    astock_peg, astock_source, astock_note = _astock_peg_from_sources(extended_info, profile, price=price)
+    if astock_peg is not None:
+        return astock_peg, astock_source, astock_note
+
     pe = _num(profile.get("pe_ttm") or profile.get("pe"))
     eps_consensus = (extended_info.get("research") or {}).get("eps_consensus") or {}
+    direct_peg, direct_source = _direct_peg_from_sources(extended_info, profile)
+    if direct_peg is not None:
+        return direct_peg, direct_source, f"{astock_note}；改用{direct_source}PEG字段"
     if pe is None:
         return None, None, "缺PE，暂不计算"
 
@@ -584,7 +672,8 @@ def _build_core_metrics(
     profile = profile or {}
     pe = _num(profile.get("pe_ttm") or profile.get("pe"))
     eps_consensus = (extended_info.get("research") or {}).get("eps_consensus") or {}
-    peg, peg_source, peg_note = _peg_from_sources(extended_info, profile)
+    price = _num((snapshot.get("key_levels") or {}).get("price"))
+    peg, peg_source, peg_note = _peg_from_sources(extended_info, profile, price=price)
     if peg is not None:
         peg_status = "derived"
     elif pe is None:
@@ -604,7 +693,6 @@ def _build_core_metrics(
             peg_status = "source_empty"
     else:
         peg_status = "source_empty"
-    price = _num((snapshot.get("key_levels") or {}).get("price"))
     dividend_yield, dividend_status = _extract_dividend_yield(extended_info, profile, price)
     return_20d = _period_return(data, 20)
     return_60d = _period_return(data, 60)

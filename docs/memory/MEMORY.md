@@ -1,5 +1,6 @@
 # 项目 Memory 索引
 
+- [Bug fixes & context 2026-05-17](bug_fixes_and_context_2026-05-17.md) — T+1 推荐计划缓存、收盘后预热入口、入场检查实时兜底、页面状态隔离、真实进度条、个股搜索残留修复、PEG 口径复用和资金流接口排查。
 - [Bug fixes & context 2026-05-16](bug_fixes_and_context_2026-05-16.md) — 智能推荐策略定版、全市场策略池、缓存加速、真实阶段进度、周末 K 线过滤与需求严格执行约束。
 - [Bug fixes & context 2026-05-14](bug_fixes_and_context_2026-05-14.md) — 决策委员会、飞书 Actions、自选股、中文名称识别、个股扩展信息、股票对比、页面切换、大盘温度、深色主题和推送卡片补齐。
 - [Bug fixes & context 2026-05-13](bug_fixes_and_context_2026-05-13.md) — 对比 `daily_stock_analysis` / `a-stock-data` 后新增每日决策仪表盘，接入研报、风险事件、板块归因和 GitHub Actions 定时推送。

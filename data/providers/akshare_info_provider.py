@@ -414,9 +414,11 @@ class AkShareInfoProvider:
             if not row.empty:
                 metrics[metric_name] = _safe_float(row.iloc[0].get(latest_period))
 
+        history = self._financial_history_from_wide_rows(df, report_columns, desired_metrics, label_col=df.columns[0])
         return {
             "period": latest_period,
             "metrics": metrics,
+            "history": history,
         }
 
     def _normalize_financial_indicator_em(self, df: pd.DataFrame) -> dict[str, Any]:
@@ -442,9 +444,11 @@ class AkShareInfoProvider:
                 metrics[target] = value
         if not metrics:
             return {}
+        history = self._financial_history_from_records(rows, date_col, mapping)
         return {
             "period": str(self._first_value(latest, [date_col or "", "REPORT_DATE", "报告期", "日期"]) or ""),
             "metrics": metrics,
+            "history": history,
         }
 
     def _normalize_sina_profit_statement(self, df: pd.DataFrame) -> dict[str, Any]:
@@ -470,7 +474,50 @@ class AkShareInfoProvider:
                 value = _safe_float(matched.iloc[0].get(latest_period))
                 if value is not None:
                     metrics[target] = value
-        return {"period": latest_period, "metrics": metrics} if metrics else {}
+        history = self._financial_history_from_wide_rows(
+            rows,
+            period_columns,
+            list(mapping.keys()),
+            label_col=label_col,
+        )
+        return {"period": latest_period, "metrics": metrics, "history": history} if metrics else {}
+
+    def _financial_history_from_wide_rows(self, df: pd.DataFrame, period_columns: list[Any], metric_names: list[str], label_col: str | None = None) -> list[dict[str, Any]]:
+        label_col = label_col or df.columns[0]
+        history = []
+        for period in sorted([str(col) for col in period_columns])[-4:]:
+            row_payload: dict[str, Any] = {"period": period}
+            for metric_name in metric_names:
+                rows = df[df[label_col].astype(str).apply(lambda text: metric_name == text or metric_name in text)]
+                if rows.empty:
+                    continue
+                value = _safe_float(rows.iloc[0].get(period))
+                if value is not None:
+                    row_payload[metric_name] = value
+            if len(row_payload) > 1:
+                history.append(row_payload)
+        return history
+
+    def _financial_history_from_records(self, df: pd.DataFrame, date_col: str | None, mapping: dict[str, list[str]]) -> list[dict[str, Any]]:
+        if df is None or df.empty:
+            return []
+        rows = df.copy()
+        if date_col:
+            rows = rows.sort_values(date_col).tail(4)
+        else:
+            rows = rows.tail(4)
+        history = []
+        for _, row in rows.iterrows():
+            row_payload: dict[str, Any] = {
+                "period": str(self._first_value(row, [date_col or "", "REPORT_DATE", "?????", "???"]) or "")
+            }
+            for target, candidates in mapping.items():
+                value = _safe_float(self._first_value(row, candidates))
+                if value is not None:
+                    row_payload[target] = value
+            if len(row_payload) > 1:
+                history.append(row_payload)
+        return history
 
     def _normalize_fund_flow_summary(self, df: pd.DataFrame) -> dict[str, Any]:
         if df is None or df.empty:

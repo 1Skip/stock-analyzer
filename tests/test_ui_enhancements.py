@@ -66,7 +66,12 @@ def test_long_running_pages_use_stable_loading_contexts():
     for page in pages:
         source = page.read_text(encoding="utf-8")
         assert "ui.background_tasks" not in source
-        assert "status_loading" in source or "_render_analysis_loading" in source or "_render_hot_loading" in source
+        assert (
+            "status_loading" in source
+            or "make_progress_reporter" in source
+            or "_render_analysis_loading" in source
+            or "_render_hot_loading" in source
+        )
 
 
 def test_analyze_page_keeps_analyzed_target_separate_from_input():
@@ -113,6 +118,20 @@ def test_analyze_page_syncs_cached_result_when_returning_to_page():
     assert "st.session_state.analyze_symbol_input = analyzed_symbol" in source
     assert "if not pending_watchlist_analysis and not pending_quick_match:" in source
     assert "_sync_analyze_input_to_cached_result()" in source
+
+
+def test_analyze_page_does_not_overwrite_new_manual_input_with_cached_result():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    sync_block = source.split("def _sync_analyze_input_to_cached_result", 1)[1].split(
+        "def _render_analysis_target_header", 1
+    )[0]
+
+    assert 'current_input = str(st.session_state.get("analyze_symbol_input"' in sync_block
+    assert 'current_symbol = str(st.session_state.get("analyze_symbol"' in sync_block
+    assert "current_input != current_symbol" in sync_block
+    assert "return" in sync_block.split("current_input != current_symbol", 1)[1].split("analyzed_symbol", 1)[0]
 
 
 def test_recommend_page_shows_multi_factor_diagnostics():
@@ -181,7 +200,45 @@ def test_recommend_page_uses_intelligent_stock_picking_title():
     source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
 
     assert "智能选股推荐" in source
+
+
+def test_recommend_page_isolates_running_state_and_request_key():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "rec_is_running" in source
+    assert "rec_active_request_key" in source
+    assert "current_request_key" in source
+    assert "is_current_request_running" in source
+    assert "is_other_request_running" in source
+    assert "_format_request_key_label" in source
+    assert "_result_matches_request" in source
+    assert "本策略生成中" in source
+    assert "其他计划生成中" in source
+    assert "其他 T+1 计划正在生成" in source
+    assert "完成前不会展示旧推荐或旧诊断" in source
+
+
+def test_recommend_page_shows_t1_cache_hit_without_rescanning():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "已读取 T+1 推荐计划缓存" in source
+    assert "未重新扫描股票池" in source
+    assert "只有点击“生成 T+1 推荐计划”才会重新运行策略" in source
     assert "龙头股推荐" not in source
+
+
+def test_recommend_page_shows_t1_cache_and_elapsed_status():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "缓存状态" in source
+    assert "生成耗时" in source
+    assert "预热状态" in source
 
 
 def test_stock_search_tolerates_common_near_match():
@@ -574,6 +631,65 @@ def test_defense_dashboard_peg_falls_back_to_financial_growth():
     assert metrics["PEG"]["value"] == "0.50"
     assert metrics["PEG"]["status"] == "derived"
     assert "财务摘要净利润同比" in metrics["PEG"]["note"]
+
+
+def test_defense_dashboard_peg_uses_astock_peg_formula_first():
+    snapshot = {
+        "score": 60,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {"price": 12.0},
+        "risk_alerts": [],
+    }
+    extended_info = {
+        "research": {"eps_consensus": {"values": {"2025预测EPS": 0.8, "2026预测EPS": 1.0}}},
+        "financial": {
+            "history": [
+                {"归母净利润": 100},
+                {"归母净利润": 121},
+                {"归母净利润": 144},
+            ],
+            "metrics": {"净利润同比": 30},
+        },
+    }
+
+    defense = build_defense_dashboard(
+        snapshot,
+        data=None,
+        benchmark_data=None,
+        extended_info=extended_info,
+        profile={"pe_ttm": 20},
+    )
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert metrics["PEG"]["value"] == "0.60"
+    assert metrics["PEG"]["status"] == "derived"
+    assert "前瞻PE=当前价/2026一致预期EPS" in metrics["PEG"]["note"]
+
+
+def test_defense_dashboard_peg_uses_direct_profile_field_before_deriving():
+    snapshot = {
+        "score": 60,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {"price": 12.0},
+        "risk_alerts": [],
+    }
+
+    defense = build_defense_dashboard(
+        snapshot,
+        data=None,
+        benchmark_data=None,
+        extended_info={"financial": {"metrics": {"净利润同比": 30}}},
+        profile={"pe_ttm": 20, "peg": 0.72},
+    )
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+
+    assert metrics["PEG"]["value"] == "0.72"
+    assert metrics["PEG"]["status"] == "derived"
+    assert "改用基础资料PEG字段" in metrics["PEG"]["note"]
 
 
 def test_defense_dashboard_peg_uses_financial_growth_aliases_and_history():

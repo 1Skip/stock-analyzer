@@ -12,6 +12,7 @@ import subprocess
 import sys
 import math
 import io
+import inspect
 try:
     import akshare as ak
 except Exception:  # pragma: no cover - depends on optional runtime package
@@ -1475,11 +1476,11 @@ class StockRecommender:
         result.setdefault("strategy_details", {})["市值过滤"] = cap_note
         return result
 
-    def _analyze_aggressive_breakout_technical(self, stock, market='CN', sector_name=None, realtime_quotes=None):
+    def _analyze_aggressive_breakout_technical(self, stock, market='CN', sector_name=None, realtime_quotes=None, fetcher=None):
         symbol = str((stock or {}).get("code") or "").strip()
         if not symbol:
             return None
-        fetcher = StockDataFetcher()
+        fetcher = fetcher or StockDataFetcher()
         try:
             data = self._get_strategy_stock_data(symbol, period='3mo', interval='1d', market=market, fetcher=fetcher)
         except Exception:
@@ -1534,11 +1535,19 @@ class StockRecommender:
         _emit_progress(progress_callback, "当日实时价量", 35, raw_pool=len(stocks), realtime_quotes=len(realtime_quotes))
         candidates = []
         technical_failures = 0
+        fetcher = StockDataFetcher()
+        try:
+            accepts_fetcher = "fetcher" in inspect.signature(self._analyze_aggressive_breakout_technical).parameters
+        except Exception:
+            accepts_fetcher = True
+
+        def analyze_technical(stock):
+            if accepts_fetcher:
+                return self._analyze_aggressive_breakout_technical(stock, market, sector_name, realtime_quotes, fetcher)
+            return self._analyze_aggressive_breakout_technical(stock, market, sector_name, realtime_quotes)
+
         with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {
-                executor.submit(self._analyze_aggressive_breakout_technical, stock, market, sector_name, realtime_quotes): stock
-                for stock in stocks
-            }
+            futures = {executor.submit(analyze_technical, stock): stock for stock in stocks}
             for future in as_completed(futures):
                 try:
                     candidate = future.result()
@@ -1826,12 +1835,12 @@ class StockRecommender:
         ]
         return bool(risky_announcements), risky_announcements
 
-    def _analyze_multi_factor_light(self, stock, market='CN', sector_name=None, realtime_quotes=None):
+    def _analyze_multi_factor_light(self, stock, market='CN', sector_name=None, realtime_quotes=None, fetcher=None):
         """多因子第一阶段：只用市值+K线做轻量预筛，避免逐股拉深度资料。"""
         symbol = str((stock or {}).get("code") or "").strip()
         if not symbol:
             return {"passed": False, "reason": "代码缺失"}
-        fetcher = StockDataFetcher()
+        fetcher = fetcher or StockDataFetcher()
         try:
             data = self._get_strategy_stock_data(symbol, period='3mo', interval='1d', market=market, fetcher=fetcher)
         except Exception:
@@ -1897,11 +1906,19 @@ class StockRecommender:
         )
         light_results = []
         light_failures = {}
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {
-                executor.submit(self._analyze_multi_factor_light, stock, market, sector_name, realtime_quotes): stock
-                for stock in small_cap_stocks
-            }
+        fetcher = StockDataFetcher()
+        try:
+            accepts_fetcher = "fetcher" in inspect.signature(self._analyze_multi_factor_light).parameters
+        except Exception:
+            accepts_fetcher = True
+
+        def analyze_light(stock):
+            if accepts_fetcher:
+                return self._analyze_multi_factor_light(stock, market, sector_name, realtime_quotes, fetcher)
+            return self._analyze_multi_factor_light(stock, market, sector_name, realtime_quotes)
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {executor.submit(analyze_light, stock): stock for stock in small_cap_stocks}
             for future in as_completed(futures):
                 try:
                     result = future.result()
@@ -2049,6 +2066,16 @@ class StockRecommender:
 
     def _get_multi_factor_extended_info(self, symbol, market='CN'):
         """稳健型深度资料隔离到子进程，避免AKShare原生依赖崩溃拖垮Streamlit。"""
+        try:
+            cached = self._stock_info_service.get_cached_stock_extended_info(
+                symbol,
+                market,
+                include_deep_layers=True,
+            )
+            if isinstance(cached, dict):
+                return cached
+        except Exception:
+            pass
         return _fetch_extended_info_subprocess(symbol, market=market)
 
     def _record_multi_factor_failure(self, diagnostics, reason):

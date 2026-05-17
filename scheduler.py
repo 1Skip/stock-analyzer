@@ -15,6 +15,9 @@ from config import (
     SECTOR_PUSH_ENABLED, DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
     DAILY_REPORT_INCLUDE_RECOMMENDATIONS, DAILY_REPORT_DIR,
     SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N,
+    T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGY,
+    T1_PLAN_SECTOR, T1_PLAN_NUM_STOCKS, T1_PLAN_PREHEAT_KLINE,
+    T1_PLAN_PREHEAT_EXTENDED_INFO,
 )
 from notification import send_push, build_analysis_report, build_sector_report
 from reports.exporter import save_markdown_report
@@ -51,6 +54,38 @@ def _generate_daily_report():
         return content, paths
     except Exception as e:
         logger.warning(f"每日报告生成失败，跳过日报推送: {e}", exc_info=True)
+        return None
+
+
+def run_t1_plan_preheat():
+    """自动生成 T+1 推荐计划；只调用既有策略，不改变选股条件。"""
+    logger.info(
+        "T+1 推荐计划预生成开始：strategy=%s sector=%s num=%s",
+        T1_PLAN_STRATEGY,
+        T1_PLAN_SECTOR,
+        T1_PLAN_NUM_STOCKS,
+    )
+    try:
+        from recommendation_service import RecommendationService
+
+        service = RecommendationService()
+        plan = service.run_t1_plan(
+            T1_PLAN_STRATEGY,
+            T1_PLAN_SECTOR,
+            T1_PLAN_NUM_STOCKS,
+            trigger="scheduler",
+            preheat_kline=T1_PLAN_PREHEAT_KLINE,
+            preheat_extended_info=T1_PLAN_PREHEAT_EXTENDED_INFO,
+        )
+        metrics = plan.get("generation_metrics") or {}
+        logger.info(
+            "T+1 推荐计划预生成完成：%s 只，耗时 %.2fs",
+            len(plan.get("recommended") or []),
+            metrics.get("elapsed_seconds", 0),
+        )
+        return plan
+    except Exception as e:
+        logger.error(f"T+1 推荐计划预生成失败: {e}", exc_info=True)
         return None
 
 
@@ -173,6 +208,9 @@ def start_scheduler():
         run_scheduled_analysis()
 
     schedule.every().day.at(SCHEDULE_TIME).do(run_scheduled_analysis)
+    if T1_PLAN_AUTO_ENABLED:
+        schedule.every().day.at(T1_PLAN_SCHEDULE_TIME).do(run_t1_plan_preheat)
+        logger.info(f"T+1 推荐计划自动预生成已开启：每日 {T1_PLAN_SCHEDULE_TIME} 执行")
 
     def _shutdown(signum, frame):
         logger.info("收到退出信号，调度器关闭")

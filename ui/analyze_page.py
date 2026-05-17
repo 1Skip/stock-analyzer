@@ -24,6 +24,7 @@ from ui.charts import (
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
 from ui.decision_dashboard import render_decision_dashboard
+from ui.loading import make_progress_reporter
 from ui.stock_search import suggest_stock_inputs
 
 
@@ -533,6 +534,10 @@ def _sync_analyze_input_to_cached_result():
     """页面切回个股分析时，确保顶部输入/当前标的与已分析结果一致。"""
     if st.session_state.get("analyzed_data") is None:
         return
+    current_input = str(st.session_state.get("analyze_symbol_input", "") or "").strip()
+    current_symbol = str(st.session_state.get("analyze_symbol", "") or "").strip()
+    if current_input and current_symbol and current_input != current_symbol:
+        return
     analyzed_symbol = st.session_state.get("analyzed_symbol")
     analyzed_market = st.session_state.get("analyzed_market")
     analyzed_period = st.session_state.get("analyzed_period")
@@ -732,14 +737,25 @@ def _render_analysis_loading(container, symbol, market, step, percent):
         )
 
 
-def _run_stock_analysis_task(symbol, market, period):
+def _emit_progress(progress_callback, stage, percent, **metrics):
+    if not callable(progress_callback):
+        return
+    try:
+        progress_callback(stage, percent, metrics)
+    except Exception:
+        pass
+
+
+def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
     """后台执行个股分析，避免切页中断并确保代码/名称成对写回。"""
     original_query = str(symbol or "").strip()
     symbol = original_query
     resolved_name = None
+    _emit_progress(progress_callback, "解析输入", 5, query=original_query, market=market)
 
     has_chinese = any('一' <= c <= '鿿' for c in symbol)
     if market == "CN" and not (symbol.isdigit() and len(symbol) == 6):
+        _emit_progress(progress_callback, "解析股票名称", 10, query=original_query)
         result = resolve_cached_stock_input(symbol, market)
         if result:
             resolved_name = result[1]
@@ -753,6 +769,7 @@ def _run_stock_analysis_task(symbol, market, period):
             }
 
     is_valid, err_msg = _validate_symbol(symbol, market)
+    _emit_progress(progress_callback, "校验代码", 15, symbol=symbol)
     if not is_valid:
         return {
             "error": f"输入的股票代码格式有误，{err_msg}",
@@ -772,6 +789,7 @@ def _run_stock_analysis_task(symbol, market, period):
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
     futures = {}
     try:
+        _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
         futures = {
             'info': executor.submit(get_cached_stock_info, symbol, market),
             'data': executor.submit(get_cached_stock_data, symbol, '1y', market),
@@ -782,10 +800,15 @@ def _run_stock_analysis_task(symbol, market, period):
             futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
             futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
 
+        completed = 0
+        total = len(futures)
+
         try:
             data = futures['data'].result(timeout=20)
         except Exception:
             data = None
+        completed += 1
+        _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
 
         try:
             info_result = futures['info'].result(timeout=0.2)
@@ -793,29 +816,42 @@ def _run_stock_analysis_task(symbol, market, period):
                 info = info_result
         except Exception:
             info = {'shortName': symbol, 'symbol': symbol}
+        completed += 1
+        _emit_progress(progress_callback, "基础信息完成", 52, done=completed, total=total)
 
         try:
             quote = futures['quote'].result(timeout=0.2)
         except Exception:
             quote = None
+        completed += 1
+        _emit_progress(progress_callback, "实时行情完成", 60, done=completed, total=total)
 
         try:
             if 'intraday' in futures:
                 intraday_data = futures['intraday'].result(timeout=0.2)
         except Exception:
             intraday_data = None
+        if 'intraday' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "分时数据完成", 68, done=completed, total=total)
 
         try:
             if 'profile' in futures:
                 profile = futures['profile'].result(timeout=2.5)
         except Exception:
             profile = {"loading": True, "source": "基础资料服务"}
+        if 'profile' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "基础资料完成", 76, done=completed, total=total)
 
         try:
             if 'extended_info' in futures:
                 extended_info = futures['extended_info'].result(timeout=2.5)
         except Exception:
             extended_info = {"loading": True, "source": "AKShare"}
+        if 'extended_info' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "扩展资料完成", 82, done=completed, total=total)
     finally:
         for future in futures.values():
             if not future.done():
@@ -832,9 +868,11 @@ def _run_stock_analysis_task(symbol, market, period):
         }
 
     if not _is_valid_quote(quote):
+        _emit_progress(progress_callback, "实时行情兜底", 84, source="历史K线")
         quote = _quote_from_last_row(data)
 
     if quote and data is not None and not data.empty:
+        _emit_progress(progress_callback, "合并当日价量", 88)
         today = pd.Timestamp.now().normalize()
         if data.index[-1].normalize() == today:
             idx = data.index[-1]
@@ -862,9 +900,12 @@ def _run_stock_analysis_task(symbol, market, period):
     elif stock_name == symbol:
         stock_name = symbol
 
+    _emit_progress(progress_callback, "计算技术指标", 94)
     data = TechnicalIndicators.calculate_all(data)
+    _emit_progress(progress_callback, "生成交易信号", 98)
     signals = TechnicalIndicators.get_signals(data)
 
+    _emit_progress(progress_callback, "完成", 100, symbol=symbol)
     return {
         "query": original_query,
         "symbol": symbol,
@@ -1082,8 +1123,19 @@ def analyze_stock_page():
     if analyze_clicked:
         _clear_analyzed_result()
         loading_panel = st.empty()
-        _render_analysis_loading(loading_panel, symbol, market, "正在并发获取行情、资料和指标...", 18)
-        task_result = _run_stock_analysis_task(symbol, market, period)
+        market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+        progress = make_progress_reporter(
+            loading_panel,
+            "正在分析个股",
+            context=f"{symbol} · {market_label}",
+        )
+        progress.update("启动", 3)
+        task_result = _run_stock_analysis_task(
+            symbol,
+            market,
+            period,
+            progress_callback=lambda stage, percent, metrics=None: progress.update(stage, percent, metrics),
+        )
         loading_panel.empty()
         if task_result.get("error"):
             st.error(task_result["error"])

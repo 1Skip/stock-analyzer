@@ -621,6 +621,22 @@ class TestStockInfoService:
         assert result["metrics"]["归母净利润"] == 12000000.0
         assert result["metrics"]["经营现金流量净额"] == -3000000.0
 
+        assert result["history"][-1]["period"] == "20260331"
+        assert any(value == 12000000.0 for key, value in result["history"][-1].items() if key != "period")
+
+    def test_financial_indicator_em_keeps_profit_history_for_peg(self):
+        provider = AkShareInfoProvider()
+        df = pd.DataFrame([
+            {"REPORT_DATE": "2024-12-31", "PARENT_NETPROFIT": 100.0, "EPSJB": 0.5},
+            {"REPORT_DATE": "2025-12-31", "PARENT_NETPROFIT": 121.0, "EPSJB": 0.6},
+            {"REPORT_DATE": "2026-12-31", "PARENT_NETPROFIT": 144.0, "EPSJB": 0.7},
+        ])
+
+        result = provider._normalize_financial_indicator_em(df)
+
+        assert len(result["history"]) == 3
+        assert any(value == 144.0 for key, value in result["history"][-1].items() if key != "period")
+
     def test_financial_summary_falls_back_to_secondary_source(self, monkeypatch):
         provider = AkShareInfoProvider()
         calls = []

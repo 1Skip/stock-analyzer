@@ -5,12 +5,19 @@ import streamlit as st
 import pandas as pd
 from config import CACHE_TTL_HOT_STOCKS
 from stock_recommendation import StockRecommender
+from ui.loading import make_progress_reporter
 
 
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
 def get_cached_hot_stocks(market):
     """缓存热门股票数据"""
+    return fetch_hot_stocks(market)
+
+
+def fetch_hot_stocks(market, progress_callback=None):
+    """获取热门股票数据，可选输出真实阶段进度。"""
     recommender = StockRecommender()
+    _emit_progress(progress_callback, "初始化数据源", 8, market=market)
     if market == "CN":
         tasks = {
             'gainers': lambda: recommender.get_top_gainers_cn(limit=10),
@@ -18,16 +25,20 @@ def get_cached_hot_stocks(market):
             'sectors': lambda: recommender.get_hot_sectors_cn(limit=30),
             'concepts': lambda: recommender.get_hot_concepts_cn(limit=30),
         }
-        return _run_hot_tasks(tasks, max_workers=5)
+        return _run_hot_tasks(tasks, max_workers=5, progress_callback=progress_callback)
     elif market == "HK":
+        _emit_progress(progress_callback, "获取热门港股", 30)
         hot = recommender.get_hot_stocks_hk(limit=20)
+        _emit_progress(progress_callback, "整理涨跌幅榜", 70, hot=len(hot or []))
         return {
             'hot': hot,
             'gainers': recommender.get_top_gainers_hk(limit=10, hot_stocks=hot),
             'losers': recommender.get_top_losers_hk(limit=10, hot_stocks=hot)
         }
     else:
+        _emit_progress(progress_callback, "获取热门美股", 30)
         hot = recommender.get_hot_stocks_us(limit=20)
+        _emit_progress(progress_callback, "整理涨跌幅榜", 70, hot=len(hot or []))
         return {
             'hot': hot,
             'gainers': recommender.get_top_gainers_us(limit=10, hot_stocks=hot),
@@ -35,9 +46,21 @@ def get_cached_hot_stocks(market):
         }
 
 
-def _run_hot_tasks(tasks, max_workers=4):
+def _emit_progress(progress_callback, stage, percent, **metrics):
+    if not callable(progress_callback):
+        return
+    try:
+        progress_callback(stage, percent, metrics)
+    except Exception:
+        pass
+
+
+def _run_hot_tasks(tasks, max_workers=4, progress_callback=None):
     """并发获取热门板块数据，单个源失败不拖垮整页。"""
     results = {key: [] for key in tasks}
+    total = len(tasks)
+    completed = 0
+    _emit_progress(progress_callback, "提交排行任务", 20, total=total)
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {executor.submit(task): key for key, task in tasks.items()}
         for future in concurrent.futures.as_completed(futures):
@@ -46,6 +69,15 @@ def _run_hot_tasks(tasks, max_workers=4):
                 results[key] = future.result() or []
             except Exception:
                 results[key] = []
+            completed += 1
+            _emit_progress(
+                progress_callback,
+                "排行任务完成",
+                20 + int(65 * completed / max(1, total)),
+                done=completed,
+                total=total,
+                latest=key,
+            )
     return results
 
 
@@ -108,12 +140,22 @@ def hot_stocks_page():
 
     if refresh_clicked:
         loading_panel = st.empty()
-        _render_hot_loading(loading_panel, market, "正在并发请求行业、概念与个股排行...", 15)
+        market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
+        progress = make_progress_reporter(
+            loading_panel,
+            "正在刷新热门板块",
+            context=market_label,
+        )
+        progress.update("启动", 5)
         get_cached_hot_stocks.clear()
-        data = get_cached_hot_stocks(market)
-        _render_hot_loading(loading_panel, market, "数据已返回，正在整理展示表格...", 90)
+        data = fetch_hot_stocks(
+            market,
+            progress_callback=lambda stage, percent, metrics=None: progress.update(stage, percent, metrics),
+        )
+        progress.update("整理展示数据", 92)
         st.session_state.hot_data_loaded = True
         st.session_state.hot_data = data
+        progress.complete("完成")
         loading_panel.empty()
     else:
         data = st.session_state.get('hot_data')

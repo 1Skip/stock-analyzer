@@ -53,6 +53,24 @@ class StockInfoService:
         self.cache.set(cache_key, payload)
         return payload
 
+    def get_cached_stock_extended_info(
+        self,
+        symbol: str,
+        market: str = "CN",
+        include_deep_layers: bool = True,
+    ) -> dict | None:
+        """Return cached extended info only; never call the upstream provider."""
+        symbol = str(symbol or "").strip()
+        if market != "CN" or not re.fullmatch(r"\d{6}", symbol):
+            return None
+
+        layer_mode = "full" if include_deep_layers else "core"
+        cache_key = f"{market}:{symbol}:extended:v4:{layer_mode}"
+        cached = self.cache.get(cache_key)
+        if isinstance(cached, dict):
+            return cached
+        return self._get_layered_cached_info(symbol, market, include_deep_layers)
+
     def _get_layered_cached_info(self, symbol: str, market: str, include_deep_layers: bool) -> dict | None:
         base_key = f"{market}:{symbol}"
         financial = self.financial_cache.get(f"{base_key}:financial:v1")
