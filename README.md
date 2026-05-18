@@ -1,4 +1,4 @@
-# 股票分析系统
+﻿# 股票分析系统
 
 个人股票技术分析工具，支持 A股/港股/美股，提供 Web 界面和 CLI 两种使用方式。
 
@@ -340,7 +340,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `SECTOR_PUSH_SHORT_TOP_N` / `SECTOR_PUSH_LONG_TOP_N`：每个板块短线/长线推荐数量，默认 `2` / `1`。
 - `DAILY_REPORT_ENABLED`：定时任务是否生成每日报告，默认 `true`。
 - `DAILY_REPORT_PUSH_ENABLED`：定时任务是否推送完整 Markdown 日报，默认 `true`。
-- `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描全市场推荐股，默认 `true`。
+- `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描全市场推荐股，默认 `false`，避免和 T+1 预热重复跑全市场推荐。
 - `T1_PLAN_AUTO_ENABLED`：是否在调度器中自动预生成 T+1 推荐计划，默认 `true`。
 - `T1_PLAN_SCHEDULE_TIME`：T+1 推荐计划预生成时间，默认 `15:45`。
 - `T1_PLAN_STRATEGIES` / `T1_PLAN_SECTOR` / `T1_PLAN_NUM_STOCKS`：T+1 预生成使用的策略列表、板块和数量，默认 `多因子稳健型,激进突破型` / `全部` / `5`。旧的 `T1_PLAN_STRATEGY` 仍兼容单策略配置。
@@ -413,7 +413,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的六 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件/执行风控细分评分；阶段 3 最终版已把日报升级为决策仪表盘；阶段 4 最终版支持可选外部 LLM 多空辩论（多头研究员、空头研究员、风控经理），未配置 `AI_API_KEY` 时自动跳过，不影响 GitHub Actions 和飞书定时推送。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
-定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只，并同步输出激进突破型/多因子稳健型候选；短线/长线沿用沪深主板口径，激进突破型/多因子稳健型扫描沪深主板 + 创业板，科创板、北交所、ST、退市/异常股票不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；每日完整 Markdown 日报默认包含全市场推荐股扫描。自选股摘要、四板块推荐股和完整 Markdown 日报都会带“交易计划卡片 + 风控防御看板”，配置页一键测试推送仅用于测试 Webhook 连通性。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
+定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只，并同步输出激进突破型/多因子稳健型候选；短线/长线沿用沪深主板口径，激进突破型/多因子稳健型扫描沪深主板 + 创业板，科创板、北交所、ST、退市/异常股票不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；每日完整 Markdown 日报默认不再重复扫描全市场推荐股，T+1 推荐由 `T1_PLAN_SCHEDULE_TIME` 的预热任务提前生成。自选股摘要、四板块推荐股和完整 Markdown 日报都会带“交易计划卡片 + 风控防御看板”，配置页一键测试推送仅用于测试 Webhook 连通性。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
 GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需改为企业微信，把仓库 Variable `NOTIFY_CHANNELS` 设为 `wechat` 并配置 Secret `WECHAT_WEBHOOK_URL`；如需两个渠道同时推送，设为 `feishu,wechat` 并配置两个 Webhook。云端日报如需包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。如需云端 LLM 多空辩论，再配置 Secret `AI_API_KEY`，并把仓库 Variables 里的 `AI_DEBATE_ENABLED` 设为 `true`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 

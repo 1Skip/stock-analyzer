@@ -18,6 +18,14 @@ class FakeQuoteService:
             symbols[0]: {"price": 10.5, "change_pct": 2.0}
         } if symbols else {}
 
+    def get_stock_data(self, symbol, period="1y", market="CN"):
+        import pandas as pd
+
+        return pd.DataFrame({
+            "date": ["2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25"],
+            "close": [10.0, 10.5, 10.8, 10.2, 10.9, 11.0],
+        })
+
 
 class FakeRecommender:
     def __init__(self):
@@ -95,6 +103,23 @@ def test_recommendation_service_persists_latest_result():
     assert latest["title"] == "多因子稳健型"
 
 
+def test_observability_does_not_change_strategy_selected_order(monkeypatch):
+    import recommendation_service as module
+
+    monkeypatch.setattr(module, "RECOMMEND_RANKER_SORT", False)
+    service = module.RecommendationService(
+        recommender=TwoStockRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("多因子稳健型", "全部", 5)
+
+    assert [stock["symbol"] for stock in result["recommended"]] == ["002010", "002011"]
+    assert all("explanation" in stock for stock in result["recommended"])
+    assert result["diagnostics"]["quality"]["stock_count"] == 2
+
+
 def test_recommendation_service_sorts_alpha_only_when_config_enabled(monkeypatch):
     import recommendation_service as module
 
@@ -131,6 +156,29 @@ def test_recommendation_service_persists_t1_plan_without_changing_strategy(monke
     assert plan["data_status"]["realtime_check"] == "not_checked"
     assert plan["generation_metrics"]["realtime_used_for_selection"] is False
     assert plan["generation_metrics"]["scan_scope_changed"] is False
+    assert plan["history_key"]
+
+
+def test_t1_plan_history_is_saved_and_read_only():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    history = service.list_t1_plan_history(strategy="多因子稳健型", sector="全部")
+    review = service.evaluate_t1_plan_history(strategy="多因子稳健型", sector="全部")
+
+    assert recommender.called == [("multi", 5, False)]
+    assert len(history) == 1
+    assert history[0]["recommended_symbols"] == [plan["recommended"][0]["symbol"]]
+    assert review["summary"]["plans"] == 1
+    assert review["summary"]["completed_items"] == 1
+    assert recommender.called == [("multi", 5, False)]
 
 
 def test_t1_plan_records_preheat_and_elapsed_metrics_without_changing_strategy(monkeypatch):

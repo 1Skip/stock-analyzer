@@ -185,6 +185,7 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         if penalties:
             alpha_line += f"；扣分 {penalties}"
         lines.append(alpha_line)
+    lines.extend(_build_explanation_push_lines(stock))
     checks = stock.get("strategy_checks") or {}
     details = stock.get("strategy_details") or {}
     if checks:
@@ -216,6 +217,29 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
     except Exception as exc:
         logger.info("推荐股决策卡生成失败，保留基础推荐信息: %s", exc)
 
+    return lines
+
+
+def _build_explanation_push_lines(stock: dict[str, Any]) -> list[str]:
+    explanation = stock.get("explanation") if isinstance(stock.get("explanation"), dict) else {}
+    if not explanation:
+        return []
+    lines = []
+    reasons = explanation.get("why_selected") or []
+    risks = explanation.get("risk_flags") or []
+    entry = explanation.get("entry_conditions") or []
+    invalid = explanation.get("invalid_conditions") or []
+    missing = explanation.get("missing_data") or []
+    if reasons:
+        lines.append(f"  入选依据: {'；'.join(str(item) for item in reasons[:2])}")
+    if risks:
+        lines.append(f"  风险/扣分: {'；'.join(str(item) for item in risks[:2])}")
+    if entry:
+        lines.append(f"  入场条件: {'；'.join(str(item) for item in entry[:2])}")
+    if invalid:
+        lines.append(f"  失效条件: {'；'.join(str(item) for item in invalid[:2])}")
+    if missing:
+        lines.append(f"  数据缺口: {'；'.join(str(item) for item in missing[:3])}")
     return lines
 
 

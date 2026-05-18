@@ -17,6 +17,7 @@ from data.services.quote_service import QuoteDataService
 from decision_committee import build_watchlist_decision
 from reports.decision_cards import build_decision_card_markdown
 from reports.exporter import save_markdown_report
+from recommendation_service import RecommendationService
 from stock_recommendation import StockRecommender
 
 
@@ -28,10 +29,15 @@ class DailyReportService:
         quote_service: QuoteDataService | None = None,
         info_service: StockInfoService | None = None,
         recommender: StockRecommender | None = None,
+        recommendation_service: RecommendationService | None = None,
     ):
         self.quote_service = quote_service or QuoteDataService()
         self.info_service = info_service or StockInfoService()
         self.recommender = recommender or StockRecommender()
+        self.recommendation_service = recommendation_service or RecommendationService(
+            quote_service=self.quote_service,
+            recommender=self.recommender,
+        )
 
     def build_report_data(self, report_date: str | None = None, include_recommendations: bool = True) -> dict[str, Any]:
         report_date = report_date or datetime.now().strftime("%Y-%m-%d")
@@ -47,6 +53,7 @@ class DailyReportService:
             "market_indices": self._get_market_indices(),
             "watchlist": watchlist_summary,
             "recommendations": self._get_recommendations() if include_recommendations else [],
+            "t1_plan_history": self._get_t1_plan_history() if include_recommendations else {},
             "extended_info": extended_info,
             "decisions": decision_map,
             "debates": self._get_debate_results(watchlist_summary, extended_info, decision_map),
@@ -94,6 +101,12 @@ class DailyReportService:
         except Exception:
             return []
 
+    def _get_t1_plan_history(self) -> dict[str, Any]:
+        try:
+            return self.recommendation_service.evaluate_t1_plan_history(limit=10)
+        except Exception:
+            return {}
+
     def _collect_focus_symbols(self, watchlist_items: list[dict[str, Any]]) -> list[dict[str, str]]:
         focus = []
         seen = set()
@@ -127,6 +140,7 @@ class DailyReportService:
         ]
         watchlist = data.get("watchlist") or []
         recommendations = data.get("recommendations") or []
+        t1_history = data.get("t1_plan_history") or {}
         extended_items = data.get("extended_info") or []
         decision_map = data.get("decisions") or self._build_committee_map(watchlist, extended_items)
         debate_map = data.get("debates") or {}
@@ -235,6 +249,8 @@ class DailyReportService:
                     lines.append(alpha_line)
         else:
             lines.append("- 暂无推荐结果")
+
+        lines.extend(self._render_t1_history_lines(t1_history))
 
         lines.extend(["", "## 研报 / 风险 / 板块归因"])
         if extended_items:
@@ -506,6 +522,27 @@ class DailyReportService:
         if not watchlist:
             checklist.append("暂无自选股时，先维护 watchlist.json，再让日报聚焦固定股票池。")
         return checklist
+
+    def _render_t1_history_lines(self, history_payload: dict[str, Any]) -> list[str]:
+        if not isinstance(history_payload, dict) or not history_payload:
+            return ["", "## T+1 计划回看", "- 暂无历史计划回看数据"]
+        summary = history_payload.get("summary") or {}
+        lines = ["", "## T+1 计划回看"]
+        lines.append(
+            f"- 历史计划：{summary.get('plans', 0)} 份；"
+            f"回看标的 {summary.get('total_items', 0)} 只；"
+            f"已完成 {summary.get('completed_items', 0)} 只；"
+            f"1日均收益 {self._fmt_pct(summary.get('avg_1d_return_pct'))}；"
+            f"1日胜率 {self._fmt_pct(summary.get('win_rate_1d_pct'))}"
+        )
+        for item in (summary.get("by_strategy") or [])[:6]:
+            lines.append(
+                f"- {item.get('strategy', '--')} / {item.get('sector', '--')}："
+                f"计划 {item.get('plans', 0)} 份，完成 {item.get('completed', 0)}/{item.get('total', 0)}，"
+                f"1日均收益 {self._fmt_pct(item.get('avg_1d_return_pct'))}，"
+                f"胜率 {self._fmt_pct(item.get('win_rate_1d_pct'))}"
+            )
+        return lines
 
     @staticmethod
     def _fmt_key_values(values: dict[str, Any]) -> str:

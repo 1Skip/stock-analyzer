@@ -10,6 +10,14 @@ import requests
 from config import CACHE_TTL_RECOMMENDATION_RESULTS, RECOMMEND_RANKER_ENABLED, RECOMMEND_RANKER_SORT
 from data.cache import JsonFileCache
 from data.services.quote_service import QuoteDataService
+from quality_monitor import (
+    attach_recommendation_explanations,
+    evaluate_plan_outcomes,
+    list_plan_history,
+    save_plan_history,
+    summarize_recommendation_quality,
+    summarize_history_outcomes,
+)
 from recommend_ranker import enrich_recommendations_with_alpha
 from stock_recommendation import StockRecommender
 
@@ -138,6 +146,7 @@ class RecommendationService:
             CACHE_TTL_RECOMMENDATION_RESULTS,
         )
         self.plan_cache = JsonFileCache("recommendation_t1_plans", 86400 * 14)
+        self.plan_history_cache = JsonFileCache("recommendation_t1_plan_history", 86400 * 120)
 
     def run(
         self,
@@ -220,6 +229,7 @@ class RecommendationService:
             "preheat": preheat_status,
         })
         self.plan_cache.set(self._plan_cache_key(strategy, sector, num_stocks), plan)
+        plan["history_key"] = save_plan_history(self.plan_history_cache, plan)
         return plan
 
     def latest_t1_plan(self, strategy: str, sector: str, num_stocks: int) -> dict[str, Any] | None:
@@ -279,6 +289,42 @@ class RecommendationService:
             "items": items,
         }
 
+    def evaluate_t1_plan_outcomes(self, plan: dict[str, Any] | None) -> dict[str, Any]:
+        """Read-only T+1 outcome review; never changes future recommendations."""
+        return evaluate_plan_outcomes(plan, quote_service=self.quote_service)
+
+    def list_t1_plan_history(
+        self,
+        *,
+        strategy: str | None = None,
+        sector: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return saved T+1 plans. Read-only and separate from latest-plan cache."""
+        return list_plan_history(self.plan_history_cache, strategy=strategy, sector=sector, limit=limit)
+
+    def evaluate_t1_plan_history(
+        self,
+        *,
+        strategy: str | None = None,
+        sector: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Evaluate stored plans without feeding results back into the strategy."""
+        rows = self.list_t1_plan_history(strategy=strategy, sector=sector, limit=limit)
+        reviews = []
+        for row in rows:
+            plan = row.get("plan") or {}
+            reviews.append({
+                "plan": plan,
+                "outcome": self.evaluate_t1_plan_outcomes(plan),
+            })
+        return {
+            "history": rows,
+            "reviews": reviews,
+            "summary": summarize_history_outcomes(reviews),
+        }
+
     def refresh_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
         return self.recommender.refresh_strategy_kline_cache(*args, **kwargs)
 
@@ -288,10 +334,11 @@ class RecommendationService:
         long_top_n: int | None = None,
     ) -> dict[str, Any]:
         """Keep the existing sector push semantics on the shared service."""
-        return self.recommender.get_all_sector_recommendations(
+        sector_data = self.recommender.get_all_sector_recommendations(
             short_top_n=short_top_n,
             long_top_n=long_top_n,
         )
+        return self._attach_sector_explanations(sector_data)
 
     def _run_uncached(
         self,
@@ -363,6 +410,13 @@ class RecommendationService:
                 "sorted": RECOMMEND_RANKER_SORT,
                 "version": "alpha_v1",
             }
+        recommended = attach_recommendation_explanations(
+            recommended,
+            strategy=strategy,
+            sector=sector,
+        )
+        diagnostics = dict(diagnostics or {})
+        diagnostics["quality"] = summarize_recommendation_quality(recommended)
         return {
             "recommended": recommended,
             "title": title,
@@ -387,6 +441,22 @@ class RecommendationService:
                     item["change_pct"] = quote["change_pct"]
         except Exception:
             return
+
+    @staticmethod
+    def _attach_sector_explanations(sector_data: dict[str, Any] | None) -> dict[str, Any]:
+        """Attach explanation blocks to sector push results without changing order."""
+        if not isinstance(sector_data, dict):
+            return {}
+        enriched: dict[str, Any] = {}
+        for sector, strategies in sector_data.items():
+            enriched[sector] = {}
+            for strategy, stocks in (strategies or {}).items():
+                enriched[sector][strategy] = attach_recommendation_explanations(
+                    stocks or [],
+                    strategy=strategy,
+                    sector=sector,
+                )
+        return enriched
 
     def _preheat_kline_cache(self) -> dict[str, Any]:
         try:

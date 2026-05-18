@@ -8,6 +8,8 @@ from ui.loading import status_loading
 def _format_progress_message(strategy, sector, stage, metrics):
     metrics = metrics or {}
     parts = [f"正在分析{sector}板块（{strategy}）", f"阶段：{stage}"]
+    if "result_count" not in metrics:
+        metrics = {**metrics, "result_count": 0}
     label_map = {
         "raw_pool": "股票池",
         "small_cap_pool": "市值通过",
@@ -18,7 +20,7 @@ def _format_progress_message(strategy, sector, stage, metrics):
         "deep_checked": "深度检查",
         "deep_total": "深度总数",
         "deep_done": "已深查",
-        "result_count": "最终命中",
+        "result_count": "当前命中",
     }
     for key, label in label_map.items():
         if key in metrics:
@@ -168,6 +170,100 @@ def _render_entry_check(entry_check):
         st.dataframe(rows, use_container_width=True, hide_index=True)
 
 
+def _render_outcome_review(outcome_review):
+    if not isinstance(outcome_review, dict):
+        return
+    status = outcome_review.get("status")
+    if status in ("no_plan", "empty"):
+        st.info("暂无可回看的 T+1 计划。")
+        return
+    summary = outcome_review.get("summary") or {}
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("回看标的", summary.get("total", 0))
+    col2.metric("已完成", summary.get("completed", 0))
+    col3.metric("待数据", summary.get("pending", 0))
+    avg_1d = summary.get("avg_1d_return_pct")
+    win_1d = summary.get("win_rate_1d_pct")
+    col4.metric("1日均收益", f"{avg_1d:+.2f}%" if avg_1d is not None else "--")
+    st.caption(f"1日胜率：{win_1d:.2f}%" if win_1d is not None else "1日胜率：等待后续K线")
+    rows = []
+    for item in outcome_review.get("items") or []:
+        returns = item.get("returns") or {}
+        rows.append({
+            "代码": item.get("symbol"),
+            "名称": item.get("name"),
+            "状态": item.get("status"),
+            "计划价": item.get("entry_price"),
+            "1日": _format_return(returns.get("1d")),
+            "5日": _format_return(returns.get("5d")),
+            "20日": _format_return(returns.get("20d")),
+            "说明": item.get("reason", ""),
+        })
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
+def _render_history_review(history_review):
+    if not isinstance(history_review, dict):
+        return
+    summary = history_review.get("summary") or {}
+    with st.expander("历史计划回看", expanded=False):
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("历史计划", summary.get("plans", 0))
+        col2.metric("回看标的", summary.get("total_items", 0))
+        col3.metric("已完成", summary.get("completed_items", 0))
+        avg_1d = summary.get("avg_1d_return_pct")
+        col4.metric("1日均收益", _format_return(avg_1d))
+        by_strategy = summary.get("by_strategy") or []
+        if by_strategy:
+            st.dataframe(
+                [
+                    {
+                        "策略": item.get("strategy"),
+                        "板块": item.get("sector"),
+                        "计划数": item.get("plans"),
+                        "标的数": item.get("total"),
+                        "已完成": item.get("completed"),
+                        "1日均收益": _format_return(item.get("avg_1d_return_pct")),
+                        "1日胜率": _format_return(item.get("win_rate_1d_pct")),
+                    }
+                    for item in by_strategy
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        history = history_review.get("history") or []
+        if history:
+            st.caption("最近计划：" + "；".join(
+                f"{item.get('generated_at', '--')} {item.get('strategy', '--')} {item.get('recommended_count', 0)}只"
+                for item in history[:5]
+            ))
+
+
+def _format_return(value):
+    return f"{value:+.2f}%" if isinstance(value, (int, float)) else "--"
+
+
+def _render_quality_diagnostics(diagnostics):
+    quality = (diagnostics or {}).get("quality") if isinstance(diagnostics, dict) else None
+    if not isinstance(quality, dict):
+        return
+    with st.expander("数据质量与解释覆盖", expanded=False):
+        col1, col2, col3 = st.columns(3)
+        col1.metric("推荐数量", quality.get("stock_count", 0))
+        col2.metric("解释覆盖", quality.get("explainable_count", 0))
+        col3.metric("风险提示", quality.get("risk_flag_count", 0))
+        missing = quality.get("missing_required_fields") or {}
+        indicator_missing = quality.get("missing_indicator_fields") or {}
+        if missing:
+            st.caption("关键字段缺失：" + "；".join(f"{key} {value}只" for key, value in missing.items()))
+        if indicator_missing:
+            top = sorted(indicator_missing.items(), key=lambda item: item[1], reverse=True)[:6]
+            st.caption("指标字段缺失：" + "；".join(f"{key} {value}只" for key, value in top))
+        if not missing and not indicator_missing:
+            st.caption("关键字段和主要指标完整。")
+
+
 def _render_multi_factor_diagnostics(diagnostics):
     if not diagnostics:
         return
@@ -186,6 +282,33 @@ def _render_multi_factor_diagnostics(diagnostics):
     if failures:
         top_failures = sorted(failures.items(), key=lambda item: item[1], reverse=True)[:8]
         st.caption("主要卡点：" + "；".join(f"{html.escape(str(reason))} {count}只" for reason, count in top_failures))
+
+    core_summary = diagnostics.get("core_factor_summary") or {}
+    if core_summary:
+        parts = []
+        for name, item in core_summary.items():
+            passed = int((item or {}).get("passed", 0))
+            failed = int((item or {}).get("failed", 0))
+            total = passed + failed
+            if total:
+                parts.append(f"{html.escape(str(name))} {passed}/{total}")
+        if parts:
+            st.caption("核心因子命中：" + "；".join(parts))
+
+    data_quality = diagnostics.get("deep_data_quality") or {}
+    if data_quality:
+        parts = []
+        for name, item in data_quality.items():
+            available = int((item or {}).get("available", 0))
+            missing = int((item or {}).get("missing", 0))
+            source_failed = int((item or {}).get("source_failed", 0))
+            source_empty = int((item or {}).get("source_empty", 0))
+            total = available + missing + source_failed + source_empty
+            if total:
+                unavailable = total - available
+                parts.append(f"{html.escape(str(name))} 可用{available}/{total}，不可用{unavailable}")
+        if parts:
+            st.caption("深度数据可用性：" + "；".join(parts))
 
 
 def _render_aggressive_diagnostics(diagnostics):
@@ -280,6 +403,32 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 if penalties:
                     alpha_line += f"｜扣分：{html.escape(penalties)}"
                 st.caption(alpha_line)
+
+            explanation = stock.get("explanation") if isinstance(stock.get("explanation"), dict) else {}
+            if explanation:
+                with st.expander("推荐解释与数据缺口", expanded=False):
+                    reasons = explanation.get("why_selected") or []
+                    risks = explanation.get("risk_flags") or []
+                    missing = explanation.get("missing_data") or []
+                    note = explanation.get("confidence_note") or ""
+                    if reasons:
+                        st.markdown("**入选依据**")
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in reasons[:5]))
+                    if risks:
+                        st.markdown("**风险/扣分**")
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in risks[:5]))
+                    if missing:
+                        st.caption("缺失证据：" + "；".join(html.escape(str(item)) for item in missing[:8]))
+                    entry_conditions = explanation.get("entry_conditions") or []
+                    invalid_conditions = explanation.get("invalid_conditions") or []
+                    if entry_conditions:
+                        st.markdown("**入场条件**")
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in entry_conditions[:4]))
+                    if invalid_conditions:
+                        st.markdown("**失效条件**")
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in invalid_conditions[:4]))
+                    if note:
+                        st.caption(note)
 
             if stock.get("strategy_checks"):
                 checks = stock.get("strategy_checks") or {}
@@ -391,6 +540,10 @@ def recommended_stocks_page():
 
     if 'rec_entry_check' not in st.session_state:
         st.session_state.rec_entry_check = None
+    if 'rec_outcome_review' not in st.session_state:
+        st.session_state.rec_outcome_review = None
+    if 'rec_history_review' not in st.session_state:
+        st.session_state.rec_history_review = None
     if 'rec_is_running' not in st.session_state:
         st.session_state.rec_is_running = False
     if 'rec_last_error' not in st.session_state:
@@ -417,7 +570,7 @@ def recommended_stocks_page():
             st.session_state.rec_data_loaded = True
             pass
 
-    col1, col2, col3 = st.columns([1, 1.2, 3])
+    col1, col2, col3, col4 = st.columns([1, 1.35, 1.05, 1.05])
     with col1:
         if st.button("刷新数据", type="secondary", disabled=st.session_state.rec_is_running):
             with status_loading("正在刷新智能推荐本地K线缓存，请稍候...", 20):
@@ -425,6 +578,8 @@ def recommended_stocks_page():
             st.session_state.rec_data_loaded = False
             st.session_state.rec_results = None
             st.session_state.rec_entry_check = None
+            st.session_state.rec_outcome_review = None
+            st.session_state.rec_history_review = None
             st.session_state.rec_last_error = None
             st.success(
                 f"本地K线缓存已刷新：成功 {cache_result.get('refreshed', 0)} / "
@@ -436,6 +591,18 @@ def recommended_stocks_page():
             "检查当前是否适合入场",
             type="secondary",
             disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
+        )
+    with col3:
+        outcome_review_clicked = st.button(
+            "回看计划表现",
+            type="secondary",
+            disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
+        )
+    with col4:
+        history_review_clicked = st.button(
+            "统计历史计划",
+            type="secondary",
+            disabled=st.session_state.rec_is_running,
         )
 
     generate_label = "生成 T+1 推荐计划"
@@ -453,6 +620,8 @@ def recommended_stocks_page():
         st.session_state.rec_results = None
         st.session_state.rec_data_loaded = False
         st.session_state.rec_entry_check = None
+        st.session_state.rec_outcome_review = None
+        st.session_state.rec_history_review = None
         st.session_state.rec_last_error = None
         st.session_state.rec_is_running = True
         st.session_state.rec_active_request_key = current_request_key
@@ -482,6 +651,14 @@ def recommended_stocks_page():
 
     if entry_check_clicked:
         st.session_state.rec_entry_check = service.check_entry_plan(st.session_state.rec_results)
+    if outcome_review_clicked:
+        st.session_state.rec_outcome_review = service.evaluate_t1_plan_outcomes(st.session_state.rec_results)
+    if history_review_clicked:
+        st.session_state.rec_history_review = service.evaluate_t1_plan_history(
+            strategy=strategy,
+            sector=sector,
+            limit=20,
+        )
 
     if st.session_state.rec_last_error:
         st.error(st.session_state.rec_last_error)
@@ -501,6 +678,9 @@ def recommended_stocks_page():
         _render_t1_plan_meta(st.session_state.rec_results)
         st.caption("已读取 T+1 推荐计划缓存；未重新扫描股票池。只有点击“生成 T+1 推荐计划”才会重新运行策略。")
         _render_entry_check(st.session_state.rec_entry_check)
+        _render_outcome_review(st.session_state.rec_outcome_review)
+        _render_history_review(st.session_state.rec_history_review)
+        _render_quality_diagnostics(st.session_state.rec_results.get("diagnostics"))
         display_recommendation_list(
             st.session_state.rec_results["recommended"],
             st.session_state.rec_results["title"],

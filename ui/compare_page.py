@@ -7,6 +7,7 @@ from technical_indicators import TechnicalIndicators
 from ui.cached_data import quote_service, resolve_cached_stock_input
 from ui.loading import make_progress_reporter
 from ui.analyze_page import _validate_symbol
+from quality_monitor import build_compare_scorecard
 
 
 def _u(text):
@@ -239,6 +240,28 @@ def _trend_metrics_dataframe(metrics):
     return pd.DataFrame(rows)
 
 
+def _render_compare_scorecard(metrics):
+    scorecard = build_compare_scorecard(metrics)
+    if not scorecard:
+        return
+    st.subheader("横向评分卡")
+    st.caption("评分只用于对比展示，不参与智能推荐选股，也不改变任何策略结果。")
+    st.dataframe(
+        pd.DataFrame([
+            {
+                _u(r"\u4ee3\u7801"): item["symbol"],
+                _u(r"\u540d\u79f0"): item["name"],
+                "对比分": item["compare_score"],
+                "MA状态": item["ma_status"],
+                "要点": "；".join(item.get("notes") or []),
+            }
+            for item in scorecard
+        ]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
 def resolve_compare_inputs(raw_inputs, market, limit=5):
     """Resolve compare inputs into stock codes and display names."""
     resolved = []
@@ -399,6 +422,7 @@ def _render_compare_result(result):
         st.subheader("价格走势对比")
         if trend_metrics:
             _render_insight_cards(trend_metrics)
+            _render_compare_scorecard(trend_metrics)
             st.markdown(
                 _u(r"\u4e0b\u8868\u628a\u300c\u6da8\u5f97\u591a\u300d\u300c\u56de\u64a4\u5c0f\u300d\u300c\u6ce2\u52a8\u4f4e\u300d\u300c\u8d8b\u52bf\u5f3a\u300d\u62c6\u5f00\u770b\uff0c\u907f\u514d\u53ea\u770b\u4e00\u6761\u4ef7\u683c\u7ebf\u5c31\u4e0b\u7ed3\u8bba\u3002")
             )

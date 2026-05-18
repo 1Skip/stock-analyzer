@@ -26,6 +26,24 @@ class TestDailyReportService:
                 "rating": "偏多",
                 "latest_price": 1354.55,
             }],
+            "t1_plan_history": {
+                "summary": {
+                    "plans": 2,
+                    "total_items": 10,
+                    "completed_items": 8,
+                    "avg_1d_return_pct": 1.25,
+                    "win_rate_1d_pct": 62.5,
+                    "by_strategy": [{
+                        "strategy": "多因子稳健型",
+                        "sector": "全部",
+                        "plans": 2,
+                        "total": 10,
+                        "completed": 8,
+                        "avg_1d_return_pct": 1.25,
+                        "win_rate_1d_pct": 62.5,
+                    }],
+                }
+            },
             "extended_info": [{
                 "symbol": "000001",
                 "name": "平安银行",
@@ -76,6 +94,9 @@ class TestDailyReportService:
         assert "## 大盘温度" in content
         assert "## 自选股决策仪表盘" in content
         assert "## 推荐池" in content
+        assert "## T+1 计划回看" in content
+        assert "历史计划：2 份" in content
+        assert "多因子稳健型 / 全部" in content
         assert "## 研报 / 风险 / 板块归因" in content
         assert "## 操作检查清单" in content
         assert "测试新闻" in content

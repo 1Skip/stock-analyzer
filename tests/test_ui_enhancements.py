@@ -142,6 +142,8 @@ def test_recommend_page_shows_multi_factor_diagnostics():
     assert "def _render_multi_factor_diagnostics" in source
     assert "筛选诊断" in source
     assert "主要卡点" in source
+    assert "核心因子命中" in source
+    assert "深度数据可用性" in source
     assert 'st.session_state.rec_results.get("diagnostics")' in source
 
 
@@ -157,7 +159,8 @@ def test_recommend_page_uses_real_stage_progress():
     assert "市值通过" in source
     assert "轻筛通过" in source
     assert "深度检查" in source
-    assert "最终命中" in source
+    assert "当前命中" in source
+    assert '"result_count" not in metrics' in source
     assert "已深查" in source
     assert "progress_callback=progress_callback" in source
     assert 'with status_loading(f"\\u6b63\\u5728\\u5206\\u6790' not in source
@@ -264,6 +267,27 @@ def test_recommend_page_shows_t1_cache_and_elapsed_status():
     assert "缓存状态" in source
     assert "生成耗时" in source
     assert "预热状态" in source
+
+
+def test_recommend_page_groups_plan_review_buttons():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    block = source.split('st.button("回看计划表现"', 1)[0].split("col1, col2, col3, col4", 1)[-1]
+    assert "with col3:" in block
+    history_block = source.split('st.button("统计历史计划"', 1)[0].split('st.button("回看计划表现"', 1)[-1]
+    assert "with col4:" in history_block
+
+
+def test_report_history_page_groups_action_buttons():
+    from pathlib import Path
+
+    source = Path("ui/report_history_page.py").read_text(encoding="utf-8")
+
+    assert "col_generate, col_refresh, _ = st.columns([1.1, 1, 4])" in source
+    refresh_block = source.split('st.button("刷新列表"', 1)[-1]
+    assert "use_container_width=True" in refresh_block.split("):", 1)[0]
 
 
 def test_stock_search_tolerates_common_near_match():

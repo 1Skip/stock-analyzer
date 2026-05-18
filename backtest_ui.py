@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 from ui.loading import status_loading
 from ui.cached_data import quote_service, resolve_cached_stock_input
+from quality_monitor import build_backtest_risk_summary
 
 from config import (
     BACKTEST_EVAL_WINDOW, BACKTEST_STOP_LOSS, BACKTEST_TAKE_PROFIT,
@@ -154,6 +155,31 @@ def _render_backtest_result(result):
         delta_color="normal",
     )
 
+    risk_summary = build_backtest_risk_summary(results)
+    with st.expander("收益分布 / 失败样本", expanded=False):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("最优模拟收益", _fmt_pct(risk_summary.get("best_simulated_return_pct")))
+        c2.metric("最差模拟收益", _fmt_pct(risk_summary.get("worst_simulated_return_pct")))
+        c3.metric("亏损样本", risk_summary.get("loss_count", 0))
+        c4.metric("完成样本", risk_summary.get("completed", 0))
+        worst_cases = risk_summary.get("worst_cases") or []
+        if worst_cases:
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "日期": item.get("analysis_date"),
+                        "信号": item.get("signal"),
+                        "模拟收益(%)": item.get("simulated_return_pct"),
+                        "结果": item.get("outcome"),
+                        "触发": item.get("first_hit"),
+                        "出场原因": item.get("simulated_exit_reason"),
+                    }
+                    for item in worst_cases
+                ]),
+                use_container_width=True,
+                hide_index=True,
+            )
+
     st.subheader("信号分类统计")
     breakdown = summary.get("signal_breakdown", {})
     if breakdown:
@@ -190,6 +216,10 @@ def _render_backtest_result(result):
         from backtest_adapter import BacktestAdapter
         path = BacktestAdapter().save_results(symbol, market, output)
         st.success(f"已保存: {path}")
+
+
+def _fmt_pct(value):
+    return f"{value:+.2f}%" if isinstance(value, (int, float)) else "N/A"
 
 
 def backtest_page():

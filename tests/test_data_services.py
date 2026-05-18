@@ -692,7 +692,12 @@ class TestStockInfoService:
         class FakeProvider:
             def get_stock_extended_info(self, symbol, include_deep_layers=True):
                 calls["count"] += 1
-                return {"symbol": symbol, "financial": {"period": "20260331"}, "fund_flow": {}, "news": []}
+                return {
+                    "symbol": symbol,
+                    "financial": {"period": "20260331"},
+                    "fund_flow": {"main_net_inflow": 30_000_000},
+                    "news": [],
+                }
 
         cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)
         service = StockInfoService(provider=FakeProvider(), cache=cache)
@@ -736,6 +741,66 @@ class TestStockInfoService:
         assert second["risk_events"]["announcements"] == []
         assert calls["count"] == 1
 
+    def test_info_service_ignores_empty_fund_flow_split_cache(self, tmp_path):
+        calls = {"count": 0}
+
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol, include_deep_layers=True):
+                calls["count"] += 1
+                return {
+                    "symbol": symbol,
+                    "financial": {"metrics": {"归母净利润": 1}},
+                    "fund_flow": {"main_net_inflow": 30_000_000},
+                    "news": [],
+                    "market_news": [],
+                    "research": {"reports": []},
+                    "dividend": {},
+                    "risk_events": {"announcements": []},
+                    "sector_attribution": {"industry": {}, "concepts": []},
+                }
+
+        cache = JsonFileCache("stock_info_empty_fund_bundle", ttl_seconds=0, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+        service.financial_cache = JsonFileCache("stock_financial_empty_fund", ttl_seconds=3600, cache_dir=tmp_path)
+        service.fund_flow_cache = JsonFileCache("stock_fund_flow_empty_fund", ttl_seconds=3600, cache_dir=tmp_path)
+        service.research_cache = JsonFileCache("stock_research_empty_fund", ttl_seconds=3600, cache_dir=tmp_path)
+        service.risk_cache = JsonFileCache("stock_risk_empty_fund", ttl_seconds=3600, cache_dir=tmp_path)
+
+        service.financial_cache.set("CN:000001:financial:v1", {"metrics": {"归母净利润": 1}})
+        service.fund_flow_cache.set("CN:000001:fund_flow:v1", {})
+
+        result = service.get_stock_extended_info("000001", "CN")
+
+        assert result["fund_flow"]["main_net_inflow"] == 30_000_000
+        assert calls["count"] == 1
+
+    def test_info_service_does_not_cache_empty_fund_flow_layer(self, tmp_path):
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol, include_deep_layers=True):
+                return {
+                    "symbol": symbol,
+                    "financial": {"metrics": {"归母净利润": 1}},
+                    "fund_flow": {},
+                    "news": [],
+                    "market_news": [],
+                    "research": {"reports": []},
+                    "dividend": {},
+                    "risk_events": {"announcements": []},
+                    "sector_attribution": {"industry": {}, "concepts": []},
+                }
+
+        cache = JsonFileCache("stock_info_empty_layer_bundle", ttl_seconds=3600, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+        service.financial_cache = JsonFileCache("stock_financial_empty_layer", ttl_seconds=3600, cache_dir=tmp_path)
+        service.fund_flow_cache = JsonFileCache("stock_fund_flow_empty_layer", ttl_seconds=3600, cache_dir=tmp_path)
+
+        result = service.get_stock_extended_info("000001", "CN")
+
+        assert result["fund_flow"] == {}
+        assert service.financial_cache.get("CN:000001:financial:v1")["metrics"]["归母净利润"] == 1
+        assert service.fund_flow_cache.get("CN:000001:fund_flow:v1") is None
+        assert cache.get("CN:000001:extended:v5:full") is None
+
     def test_extended_info_uses_v3_cache_key(self, tmp_path):
         class FakeProvider:
             def get_stock_extended_info(self, symbol, include_deep_layers=True):
@@ -750,12 +815,18 @@ class TestStockInfoService:
         assert cache.get("CN:000001:extended") is None
         assert cache.get("CN:000001:extended:v2") is None
         assert cache.get("CN:000001:extended:v3:full") is None
-        assert cache.get("CN:000001:extended:v4:full") == result
+        assert cache.get("CN:000001:extended:v4:full") is None
+        assert cache.get("CN:000001:extended:v5:full") is None
 
     def test_extended_info_core_cache_key(self, tmp_path):
         class FakeProvider:
             def get_stock_extended_info(self, symbol, include_deep_layers=True):
-                return {"symbol": symbol, "mode": "full" if include_deep_layers else "core"}
+                return {
+                    "symbol": symbol,
+                    "mode": "full" if include_deep_layers else "core",
+                    "financial": {"metrics": {"归母净利润": 1}},
+                    "fund_flow": {"main_net_inflow": 30_000_000},
+                }
 
         cache = JsonFileCache("stock_info_test_v3_core", ttl_seconds=3600, cache_dir=tmp_path)
         service = StockInfoService(provider=FakeProvider(), cache=cache)
@@ -763,7 +834,8 @@ class TestStockInfoService:
         result = service.get_stock_extended_info("000001", "CN", include_deep_layers=False)
 
         assert result["mode"] == "core"
-        assert cache.get("CN:000001:extended:v4:core") == result
+        assert cache.get("CN:000001:extended:v4:core") is None
+        assert cache.get("CN:000001:extended:v5:core") == result
 
     def test_info_service_ignores_non_cn_market(self, tmp_path):
         cache = JsonFileCache("stock_info_test", ttl_seconds=3600, cache_dir=tmp_path)

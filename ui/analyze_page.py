@@ -26,6 +26,7 @@ from ui.ai_analysis_ui import display_ai_analysis_card
 from ui.decision_dashboard import render_decision_dashboard
 from ui.loading import make_progress_reporter
 from ui.stock_search import suggest_stock_inputs
+from quality_monitor import build_stock_data_quality_summary
 
 
 def _validate_symbol(sym, mkt):
@@ -287,6 +288,25 @@ def _render_inline_note(message):
         f'<div class="analysis-inline-note">{html.escape(message)}</div>',
         unsafe_allow_html=True,
     )
+
+
+def _render_data_quality_summary(data, quote, profile, extended_info):
+    summary = build_stock_data_quality_summary(data, quote, profile, extended_info)
+    issues = summary.get("issues") or []
+    warnings = summary.get("warnings") or []
+    if not issues and not warnings:
+        st.caption(f"数据完整性：主要行情、指标和扩展信息已就绪（K线 {summary.get('data_rows', 0)} 条）。")
+        return
+    with st.expander("数据质量 / 风险提示", expanded=bool(issues)):
+        col_rows, col_status = st.columns(2)
+        col_rows.metric("K线数量", summary.get("data_rows", 0))
+        col_status.metric("状态", {"risk": "需关注", "partial": "部分缺失", "ok": "完整"}.get(summary.get("status"), "--"))
+        if issues:
+            st.markdown("**风险提示**")
+            st.markdown("\n".join(f"- {html.escape(str(item))}" for item in issues))
+        if warnings:
+            st.markdown("**数据缺口**")
+            st.markdown("\n".join(f"- {html.escape(str(item))}" for item in warnings[:8]))
 
 
 def _render_chart_header(title, values=None):
@@ -641,6 +661,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     if market == "CN":
         benchmark_data = get_cached_benchmark_data("000300", period)
     render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)
+    _render_data_quality_summary(data, quote, profile, extended_info)
 
     _render_stock_profile(profile)
     if market == "CN":

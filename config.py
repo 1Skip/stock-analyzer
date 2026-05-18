@@ -93,7 +93,7 @@ SECTOR_PUSH_LONG_TOP_N = int(os.getenv("SECTOR_PUSH_LONG_TOP_N", "1"))
 # 每日报告配置
 DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
 DAILY_REPORT_PUSH_ENABLED = os.getenv("DAILY_REPORT_PUSH_ENABLED", "true").lower() == "true"
-DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "true").lower() == "true"
+DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false").lower() == "true"
 DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
 
 # 智能推荐 Alpha 二次排序。默认先展示分数和理由，不改变原策略排序。

@@ -212,6 +212,14 @@ def _safe_extended_info_failure(symbol, reason):
     }
 
 
+def _has_usable_extended_layer(value):
+    if not isinstance(value, dict) or not value:
+        return False
+    if value.get("status") in {"source_failed", "source_empty"}:
+        return False
+    return True
+
+
 def _sanitize_for_json(value):
     if isinstance(value, dict):
         return {str(k): _sanitize_for_json(v) for k, v in value.items()}
@@ -2013,6 +2021,15 @@ class StockRecommender:
             "主力净流入趋势": f"{fund_trend_value / 10000:.0f} 万" if fund_trend_value is not None else "数据缺失/接口失败",
             "15日涨停": limit_event_note,
         }
+        self._record_multi_factor_core_diagnostics(
+            diagnostics,
+            core_checks,
+            {
+                "financial": financial,
+                "fund_flow": fund_flow,
+                "risk_events": risk_events,
+            },
+        )
         if not all(hard_filters.values()):
             for reason, passed in hard_filters.items():
                 if not passed:
@@ -2083,6 +2100,34 @@ class StockRecommender:
             return
         failures = diagnostics.setdefault("deep_failures", {})
         failures[reason] = failures.get(reason, 0) + 1
+
+    def _record_multi_factor_core_diagnostics(self, diagnostics, core_checks, layers):
+        if not isinstance(diagnostics, dict):
+            return
+        summary = diagnostics.setdefault("core_factor_summary", {})
+        for name, passed in (core_checks or {}).items():
+            item = summary.setdefault(name, {"passed": 0, "failed": 0})
+            key = "passed" if passed else "failed"
+            item[key] = item.get(key, 0) + 1
+
+        data_quality = diagnostics.setdefault("deep_data_quality", {})
+        for key, label in {
+            "financial": "财务数据",
+            "fund_flow": "资金流数据",
+            "risk_events": "风险事件数据",
+        }.items():
+            item = data_quality.setdefault(label, {"available": 0, "missing": 0, "source_failed": 0, "source_empty": 0})
+            layer = (layers or {}).get(key)
+            if _has_usable_extended_layer(layer):
+                item["available"] = item.get("available", 0) + 1
+                continue
+            status = layer.get("status") if isinstance(layer, dict) else None
+            if status == "source_failed":
+                item["source_failed"] = item.get("source_failed", 0) + 1
+            elif status == "source_empty":
+                item["source_empty"] = item.get("source_empty", 0) + 1
+            else:
+                item["missing"] = item.get("missing", 0) + 1
 
     def _run_strategy_pool(self, strategy_name, stocks, num_stocks, analyzer, progress_callback=None, progress_stage=None):
         results = []

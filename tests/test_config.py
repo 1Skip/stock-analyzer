@@ -67,9 +67,9 @@ class TestDefaultConstants:
         assert config.CACHE_TTL_STOCK_DATA > 0
         assert config.CACHE_TTL_INDICATORS > 0
 
-    def test_daily_report_recommendations_default_enabled(self):
+    def test_daily_report_recommendations_default_disabled(self):
         import config
-        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is True
+        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is False
 
     def test_t1_plan_auto_default_enabled(self):
         import config
@@ -154,10 +154,10 @@ class TestEnvVarOverride:
         importlib.reload(config)
 
     def test_daily_report_recommendations_env_override(self, monkeypatch):
-        monkeypatch.setenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false")
+        monkeypatch.setenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "true")
         import importlib, config
         importlib.reload(config)
-        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is False
+        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is True
         monkeypatch.delenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS")
         importlib.reload(config)
 

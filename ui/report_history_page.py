@@ -30,7 +30,7 @@ def report_history_page() -> None:
     st.caption("查看每日 Markdown 决策仪表盘，支持预览和下载。")
 
     reports = _list_reports()
-    col_generate, col_refresh = st.columns([1, 4])
+    col_generate, col_refresh, _ = st.columns([1.1, 1, 4])
     with col_generate:
         if st.button("生成今日日报", type="primary", use_container_width=True):
             with status_loading("\u6b63\u5728\u751f\u6210\u65e5\u62a5...", 20):
@@ -38,7 +38,7 @@ def report_history_page() -> None:
             st.success(f"已生成：{paths.get('dated')}")
             st.rerun()
     with col_refresh:
-        if st.button("刷新列表", use_container_width=False):
+        if st.button("刷新列表", use_container_width=True):
             st.rerun()
 
     reports = _list_reports()

@@ -6,6 +6,7 @@ import pandas as pd
 from config import CACHE_TTL_HOT_STOCKS
 from stock_recommendation import StockRecommender
 from ui.loading import make_progress_reporter
+from quality_monitor import build_hot_data_status
 
 
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
@@ -155,6 +156,7 @@ def hot_stocks_page():
         progress.update("整理展示数据", 92)
         st.session_state.hot_data_loaded = True
         st.session_state.hot_data = data
+        st.session_state.hot_data_status = build_hot_data_status(data)
         progress.complete("完成")
         loading_panel.empty()
     else:
@@ -163,6 +165,16 @@ def hot_stocks_page():
     if not data:
         st.info("点击“获取数据”刷新行业、概念与个股涨跌幅排行。")
         return
+
+    status = st.session_state.get("hot_data_status") or build_hot_data_status(data)
+    counts = status.get("counts") or {}
+    st.caption(
+        f"数据覆盖：共 {status.get('total_rows', 0)} 条；"
+        + "；".join(f"{key} {value}" for key, value in counts.items())
+        + f"；刷新检查 {status.get('checked_at', '--')}"
+    )
+    if status.get("missing"):
+        st.warning("部分榜单为空：" + "、".join(status.get("missing") or []))
 
     if market == "CN":
         sectors = data.get('sectors', [])

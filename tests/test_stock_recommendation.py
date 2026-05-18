@@ -1256,6 +1256,8 @@ class TestStrategyRecommendations:
 
         assert result is None
         assert any(reason.startswith("评分不足") for reason in diagnostics["deep_failures"])
+        assert diagnostics["core_factor_summary"]["主力净流入趋势≥3000万"]["failed"] == 1
+        assert diagnostics["deep_data_quality"]["资金流数据"]["missing"] == 1
 
     def test_multi_factor_requires_new_fund_and_activity_conditions(self, recommender, monkeypatch):
         dates = pd.date_range('2026-01-01', periods=40, freq='B')

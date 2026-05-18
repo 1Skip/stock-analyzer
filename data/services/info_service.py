@@ -17,6 +17,8 @@ from data.providers.akshare_info_provider import AkShareInfoProvider
 class StockInfoService:
     """财务摘要、资金流、新闻等扩展信息服务。"""
 
+    cache_schema_version = "v5"
+
     def __init__(self, provider: AkShareInfoProvider | None = None, cache: JsonFileCache | None = None):
         self.provider = provider or AkShareInfoProvider()
         self.cache = cache or JsonFileCache("stock_extended_info", CACHE_TTL_STOCK_EXTENDED_INFO)
@@ -38,7 +40,7 @@ class StockInfoService:
             return None
 
         layer_mode = "full" if include_deep_layers else "core"
-        cache_key = f"{market}:{symbol}:extended:v4:{layer_mode}"
+        cache_key = f"{market}:{symbol}:extended:{self.cache_schema_version}:{layer_mode}"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
@@ -50,7 +52,8 @@ class StockInfoService:
 
         payload = self.provider.get_stock_extended_info(symbol, include_deep_layers=include_deep_layers)
         self._set_layered_cached_info(symbol, market, payload, include_deep_layers)
-        self.cache.set(cache_key, payload)
+        if self._has_required_core_layers(payload):
+            self.cache.set(cache_key, payload)
         return payload
 
     def get_cached_stock_extended_info(
@@ -65,7 +68,7 @@ class StockInfoService:
             return None
 
         layer_mode = "full" if include_deep_layers else "core"
-        cache_key = f"{market}:{symbol}:extended:v4:{layer_mode}"
+        cache_key = f"{market}:{symbol}:extended:{self.cache_schema_version}:{layer_mode}"
         cached = self.cache.get(cache_key)
         if isinstance(cached, dict):
             return cached
@@ -75,7 +78,7 @@ class StockInfoService:
         base_key = f"{market}:{symbol}"
         financial = self.financial_cache.get(f"{base_key}:financial:v1")
         fund_flow = self.fund_flow_cache.get(f"{base_key}:fund_flow:v1")
-        if not isinstance(financial, dict) or not isinstance(fund_flow, dict):
+        if not self._is_usable_layer(financial) or not self._is_usable_layer(fund_flow):
             return None
 
         payload = {
@@ -118,9 +121,9 @@ class StockInfoService:
         if not isinstance(payload, dict):
             return
         base_key = f"{market}:{symbol}"
-        if isinstance(payload.get("financial"), dict):
+        if self._is_usable_layer(payload.get("financial")):
             self.financial_cache.set(f"{base_key}:financial:v1", payload.get("financial"))
-        if isinstance(payload.get("fund_flow"), dict):
+        if self._is_usable_layer(payload.get("fund_flow")):
             self.fund_flow_cache.set(f"{base_key}:fund_flow:v1", payload.get("fund_flow"))
         if isinstance(payload.get("news"), list):
             self.research_cache.set(f"{base_key}:news:v1", payload.get("news"))
@@ -133,3 +136,16 @@ class StockInfoService:
                 self.research_cache.set(f"{base_key}:{field}:v1", payload.get(field))
         if isinstance(payload.get("risk_events"), dict):
             self.risk_cache.set(f"{base_key}:risk_events:v1", payload.get("risk_events"))
+
+    @staticmethod
+    def _is_usable_layer(value: object) -> bool:
+        if not isinstance(value, dict) or not value:
+            return False
+        if value.get("status") in {"source_failed", "source_empty"}:
+            return False
+        return True
+
+    def _has_required_core_layers(self, payload: dict | None) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        return self._is_usable_layer(payload.get("financial")) and self._is_usable_layer(payload.get("fund_flow"))

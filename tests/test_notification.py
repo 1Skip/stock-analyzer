@@ -367,6 +367,33 @@ class TestBuildSectorReport:
         assert "数据说明" in body
         assert "Alpha 82/100" in body
 
+    def test_sector_recommendations_include_explanation_lines(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        data["算力租赁"]["多因子稳健型"] = [{
+            'symbol': '002001',
+            'name': '测试解释',
+            'latest_price': 10.0,
+            'change_pct': 1.0,
+            'strategy': '多因子稳健型',
+            'score': 88,
+            'rating': '多因子共振',
+            'explanation': {
+                'why_selected': ['策略原始分强', '均线多头排列'],
+                'risk_flags': ['短线追高风险'],
+                'entry_conditions': ['回踩不破MA20'],
+                'invalid_conditions': ['跌破关键支撑'],
+                'missing_data': ['profile'],
+            },
+        }]
+
+        _, body = build_sector_report(data)
+
+        assert "入选依据" in body
+        assert "入场条件" in body
+        assert "失效条件" in body
+        assert "数据缺口" in body
+
     def test_positive_change_shows_up_arrow(self):
         from notification import build_sector_report
         data = self._make_sector_data()
