@@ -157,6 +157,8 @@ def test_recommend_page_uses_real_stage_progress():
     assert "市值通过" in source
     assert "轻筛通过" in source
     assert "深度检查" in source
+    assert "最终命中" in source
+    assert "已深查" in source
     assert "progress_callback=progress_callback" in source
     assert 'with status_loading(f"\\u6b63\\u5728\\u5206\\u6790' not in source
 
@@ -218,6 +220,29 @@ def test_recommend_page_isolates_running_state_and_request_key():
     assert "其他计划生成中" in source
     assert "其他 T+1 计划正在生成" in source
     assert "完成前不会展示旧推荐或旧诊断" in source
+
+
+def test_recommend_page_restores_progress_for_running_request():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "rec_progress_snapshots" in source
+    assert "def _save_progress_snapshot" in source
+    assert "def _render_saved_progress" in source
+    assert "def _clear_progress_snapshot" in source
+    assert "_make_progress_callback(progress_placeholder, strategy, sector, current_request_key)" in source
+    assert "_render_saved_progress(progress_placeholder, current_request_key, strategy, sector)" in source
+
+
+def test_recommend_page_displays_alpha_ranker_fields():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "Alpha评分" in source
+    assert "rank_reason" in source
+    assert "rank_penalty" in source
 
 
 def test_recommend_page_shows_t1_cache_hit_without_rescanning():
@@ -417,7 +442,7 @@ def test_decision_snapshot_exposes_stage2_dashboard_fields():
     assert snapshot["position"]
     assert snapshot["entry_hint"]
     assert snapshot["key_levels"]["price"] == 12.34
-    assert len(snapshot["agents"]) == 5
+    assert len(snapshot["agents"]) == 6
     for agent in snapshot["agents"]:
         assert {"name", "weight", "raw_score", "score_delta", "confidence", "evidence", "warnings"} <= set(agent)
 
@@ -733,6 +758,7 @@ def test_decision_dashboard_trade_plan_css_classes_exist():
         "trade-plan-hero",
         "trade-plan-grid",
         "trade-plan-row",
+        "risk-control-split",
         "defense-dashboard-layout",
         "defense-top-row",
         "defense-overall",
@@ -744,23 +770,26 @@ def test_decision_dashboard_trade_plan_css_classes_exist():
         "source_failed",
         "capital-trace-table",
         "风控防御看板",
+        "执行风控 Agent",
     ]:
-        if class_name.startswith("风控"):
+        if class_name.startswith("风控") or class_name.startswith("执行"):
             assert class_name in Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
         else:
             assert class_name in CUSTOM_CSS
 
 
-def test_trade_defense_layout_keeps_evidence_cards_in_left_column():
+def test_trade_defense_layout_groups_plan_control_and_evidence():
     from pathlib import Path
 
     source = Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
     section = source.split('st.markdown("#### 交易计划与风控防御")', 1)[1].split('with st.expander("A股决策委员会', 1)[0]
 
-    assert "col_plan, col_defense = st.columns([0.9, 1.7])" in section
-    assert section.index('with col_plan:') < section.index('"看多依据"') < section.index('with col_defense:')
-    assert section.index('"看空因素"') < section.index('with col_defense:')
-    assert section.index('"风险警报"') < section.index('with col_defense:')
+    assert "col_plan, col_control = st.columns([1, 1])" in section
+    assert "col_bull, col_bear, col_risk = st.columns(3)" in section
+    assert section.index("_render_trade_plan") < section.index("_render_risk_control")
+    assert section.index("_render_risk_control") < section.index("_render_defense_dashboard")
+    assert section.index("_render_defense_dashboard") < section.index('"看多依据"')
+    assert section.index('"看多依据"') < section.index('"看空因素"') < section.index('"风险警报"')
 
 
 def test_decision_dashboard_has_no_alphaseeker_name():

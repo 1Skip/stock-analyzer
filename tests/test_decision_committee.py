@@ -3,7 +3,7 @@ import pandas as pd
 from decision_committee import build_a_share_decision, build_watchlist_decision
 
 
-def test_a_share_decision_builds_five_agent_views():
+def test_a_share_decision_builds_six_agent_views():
     data = pd.DataFrame([{
         "close": 10.5,
         "boll_upper": 12.0,
@@ -49,16 +49,22 @@ def test_a_share_decision_builds_five_agent_views():
     assert result["action"] in ("积极关注", "轻仓试探")
     assert result["position"] in ("2-3成", "1-2成")
     assert result["key_levels"]["support"] == 8.0
-    assert len(result["agents"]) == 5
+    assert len(result["agents"]) == 6
     assert [agent["name"] for agent in result["agents"]] == [
         "技术分析 Agent",
         "资金情绪 Agent",
         "基本面 Agent",
         "题材板块 Agent",
         "风险事件 Agent",
+        "执行风控 Agent",
     ]
     assert all("weight" in agent and "confidence" in agent and "raw_score" in agent for agent in result["agents"])
     assert sum(agent["weight"] for agent in result["agents"]) == 100
+    assert result["agents"][-1]["weight"] == 0
+    assert result["agents"][-1]["score_delta"] == 0
+    assert result["risk_control"]["agent"] == "执行风控 Agent"
+    assert result["risk_control"]["hard_block"] is False
+    assert result["risk_control"]["max_position"] in ("2-3成", "1-2成")
     assert any("PE" in item for item in result["agents"][2]["evidence"])
     assert result["bullish_points"]
     assert result["catalysts"]
@@ -104,4 +110,37 @@ def test_watchlist_decision_penalizes_risk_events():
 
     assert result["risk_level"] == "高"
     assert result["action"] == "回避/降仓"
+    assert result["risk_control"]["max_position"] == "0-1成"
     assert any("风险公告" in risk or "限售解禁" in risk for risk in result["risk_alerts"])
+
+
+def test_risk_control_agent_hard_blocks_major_risk_announcement():
+    data = pd.DataFrame([{
+        "close": 10.0,
+        "boll_upper": 12.0,
+        "boll_mid": 10.0,
+        "boll_lower": 8.0,
+        "ma20": 9.8,
+        "ma60": 9.2,
+    }])
+    extended = {
+        "risk_events": {
+            "announcements": [{"title": "关于重大诉讼及监管处罚的公告", "type": "临时公告"}],
+        }
+    }
+
+    result = build_a_share_decision(
+        data,
+        {"recommendation": "偏多信号", "macd": "金叉"},
+        {"price": 10.2, "change": 0.5},
+        extended,
+        stock_name="测试股",
+    )
+
+    control = result["risk_control"]
+    assert control["hard_block"] is True
+    assert control["final_action"] == "禁止新增/降仓回避"
+    assert control["max_position"] == "0-1成"
+    assert any("硬拦截" in item for item in control["basis"])
+    assert result["agents"][-1]["name"] == "执行风控 Agent"
+    assert result["agents"][-1]["score_delta"] == 0

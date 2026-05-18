@@ -90,6 +90,7 @@ class TestDailyReportService:
         assert "关键价位" in content
         assert "催化因素" in content
         assert "交易计划卡片" in content
+        assert "执行风控 Agent" in content
         assert "风控防御看板" in content
         assert "资金博弈溯源" in content
 

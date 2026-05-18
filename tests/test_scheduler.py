@@ -41,14 +41,15 @@ class TestSchedulerImport:
 
 class TestRunScheduledAnalysis:
 
-    def test_t1_plan_preheat_calls_service_without_realtime_selection(self, monkeypatch):
-        """T+1 预生成只调用推荐服务生成计划，不执行入场实时检查。"""
+    def test_t1_plan_preheat_calls_all_configured_strategies_without_realtime_selection(self, monkeypatch):
+        """T+1 预生成会调用所有配置策略，不执行入场实时检查。"""
         fake_service = MagicMock()
-        fake_service.run_t1_plan.return_value = {
+        fake_service.run_t1_plan.side_effect = lambda strategy, *_args, **_kwargs: {
+            "strategy": strategy,
             "recommended": [{"symbol": "002001"}],
             "generation_metrics": {"elapsed_seconds": 1.2},
         }
-        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGY", "多因子稳健型")
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["多因子稳健型", "激进突破型"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTOR", "全部")
         monkeypatch.setattr("scheduler.T1_PLAN_NUM_STOCKS", 5)
         monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_KLINE", True)
@@ -56,17 +57,20 @@ class TestRunScheduledAnalysis:
         monkeypatch.setattr("recommendation_service.RecommendationService", lambda: fake_service)
 
         from scheduler import run_t1_plan_preheat
-        plan = run_t1_plan_preheat()
+        plans = run_t1_plan_preheat()
 
-        assert plan["recommended"][0]["symbol"] == "002001"
-        fake_service.run_t1_plan.assert_called_once_with(
-            "多因子稳健型",
-            "全部",
-            5,
-            trigger="scheduler",
-            preheat_kline=True,
-            preheat_extended_info=True,
-        )
+        assert plans["多因子稳健型"]["recommended"][0]["symbol"] == "002001"
+        assert plans["激进突破型"]["recommended"][0]["symbol"] == "002001"
+        assert fake_service.run_t1_plan.call_count == 2
+        called_strategies = [call.args[0] for call in fake_service.run_t1_plan.call_args_list]
+        assert called_strategies == ["多因子稳健型", "激进突破型"]
+        for call in fake_service.run_t1_plan.call_args_list:
+            assert call.args[1:3] == ("全部", 5)
+            assert call.kwargs == {
+                "trigger": "scheduler",
+                "preheat_kline": True,
+                "preheat_extended_info": True,
+            }
         fake_service.check_entry_plan.assert_not_called()
 
     def test_no_notify_channels_skips_push(self, sector_data):
@@ -239,6 +243,7 @@ class TestStartScheduler:
         """验证 schedule.every().day.at() 被正确调用"""
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
              patch("scheduler.SCHEDULE_TIME", "15:30"), \
+             patch("scheduler.T1_PLAN_AUTO_ENABLED", False), \
              patch("scheduler.schedule") as mock_schedule, \
              patch("scheduler.signal.signal"), \
              patch("scheduler.time.sleep", side_effect=StopIteration):
@@ -250,11 +255,10 @@ class TestStartScheduler:
             mock_schedule.every.return_value.day.at.assert_called_with("15:30")
 
 
-    def test_t1_preheat_schedule_setup_when_enabled(self):
-        """开启 T1_PLAN_AUTO_ENABLED 时额外注册 T+1 预生成任务。"""
+    def test_t1_preheat_schedule_setup_enabled_by_default(self):
+        """默认开启 T1_PLAN_AUTO_ENABLED 时额外注册 T+1 预生成任务。"""
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
              patch("scheduler.SCHEDULE_TIME", "15:30"), \
-             patch("scheduler.T1_PLAN_AUTO_ENABLED", True), \
              patch("scheduler.T1_PLAN_SCHEDULE_TIME", "15:45"), \
              patch("scheduler.schedule") as mock_schedule, \
              patch("scheduler.signal.signal"), \

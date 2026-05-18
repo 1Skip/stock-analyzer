@@ -28,6 +28,7 @@ def build_decision_card_markdown(
     state = defense.get("signal_state") or {}
     metrics = {item.get("name"): item for item in defense.get("core_metrics", [])}
     capital_rows = defense.get("capital_trace", [])
+    risk_control = decision.get("risk_control") or {}
 
     lines = [
         "- **交易计划卡片**："
@@ -43,6 +44,21 @@ def build_decision_card_markdown(
         f"{_text(defense.get('conclusion'))}；"
         f"{_text(state.get('reason'))}。",
     ]
+
+    if risk_control:
+        lines.append(
+            "- **执行风控 Agent**："
+            f"动作 **{_text(risk_control.get('final_action'))}**；"
+            f"仓位上限 **{_text(risk_control.get('max_position'))}**；"
+            f"硬拦截 {'已触发' if risk_control.get('hard_block') else '未触发'}；"
+            f"止损线 {_level(risk_control.get('stop_loss'))}。"
+        )
+        if risk_control.get("reduce_triggers"):
+            triggers = "；".join(str(item) for item in risk_control["reduce_triggers"][:2 if compact else 4])
+            lines.append(f"  - 风控触发：{triggers}")
+        if risk_control.get("basis"):
+            basis = "；".join(str(item) for item in risk_control["basis"][:2 if compact else 4])
+            lines.append(f"  - 风控依据：{basis}")
 
     if state.get("triggers"):
         triggers = "；".join(str(item) for item in state["triggers"][:2 if compact else 4])

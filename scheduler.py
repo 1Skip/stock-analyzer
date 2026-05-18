@@ -15,7 +15,7 @@ from config import (
     SECTOR_PUSH_ENABLED, DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
     DAILY_REPORT_INCLUDE_RECOMMENDATIONS, DAILY_REPORT_DIR,
     SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N,
-    T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGY,
+    T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGIES,
     T1_PLAN_SECTOR, T1_PLAN_NUM_STOCKS, T1_PLAN_PREHEAT_KLINE,
     T1_PLAN_PREHEAT_EXTENDED_INFO,
 )
@@ -60,30 +60,38 @@ def _generate_daily_report():
 def run_t1_plan_preheat():
     """自动生成 T+1 推荐计划；只调用既有策略，不改变选股条件。"""
     logger.info(
-        "T+1 推荐计划预生成开始：strategy=%s sector=%s num=%s",
-        T1_PLAN_STRATEGY,
+        "T+1 推荐计划预生成开始：strategies=%s sector=%s num=%s",
+        ",".join(T1_PLAN_STRATEGIES),
         T1_PLAN_SECTOR,
         T1_PLAN_NUM_STOCKS,
     )
+    plans = {}
     try:
         from recommendation_service import RecommendationService
 
         service = RecommendationService()
-        plan = service.run_t1_plan(
-            T1_PLAN_STRATEGY,
-            T1_PLAN_SECTOR,
-            T1_PLAN_NUM_STOCKS,
-            trigger="scheduler",
-            preheat_kline=T1_PLAN_PREHEAT_KLINE,
-            preheat_extended_info=T1_PLAN_PREHEAT_EXTENDED_INFO,
-        )
-        metrics = plan.get("generation_metrics") or {}
-        logger.info(
-            "T+1 推荐计划预生成完成：%s 只，耗时 %.2fs",
-            len(plan.get("recommended") or []),
-            metrics.get("elapsed_seconds", 0),
-        )
-        return plan
+        for strategy in T1_PLAN_STRATEGIES:
+            try:
+                plan = service.run_t1_plan(
+                    strategy,
+                    T1_PLAN_SECTOR,
+                    T1_PLAN_NUM_STOCKS,
+                    trigger="scheduler",
+                    preheat_kline=T1_PLAN_PREHEAT_KLINE,
+                    preheat_extended_info=T1_PLAN_PREHEAT_EXTENDED_INFO,
+                )
+                plans[strategy] = plan
+                metrics = plan.get("generation_metrics") or {}
+                logger.info(
+                    "T+1 推荐计划预生成完成：strategy=%s，%s 只，耗时 %.2fs",
+                    strategy,
+                    len(plan.get("recommended") or []),
+                    metrics.get("elapsed_seconds", 0),
+                )
+            except Exception as exc:
+                plans[strategy] = None
+                logger.error("T+1 推荐计划预生成失败：strategy=%s error=%s", strategy, exc, exc_info=True)
+        return plans
     except Exception as e:
         logger.error(f"T+1 推荐计划预生成失败: {e}", exc_info=True)
         return None

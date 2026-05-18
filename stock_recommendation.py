@@ -2142,7 +2142,15 @@ class StockRecommender:
         stocks = self._get_strategy_popular_cn_stocks()
         stocks = self._shortlist_multi_factor_candidates(stocks, num_stocks, diagnostics=diagnostics, progress_callback=progress_callback)
         diagnostics["deep_checked"] = len(stocks)
-        _emit_progress(progress_callback, "深度检查", 85, deep_checked=len(stocks))
+        _emit_progress(
+            progress_callback,
+            "深度检查",
+            85,
+            deep_checked=len(stocks),
+            deep_total=len(stocks),
+            deep_done=0,
+            result_count=0,
+        )
         results = self._run_strategy_pool(
             '多因子稳健型',
             stocks,
@@ -2164,7 +2172,15 @@ class StockRecommender:
         stocks = self._get_strategy_sector_stocks(sector_name)
         stocks = self._shortlist_multi_factor_candidates(stocks, num_stocks, sector_name=sector_name, diagnostics=diagnostics, progress_callback=progress_callback)
         diagnostics["deep_checked"] = len(stocks)
-        _emit_progress(progress_callback, "深度检查", 85, deep_checked=len(stocks))
+        _emit_progress(
+            progress_callback,
+            "深度检查",
+            85,
+            deep_checked=len(stocks),
+            deep_total=len(stocks),
+            deep_done=0,
+            result_count=0,
+        )
         results = self._run_strategy_pool(
             '多因子稳健型',
             stocks,

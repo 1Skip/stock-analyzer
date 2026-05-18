@@ -753,6 +753,18 @@ CUSTOM_CSS = """
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
     }
+    .risk-control-split {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 2px;
+    }
+    .risk-control-split .decision-list {
+        padding: 9px 10px;
+        border-radius: 14px;
+        background: rgba(7, 18, 31, 0.58);
+        border: 1px solid rgba(85,199,255,0.10);
+    }
     .trade-plan-row {
         min-width: 0;
         display: flex;
@@ -1054,6 +1066,7 @@ CUSTOM_CSS = """
         align-items: flex-start;
         min-width: 0;
         word-break: break-word;
+        line-height: 1.38;
     }
     .decision-list-icon {
         display: inline-flex;
@@ -1270,6 +1283,14 @@ CUSTOM_CSS = """
             width: 96px;
             min-width: 96px;
             height: 96px;
+        }
+        .risk-control-split {
+            grid-template-columns: 1fr;
+            gap: 8px;
+        }
+        .defense-top-row,
+        .defense-bottom-grid {
+            grid-template-columns: 1fr;
         }
         .trade-plan-row {
             grid-template-columns: 1fr;

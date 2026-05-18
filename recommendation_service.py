@@ -7,9 +7,10 @@ from typing import Any, Callable
 import time
 import requests
 
-from config import CACHE_TTL_RECOMMENDATION_RESULTS
+from config import CACHE_TTL_RECOMMENDATION_RESULTS, RECOMMEND_RANKER_ENABLED, RECOMMEND_RANKER_SORT
 from data.cache import JsonFileCache
 from data.services.quote_service import QuoteDataService
+from recommend_ranker import enrich_recommendations_with_alpha
 from stock_recommendation import StockRecommender
 
 
@@ -349,6 +350,19 @@ class RecommendationService:
             title = "长线推荐"
 
         self._refresh_final_quotes(recommended)
+        if RECOMMEND_RANKER_ENABLED:
+            recommended = enrich_recommendations_with_alpha(
+                recommended,
+                strategy=strategy,
+                sector=sector,
+                sort=RECOMMEND_RANKER_SORT,
+            )
+            diagnostics = dict(diagnostics or {})
+            diagnostics["alpha_ranker"] = {
+                "enabled": True,
+                "sorted": RECOMMEND_RANKER_SORT,
+                "version": "alpha_v1",
+            }
         return {
             "recommended": recommended,
             "title": title,

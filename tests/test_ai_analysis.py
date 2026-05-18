@@ -594,13 +594,15 @@ class TestDebateAnalysis:
             "action": "轻仓试探",
             "position": "1-2成",
             "risk_level": "中",
+            "risk_control": {"agent": "执行风控 Agent", "max_position": "1-2成", "hard_block": False},
             "agents": [{"name": "技术分析 Agent", "stance": "看多", "score_delta": 8}],
         }
         snapshot = build_debate_snapshot(decision, stock={"price": 11.2}, extended_info={"fund_flow": {"main_net_inflow": 1}})
 
         assert snapshot["股票"]["代码"] == "000001"
         assert snapshot["系统化决策"]["评分"] == 72
-        assert snapshot["五层Agent"][0]["名称"] == "技术分析 Agent"
+        assert snapshot["系统化决策"]["执行风控"]["max_position"] == "1-2成"
+        assert snapshot["六Agent"][0]["名称"] == "技术分析 Agent"
         assert snapshot["扩展信息"]["资金流"]["main_net_inflow"] == 1
 
     def test_debate_analysis_skips_without_api_key(self):

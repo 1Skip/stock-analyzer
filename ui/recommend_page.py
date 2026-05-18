@@ -26,23 +26,59 @@ def _format_progress_message(strategy, sector, stage, metrics):
     return " ｜ ".join(parts)
 
 
-def _make_progress_callback(progress_placeholder, strategy, sector):
+def _render_progress_html(progress_placeholder, message, percent):
+    progress_placeholder.markdown(
+        f"""
+        <div class="status-loading-strip">
+          <div class="status-loading-main">
+            <span class="status-loading-dot"></span>
+            <div class="status-loading-copy">{html.escape(str(message or ""))}</div>
+            <span class="status-loading-percent">{percent}%</span>
+          </div>
+          <div class="status-loading-bar"><div style="width:{percent}%"></div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _save_progress_snapshot(request_key, strategy, sector, stage, percent, metrics, message):
+    if not request_key:
+        return
+    snapshots = st.session_state.setdefault("rec_progress_snapshots", {})
+    snapshots[request_key] = {
+        "strategy": strategy,
+        "sector": sector,
+        "stage": stage,
+        "percent": percent,
+        "metrics": metrics or {},
+        "message": message,
+    }
+
+
+def _render_saved_progress(progress_placeholder, request_key, strategy, sector):
+    snapshots = st.session_state.get("rec_progress_snapshots") or {}
+    snapshot = snapshots.get(request_key) or {}
+    percent = max(0, min(100, int(snapshot.get("percent") or 5)))
+    message = snapshot.get("message")
+    if not message:
+        message = _format_progress_message(strategy, sector, "\u8fd0\u884c\u4e2d", snapshot.get("metrics") or {})
+    _render_progress_html(progress_placeholder, message, percent)
+
+
+def _clear_progress_snapshot(request_key):
+    snapshots = st.session_state.get("rec_progress_snapshots")
+    if isinstance(snapshots, dict) and request_key in snapshots:
+        snapshots.pop(request_key, None)
+
+
+def _make_progress_callback(progress_placeholder, strategy, sector, request_key=None):
     def update(stage, percent, metrics=None):
         percent = max(0, min(100, int(percent or 0)))
-        message = _format_progress_message(strategy, sector, stage, metrics or {})
-        progress_placeholder.markdown(
-            f"""
-            <div class="status-loading-strip">
-              <div class="status-loading-main">
-                <span class="status-loading-dot"></span>
-                <div class="status-loading-copy">{html.escape(message)}</div>
-                <span class="status-loading-percent">{percent}%</span>
-              </div>
-              <div class="status-loading-bar"><div style="width:{percent}%"></div></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        metrics = metrics or {}
+        message = _format_progress_message(strategy, sector, stage, metrics)
+        _save_progress_snapshot(request_key, strategy, sector, stage, percent, metrics, message)
+        _render_progress_html(progress_placeholder, message, percent)
     return update
 
 
@@ -233,6 +269,17 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 <strong>范围:</strong> {html.escape(str(stock.get('board', '沪深主板')))}</p>
             </div>
             """, unsafe_allow_html=True)
+            if stock.get("alpha_score") is not None:
+                reasons = "；".join(str(item) for item in (stock.get("rank_reason") or [])[:3])
+                penalties = "；".join(str(item) for item in (stock.get("rank_penalty") or [])[:2])
+                alpha_line = (
+                    f"**Alpha评分**：{stock.get('alpha_score')}/100（{html.escape(str(stock.get('alpha_grade', '--')))}）"
+                )
+                if reasons:
+                    alpha_line += f"｜排序理由：{html.escape(reasons)}"
+                if penalties:
+                    alpha_line += f"｜扣分：{html.escape(penalties)}"
+                st.caption(alpha_line)
 
             if stock.get("strategy_checks"):
                 checks = stock.get("strategy_checks") or {}
@@ -350,6 +397,8 @@ def recommended_stocks_page():
         st.session_state.rec_last_error = None
     if 'rec_active_request_key' not in st.session_state:
         st.session_state.rec_active_request_key = None
+    if 'rec_progress_snapshots' not in st.session_state:
+        st.session_state.rec_progress_snapshots = {}
 
     service = RecommendationService()
     current_request_key = _request_key(strategy, sector, num_stocks)
@@ -408,7 +457,7 @@ def recommended_stocks_page():
         st.session_state.rec_is_running = True
         st.session_state.rec_active_request_key = current_request_key
         progress_placeholder = st.empty()
-        progress_callback = _make_progress_callback(progress_placeholder, strategy, sector)
+        progress_callback = _make_progress_callback(progress_placeholder, strategy, sector, current_request_key)
         progress_callback("启动", 5, {})
         try:
             result = _run_recommendation_task(
@@ -428,6 +477,7 @@ def recommended_stocks_page():
             st.session_state.rec_is_running = False
             if st.session_state.get("rec_active_request_key") == current_request_key:
                 st.session_state.rec_active_request_key = None
+            _clear_progress_snapshot(current_request_key)
             progress_placeholder.empty()
 
     if entry_check_clicked:
@@ -437,6 +487,8 @@ def recommended_stocks_page():
         st.error(st.session_state.rec_last_error)
 
     if is_current_request_running:
+        progress_placeholder = st.empty()
+        _render_saved_progress(progress_placeholder, current_request_key, strategy, sector)
         st.info("当前策略正在生成 T+1 推荐计划，完成前不会展示旧推荐或旧诊断。")
         return
     if is_other_request_running:

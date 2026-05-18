@@ -20,6 +20,7 @@ AGENT_WEIGHTS = {
     "基本面 Agent": 20,
     "题材板块 Agent": 15,
     "风险事件 Agent": 15,
+    "执行风控 Agent": 0,
 }
 
 
@@ -58,7 +59,7 @@ def build_a_share_decision(
     change_pct = _number(quote.get("change")) or _number(quote.get("change_pct"))
     recommendation = str(signals.get("recommendation") or signals.get("signal_summary") or "观望")
 
-    agents = [
+    research_agents = [
         _technical_agent(signals, indicators, latest, recommendation, price),
         _capital_agent(extended_info, quote, profile, change_pct),
         _fundamental_agent(extended_info, profile),
@@ -66,22 +67,39 @@ def build_a_share_decision(
         _risk_event_agent(extended_info, signals, recommendation, symbol, stock_name),
     ]
 
-    score = 50 + sum(agent.score_delta for agent in agents)
+    score = 50 + sum(agent.score_delta for agent in research_agents)
     if change_pct is not None:
         score += int(max(-5, min(5, change_pct)))
     score = max(0, min(100, score))
 
-    confidence = _overall_confidence(agents)
-    risk_level = _risk_level(score, agents)
+    confidence = _overall_confidence(research_agents)
+    risk_level = _risk_level(score, research_agents)
     action = _action_from_score(score, risk_level, confidence)
     position = _position_from_score(score, risk_level, confidence)
     entry_hint = get_entry_hint(price, indicators, recommendation) if price else "等待有效价格数据"
     key_levels = _key_levels(price, indicators, latest)
 
-    bullish_points = _collect_points(agents, positive=True)
-    bearish_points = _collect_points(agents, positive=False)
-    catalysts = _collect_catalysts(extended_info, agents)
-    risk_alerts = _collect_risk_alerts(agents)
+    risk_control = _build_risk_control(
+        data=data,
+        extended_info=extended_info,
+        profile=profile,
+        score=score,
+        confidence=confidence,
+        risk_level=risk_level,
+        action=action,
+        position=position,
+        key_levels=key_levels,
+        research_agents=research_agents,
+        symbol=symbol,
+        stock_name=stock_name,
+    )
+    control_agent = _risk_control_agent(risk_control)
+    agents = research_agents + [control_agent]
+
+    bullish_points = _collect_points(research_agents, positive=True)
+    bearish_points = _collect_points(research_agents, positive=False)
+    catalysts = _collect_catalysts(extended_info, research_agents)
+    risk_alerts = _collect_risk_alerts(research_agents)
 
     return {
         "symbol": symbol,
@@ -98,6 +116,7 @@ def build_a_share_decision(
         "bullish_points": bullish_points[:5],
         "bearish_points": bearish_points[:5],
         "risk_alerts": risk_alerts[:5],
+        "risk_control": risk_control,
         "catalysts": catalysts[:5],
         "agents": [asdict(agent) for agent in agents],
     }
@@ -378,6 +397,154 @@ def _risk_event_agent(
     return _agent(name, raw, evidence, warnings, "公告、解禁、龙虎榜与特殊状态风险综合判断")
 
 
+def _build_risk_control(
+    *,
+    data: pd.DataFrame | None,
+    extended_info: dict[str, Any],
+    profile: dict[str, Any],
+    score: int,
+    confidence: int,
+    risk_level: str,
+    action: str,
+    position: str,
+    key_levels: dict[str, Any],
+    research_agents: list[AgentView],
+    symbol: str,
+    stock_name: str,
+) -> dict[str, Any]:
+    price = _number(key_levels.get("price"))
+    support = _number(key_levels.get("support"))
+    mid = _number(key_levels.get("mid"))
+    resistance = _number(key_levels.get("resistance"))
+    ma20 = _number(key_levels.get("ma20"))
+    ma60 = _latest_value(data, "ma60")
+    buffer = _atr_buffer(data, price) or ((price or support or resistance or 0) * 0.02)
+
+    confirm_candidates = [value for value in (mid, ma20, ma60) if value is not None]
+    confirm_level = max(confirm_candidates) if confirm_candidates else None
+    stop_anchor = support if support is not None else ma60
+    stop_loss = stop_anchor - buffer if stop_anchor is not None else None
+    take_profit_1 = resistance
+    take_profit_2 = resistance + max(0, resistance - support) * 0.5 if resistance is not None and support is not None else None
+
+    risk_events = extended_info.get("risk_events") or {}
+    announcements = risk_events.get("announcements") or []
+    releases = risk_events.get("restricted_release") or risk_events.get("lockup_expiry") or []
+    display_text = f"{symbol}{stock_name}".upper()
+    hard_keywords = ("ST", "*ST", "退市", "处罚", "诉讼", "立案", "停牌", "监管", "重大亏损")
+    hard_hits = [
+        str(item.get("title", "") or item.get("type", ""))
+        for item in announcements
+        if _contains(f"{item.get('title', '')}{item.get('type', '')}", hard_keywords)
+    ]
+    hard_block = _contains(display_text, ("ST", "*ST", "退")) or bool(hard_hits)
+
+    max_position = position
+    final_action = action
+    basis = [f"系统风险等级{risk_level}", f"综合评分 {score}/100", f"规则初始仓位 {position}"]
+    reduce_triggers = []
+
+    if hard_block:
+        max_position = "0-1成"
+        final_action = "禁止新增/降仓回避"
+        basis.append("命中重大风险事件硬拦截")
+    elif risk_level == "高" or score < 40:
+        max_position = "0-1成"
+        final_action = "降仓回避"
+        basis.append("高风险或低评分优先控制回撤")
+    elif risk_level == "中":
+        max_position = _min_position(max_position, "1-2成")
+        final_action = "轻仓试探" if final_action in {"积极关注", "等待确认"} else final_action
+        basis.append("中风险限制仓位上限")
+    elif confidence < 55:
+        max_position = _min_position(max_position, "观察仓")
+        final_action = "等待数据确认"
+        basis.append("置信度不足，等待数据确认")
+
+    drawdown = _max_drawdown(data)
+    volatility_20d = _volatility(data, periods=20)
+    if drawdown is not None:
+        basis.append(f"样本最大回撤 {drawdown:.1f}%")
+        if drawdown < -25:
+            max_position = _min_position(max_position, "0-1成")
+            reduce_triggers.append("历史最大回撤超过25%，新增仓位需暂停")
+    if volatility_20d is not None:
+        basis.append(f"20日波动率 {volatility_20d:.1f}%")
+        if volatility_20d > 6:
+            max_position = _min_position(max_position, "1-2成")
+            reduce_triggers.append("20日波动率偏高，单次试错仓位下调")
+
+    fund_flow = extended_info.get("fund_flow") or {}
+    five_day_flow = _number(fund_flow.get("five_day_main_net_inflow"))
+    main_ratio = _number(fund_flow.get("main_net_inflow_ratio"))
+    if five_day_flow is not None and five_day_flow < 0:
+        max_position = _min_position(max_position, "1-2成")
+        basis.append("近5日主力资金净流出")
+        reduce_triggers.append("主力资金连续净流出，反弹不放量则降仓")
+    if main_ratio is not None and main_ratio < 0:
+        basis.append(f"主力净占比 {main_ratio:+.1f}%")
+
+    if releases:
+        max_position = _min_position(max_position, "1-2成")
+        reduce_triggers.append("限售解禁或供给冲击未消化前不追高")
+    if hard_hits:
+        reduce_triggers.append("重大风险公告未解除前禁止新增")
+
+    if support is not None:
+        reduce_triggers.append(f"跌破支撑位 {support:.2f} 且无法收回")
+    if ma20 is not None:
+        reduce_triggers.append(f"跌破 MA20 {ma20:.2f} 且量能放大")
+    if ma60 is not None:
+        reduce_triggers.append(f"跌破 MA60 {ma60:.2f} 则进入防御模式")
+    if not reduce_triggers:
+        reduce_triggers.append("等待真实K线、资金流或公告风险给出下一触发条件")
+
+    if stop_loss is not None:
+        basis.append("止损线按支撑/MA60扣除ATR缓冲推导")
+    if not hard_block and not hard_hits:
+        basis.append("暂无重大风险事件硬拦截")
+
+    position_changed = _position_rank(max_position) < _position_rank(position)
+    if position_changed and final_action == action:
+        final_action = "风控降仓/等待确认"
+
+    return {
+        "agent": "执行风控 Agent",
+        "level": risk_level,
+        "hard_block": hard_block,
+        "final_action": final_action,
+        "max_position": max_position,
+        "initial_position": position,
+        "position_changed": position_changed,
+        "stop_loss": stop_loss,
+        "confirm_level": confirm_level,
+        "take_profit_1": take_profit_1,
+        "take_profit_2": take_profit_2,
+        "reduce_triggers": reduce_triggers[:5],
+        "basis": basis[:6],
+        "data_basis": "真实行情/K线/指标/公告/资金流推导，未使用模拟或随机行情",
+    }
+
+
+def _risk_control_agent(risk_control: dict[str, Any]) -> AgentView:
+    raw = {"低": 35, "中": 0, "高": -55}.get(str(risk_control.get("level")), 0)
+    if risk_control.get("hard_block"):
+        raw = -90
+    if risk_control.get("position_changed"):
+        raw = min(raw, -30)
+    return AgentView(
+        name="执行风控 Agent",
+        weight=0,
+        raw_score=raw,
+        score_delta=0,
+        confidence=90 if risk_control.get("basis") else 55,
+        stance="防御" if raw < 0 else "中性",
+        summary="仓位上限、止损线、硬拦截与降仓触发的执行约束",
+        evidence=list(risk_control.get("basis") or [])[:6],
+        warnings=list(risk_control.get("reduce_triggers") or [])[:5],
+    )
+
+
 def _agent(name: str, raw_score: int, evidence: list[str], warnings: list[str], summary_prefix: str) -> AgentView:
     raw_score = max(-100, min(100, int(raw_score)))
     weight = AGENT_WEIGHTS[name]
@@ -426,6 +593,69 @@ def _number(value: Any) -> float | None:
         return float(value)
     except Exception:
         return None
+
+
+def _latest_value(data: pd.DataFrame | None, key: str) -> float | None:
+    try:
+        if data is None or data.empty or key not in data.columns:
+            return None
+        return _number(data.iloc[-1].get(key))
+    except Exception:
+        return None
+
+
+def _atr_buffer(data: pd.DataFrame | None, price: float | None) -> float | None:
+    try:
+        if data is None or data.empty or not {"high", "low", "close"} <= set(data.columns):
+            return price * 0.02 if price else None
+        recent = data.tail(14)
+        ranges = (recent["high"] - recent["low"]).dropna()
+        if ranges.empty:
+            return price * 0.02 if price else None
+        atr_like = float(ranges.mean())
+        if atr_like <= 0:
+            return price * 0.02 if price else None
+        return min(atr_like * 0.5, price * 0.03) if price else atr_like * 0.5
+    except Exception:
+        return price * 0.02 if price else None
+
+
+def _max_drawdown(data: pd.DataFrame | None) -> float | None:
+    try:
+        if data is None or data.empty or "close" not in data.columns:
+            return None
+        close = data["close"].dropna()
+        if close.empty:
+            return None
+        return float((close / close.cummax() - 1).min() * 100)
+    except Exception:
+        return None
+
+
+def _volatility(data: pd.DataFrame | None, periods: int = 20) -> float | None:
+    try:
+        if data is None or data.empty or "close" not in data.columns:
+            return None
+        returns = data["close"].dropna().pct_change().dropna().tail(periods)
+        if len(returns) < max(5, periods // 2):
+            return None
+        return float(returns.std() * 100)
+    except Exception:
+        return None
+
+
+def _position_rank(position: str | None) -> int:
+    ranks = {
+        "0-1成": 0,
+        "观察仓": 1,
+        "1-2成": 2,
+        "2-3成": 3,
+    }
+    return ranks.get(str(position or ""), 1)
+
+
+def _min_position(current: str | None, cap: str) -> str:
+    return current if _position_rank(current) <= _position_rank(cap) else cap
 
 
 def _positive_number(value: Any) -> float | None:

@@ -93,8 +93,12 @@ SECTOR_PUSH_LONG_TOP_N = int(os.getenv("SECTOR_PUSH_LONG_TOP_N", "1"))
 # 每日报告配置
 DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
 DAILY_REPORT_PUSH_ENABLED = os.getenv("DAILY_REPORT_PUSH_ENABLED", "true").lower() == "true"
-DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false").lower() == "true"
+DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "true").lower() == "true"
 DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
+
+# 智能推荐 Alpha 二次排序。默认先展示分数和理由，不改变原策略排序。
+RECOMMEND_RANKER_ENABLED = os.getenv("RECOMMEND_RANKER_ENABLED", "true").lower() == "true"
+RECOMMEND_RANKER_SORT = os.getenv("RECOMMEND_RANKER_SORT", "false").lower() == "true"
 
 # ============================================================
 # 配色方案
@@ -211,9 +215,14 @@ SCHEDULE_RUN_IMMEDIATELY = os.getenv("SCHEDULE_RUN_IMMEDIATELY", "false").lower(
 SCHEDULE_ENABLED = os.getenv("SCHEDULE_ENABLED", "false").lower() == "true"
 
 # T+1 推荐计划自动预生成配置。只提前运行既有推荐策略，不改变选股条件。
-T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "false").lower() == "true"
+T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "true").lower() == "true"
 T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
-T1_PLAN_STRATEGY = os.getenv("T1_PLAN_STRATEGY", "多因子稳健型")
+_T1_PLAN_STRATEGIES_RAW = os.getenv(
+    "T1_PLAN_STRATEGIES",
+    os.getenv("T1_PLAN_STRATEGY", "多因子稳健型,激进突破型"),
+)
+T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(",") if item.strip()]
+T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
 T1_PLAN_SECTOR = os.getenv("T1_PLAN_SECTOR", "全部")
 T1_PLAN_NUM_STOCKS = int(os.getenv("T1_PLAN_NUM_STOCKS", "5"))
 T1_PLAN_PREHEAT_KLINE = os.getenv("T1_PLAN_PREHEAT_KLINE", "true").lower() == "true"

@@ -4,16 +4,18 @@
 
 ## 2026-05-17 推荐缓存与页面状态更新
 
+- **Alpha 推荐评分** — 智能推荐新增确定性 Alpha 二次评分，按策略原始分、趋势、量能、资金、板块、财务、风险和追高风险输出 `0-100` 分、等级、排序理由和扣分项；默认只展示评分，不改变原策略选股与排序，可通过 `RECOMMEND_RANKER_SORT=true` 开启按 Alpha 分重排。
 - **T+1 推荐计划** — 智能推荐页新增“生成 T+1 推荐计划”和同条件计划缓存读取；相同“策略 + 板块 + 推荐数量”命中缓存时直接展示昨晚/上次生成结果，不重新扫描三千多只股票。
 - **准确率与选股边界** — T+1 计划、缓存读取、页面状态隔离和入场检查均不修改“激进突破型 / 多因子稳健型”选股条件；实时行情只用于次日入场检查，不参与选股、不重排、不新增、不删除推荐列表。
 - **入场检查兜底** — 对 T+1 计划内股票按东方财富 → 新浪 → 腾讯顺序获取实时行情；全部失败时明确提示实时行情不可用，不生成假入场建议。
-- **定时预热** — `scheduler.py` 已接入 T+1 计划预热入口，默认关闭；可通过 `T1_PLAN_AUTO_ENABLED`、`T1_PLAN_SCHEDULE_TIME`、`T1_PLAN_STRATEGY`、`T1_PLAN_SECTOR`、`T1_PLAN_NUM_STOCKS`、`T1_PLAN_PREHEAT_KLINE`、`T1_PLAN_PREHEAT_EXTENDED_INFO` 配置收盘后提前生成计划。
+- **定时预热** — `scheduler.py` 已接入 T+1 计划预热入口，默认开启；默认每天 `15:45` 按“多因子稳健型,激进突破型 / 全部 / 5只”分别提前生成计划，可通过 `T1_PLAN_AUTO_ENABLED`、`T1_PLAN_SCHEDULE_TIME`、`T1_PLAN_STRATEGIES`、`T1_PLAN_SECTOR`、`T1_PLAN_NUM_STOCKS`、`T1_PLAN_PREHEAT_KLINE`、`T1_PLAN_PREHEAT_EXTENDED_INFO` 调整。
 - **页面残留修复** — 智能推荐页按请求 key 隔离运行状态，生成中不展示旧推荐、旧诊断或旧入场检查；不同策略各自显示状态，避免稳健型和激进型互相混淆。
 - **其他页面进度** — 个股分析、股票对比、热门板块、智能推荐等页面接入真实阶段进度提示，优先展示当前执行阶段而不是无意义等待。
 - **个股分析修复** — 连续搜索不同股票时会清空旧结果并按当前输入展示，避免第二次搜索仍显示上一只股票数据。
 - **PEG 口径** — 个股决策仪表盘 PEG 优先复用 `astock-peg` 思路：用当前价 / 下一年度一致预期 EPS 得到 forward PE，再除以利润 CAGR；一致预期或历史利润不足时再回退到已有 PEG/PE 与增长率口径。
 - **资金流边界** — 公共资金流接口不可用时继续显示缺失或接口失败，不使用模拟值、随机值或手写假数据补齐“主力净流入趋势”。
-- **验证结果** — 本轮完整测试已通过：`761 passed, 20 warnings`。
+- **深度进度修复** — 多因子稳健型进入深度检查时会显示深度总数、已深查数量和当前命中数；初始阶段从 `已深查 0 / 最终命中 0` 开始，后续按批次持续更新。
+- **验证结果** — 本轮完整测试已通过：`776 passed, 20 warnings`。
 
 ## 2026-05-16 智能推荐策略更新
 
@@ -28,7 +30,7 @@
 
 ## 2026-05-14 更新摘要
 
-- **决策委员会** — 完成 A 股五层 Agent 决策框架，个股页和日报均展示评分、仓位、买卖点、风险警报、催化因素和 Agent 明细。
+- **决策委员会** — 完成 A 股六 Agent 决策框架，个股页和日报均展示评分、仓位、买卖点、风险警报、催化因素、执行风控和 Agent 明细。
 - **飞书/Actions** — 支持 GitHub Actions 工作日 15:30 云端推送；飞书/企业微信 Webhook 可选；自选股摘要、四板块推荐和完整日报按顺序推送。
 - **推荐规则** — 热门板块保留全市场；短线/长线推荐保留沪深主板口径；激进突破型/多因子稳健型扫描沪深主板 + 创业板；四板块固定为算力租赁、电力、苹果概念、特斯拉概念。
 - **自选股** — 侧栏常驻，支持多只展示；点击自选股会直接在主页打开对应个股分析；移除重复自选详情面板。
@@ -76,7 +78,7 @@
 - **交易计划卡片** — 面向单只股票输出当前动作、买入观察区、加仓确认位、止损线、压力/止盈位和仓位建议
 - **风控防御看板** — 以估值、成长、趋势、安全、资金五个维度做风险/机会评分，辅助判断是否追高、低吸、观望或降仓
 - **每日决策仪表盘** — CLI/定时导出 Markdown 日报，汇总大盘、自选股、推荐股、研报、公告、龙虎榜、解禁、板块归因和操作检查清单
-- **A股决策委员会** — 借鉴 TradingAgents 多角色框架，阶段 2 最终版已完成：五层 Agent 覆盖技术分析、资金情绪、基本面、题材板块、风险事件，个股页以决策仪表盘展示评分、置信度、仓位、关键价位、买卖点、风险警报、催化因素和 Agent 折叠明细
+- **A股决策委员会** — 借鉴 TradingAgents 多角色框架，阶段 2 最终版已完成：六 Agent 覆盖技术分析、资金情绪、基本面、题材板块、风险事件和执行风控，个股页以决策仪表盘展示评分、置信度、仓位、关键价位、买卖点、风险警报、催化因素和 Agent 折叠明细
 - **决策委员会状态卡片** — 侧边栏固定展示阶段 1-5 接入状态、飞书配置、Actions 状态和 LLM 多空辩论开关，网页端可直接确认能力是否启用
 - **定时调度** — 收盘后自动分析+推送（默认关闭）
 - **飞书机器人** — 对话式股票查询（默认关闭），支持 `/analysis 600519`、`分析贵州茅台`、`查 招商银行` 等代码/中文名称输入
@@ -274,6 +276,14 @@ streamlit run app.py
 
 策略页会展示真实阶段进度：股票池、市值过滤、当日实时价量、K 线轻筛、深度检查和完成状态。历史 K 线默认使用本地缓存并按交易日更新，当日价格/成交量会在运行推荐时实时补偿；需要强制更新时点击页面上的“刷新数据”按钮。
 
+**Alpha 二次评分：**
+
+- 不接 LLM，不需要模型 API；它是规则化、可解释的本地算法。
+- 评分依据：策略原始分、均线/趋势信号、量能、主力资金、板块联动、财务质量、策略条件共振、公告/解禁风险、当日涨幅过热风险。
+- 默认 `RECOMMEND_RANKER_ENABLED=true`：推荐列表会显示 Alpha 分、等级、理由和扣分项。
+- 默认 `RECOMMEND_RANKER_SORT=false`：只补充评分解释，不改变原推荐模块的排序。
+- 如需让 Alpha 分参与排序，设置 `RECOMMEND_RANKER_SORT=true` 后重启应用。
+
 ### CLI 命令行
 
 ```bash
@@ -320,6 +330,8 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `CACHE_TTL_STOCK_RISK_EVENTS`：公告/风险事件缓存时间，默认 86400 秒。
 - `CACHE_TTL_STOCK_FUND_FLOW`：资金流缓存时间，默认 3600 秒。
 - `CACHE_TTL_RECOMMENDATION_RESULTS`：智能推荐结果缓存时间，默认 3600 秒。
+- `RECOMMEND_RANKER_ENABLED`：是否给智能推荐结果增加 Alpha 评分与解释，默认 `true`。
+- `RECOMMEND_RANKER_SORT`：是否按 Alpha 分对推荐结果二次重排，默认 `false`，即不改变原策略排序。
 - `CACHE_TTL_WATCHLIST_SUMMARY`：自选股摘要/推送缓存时间，默认 300 秒。
 - `STOCK_DATA_SOURCE`：A股数据源优先级，可选 `auto` / `akshare` / `sina` / `yfinance`。
 - `SCHEDULE_TIME`：定时任务执行时间，默认 `15:30`。
@@ -328,7 +340,10 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `SECTOR_PUSH_SHORT_TOP_N` / `SECTOR_PUSH_LONG_TOP_N`：每个板块短线/长线推荐数量，默认 `2` / `1`。
 - `DAILY_REPORT_ENABLED`：定时任务是否生成每日报告，默认 `true`。
 - `DAILY_REPORT_PUSH_ENABLED`：定时任务是否推送完整 Markdown 日报，默认 `true`。
-- `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描推荐股，默认 `false`，避免定时推送过慢。
+- `DAILY_REPORT_INCLUDE_RECOMMENDATIONS`：日报是否扫描全市场推荐股，默认 `true`。
+- `T1_PLAN_AUTO_ENABLED`：是否在调度器中自动预生成 T+1 推荐计划，默认 `true`。
+- `T1_PLAN_SCHEDULE_TIME`：T+1 推荐计划预生成时间，默认 `15:45`。
+- `T1_PLAN_STRATEGIES` / `T1_PLAN_SECTOR` / `T1_PLAN_NUM_STOCKS`：T+1 预生成使用的策略列表、板块和数量，默认 `多因子稳健型,激进突破型` / `全部` / `5`。旧的 `T1_PLAN_STRATEGY` 仍兼容单策略配置。
 - `DAILY_REPORT_DIR`：日报输出目录，默认 `reports/history`。
 - `AI_DEBATE_ENABLED`：日报是否启用外部 LLM 多空辩论/风控经理层，默认 `false`；开启前需配置 `AI_API_KEY`。
 - `AI_DEBATE_MAX_SYMBOLS`：每次日报最多对前 N 只自选股做 LLM 辩论，默认 `3`，用于控制 Actions 耗时和费用。
@@ -351,13 +366,14 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
 | `data/` | 新分层数据服务（providers/services/cache/health/models），逐步承接行情、基础资料、研报、信号、新闻、公告等接口 |
-| `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险五层 Agent，含权重、置信度、关键位） |
+| `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险/执行风控六 Agent，含权重、置信度、关键位） |
 | `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
 | `ai_analysis.py` | AI 辅助解读（技术+风险解释，多空研究员+风控经理辩论层） |
 | `chart_plotter.py` | Matplotlib 图表（CLI） |
 | `chart_utils.py` | 共享图表工具 |
 | `stock_recommendation.py` | 热门排行 + 板块排行 + 评分推荐 |
+| `recommend_ranker.py` | 智能推荐 Alpha 二次评分，不接 LLM |
 | `backtest_engine.py` | 回测引擎 |
 | `backtest_adapter.py` | 回测信号适配 |
 | `backtest_ui.py` | 回测 Web UI |
@@ -366,7 +382,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `scheduler.py` | 定时调度 |
 | `config.py` | 集中配置 |
 | `watchlist.py` | 自选股管理 |
-| `tests/` | 测试（18 文件，567 测试） |
+| `tests/` | 测试（当前完整回归 776 项） |
 
 ### 分层数据服务
 
@@ -393,11 +409,11 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - 研报层：对自选股中的 A 股补充东财个股研报、PDF 链接和同花顺一致预期 EPS。
 - 风险事件层：补充龙虎榜、限售解禁和近 30 日个股公告，风险公告会进入风险警报。
 - 板块归因层：补充行业/概念归属、板块涨跌幅和简单题材原因。
-- 决策面板：输出决策评分、买卖点、关键价位、风险警报、催化因素、操作检查清单和五层 Agent 明细。
-- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的五层 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件细分评分；阶段 3 最终版已把日报升级为决策仪表盘；阶段 4 最终版支持可选外部 LLM 多空辩论（多头研究员、空头研究员、风控经理），未配置 `AI_API_KEY` 时自动跳过，不影响 GitHub Actions 和飞书定时推送。
+- 决策面板：输出决策评分、买卖点、关键价位、风险警报、催化因素、操作检查清单和六 Agent 明细。
+- A股决策委员会：日报和个股分析页复用 `decision_committee.py` 的六 Agent 结论；阶段 1 最终版已加入 Agent 权重、置信度、关键位、估值/换手/资金/题材/风险事件/执行风控细分评分；阶段 3 最终版已把日报升级为决策仪表盘；阶段 4 最终版支持可选外部 LLM 多空辩论（多头研究员、空头研究员、风控经理），未配置 `AI_API_KEY` 时自动跳过，不影响 GitHub Actions 和飞书定时推送。
 - 导出结果：写入 `reports/history/YYYY-MM-DD.md`，并同步覆盖 `reports/history/latest.md`。
 
-定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只，并同步输出激进突破型/多因子稳健型候选；短线/长线沿用沪深主板口径，激进突破型/多因子稳健型扫描沪深主板 + 创业板，科创板、北交所、ST、退市/异常股票不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；不再用全市场推荐股作为补充推送内容。自选股摘要、四板块推荐股和完整 Markdown 日报都会带“交易计划卡片 + 风控防御看板”，配置页一键测试推送仅用于测试 Webhook 连通性。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
+定时推送复用 `scheduler.py`：配置 `NOTIFY_CHANNELS` 和对应 webhook 后运行 `python main.py --schedule`，每天 `SCHEDULE_TIME` 会按“自选股摘要 → 四板块推荐 → 每日完整 Markdown 日报”的顺序执行。四板块固定为算力租赁、电力、苹果概念、特斯拉概念，默认每个板块推送短线 2 只 + 长线 1 只，并同步输出激进突破型/多因子稳健型候选；短线/长线沿用沪深主板口径，激进突破型/多因子稳健型扫描沪深主板 + 创业板，科创板、北交所、ST、退市/异常股票不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场，不做主板过滤；每日完整 Markdown 日报默认包含全市场推荐股扫描。自选股摘要、四板块推荐股和完整 Markdown 日报都会带“交易计划卡片 + 风控防御看板”，配置页一键测试推送仅用于测试 Webhook 连通性。若只想保存日报不推送正文，可设置 `DAILY_REPORT_PUSH_ENABLED=false`。
 
 GitHub Actions 已启用工作日北京时间 `15:30` 定时运行 `.github/workflows/daily_analysis.yml`，默认推送到飞书。配置仓库 Secret `FEISHU_WEBHOOK_URL` 后，不需要本地电脑常开；如需改为企业微信，把仓库 Variable `NOTIFY_CHANNELS` 设为 `wechat` 并配置 Secret `WECHAT_WEBHOOK_URL`；如需两个渠道同时推送，设为 `feishu,wechat` 并配置两个 Webhook。云端日报如需包含自选股，再配置 `STOCK_LIST` Secret（如 `600519,600036`，也支持 `捷顺科技,瑞鹄模具,上海电力`）或高级格式 `WATCHLIST_JSON`。如需云端 LLM 多空辩论，再配置 Secret `AI_API_KEY`，并把仓库 Variables 里的 `AI_DEBATE_ENABLED` 设为 `true`。也可以在 Actions 页面手动点击 `Run workflow` 立即测试。详细步骤见 `docs/FEISHU_GITHUB_ACTIONS.md`。
 

@@ -177,6 +177,13 @@ class DailyReportService:
                     f"行动 **{decision.get('action', '--')}**，仓位 **{decision.get('position', '--')}**，"
                     f"风险 **{decision.get('risk_level', '--')}**，置信度 **{decision.get('confidence', '--')}%**。"
                 )
+                risk_control = decision.get("risk_control") or {}
+                if risk_control:
+                    lines.append(
+                        f"- **执行风控 Agent**：动作 **{risk_control.get('final_action', '--')}**，"
+                        f"仓位上限 **{risk_control.get('max_position', '--')}**，"
+                        f"硬拦截 {'已触发' if risk_control.get('hard_block') else '未触发'}。"
+                    )
                 lines.append(
                     f"- **价格状态**：现价 {self._fmt_number(item.get('price'))} "
                     f"({self._fmt_pct(item.get('change_pct'))})；"
@@ -217,6 +224,15 @@ class DailyReportService:
                     f"{index}. `{item.get('symbol')}` {item.get('name', '')}：评分 {item.get('score', '--')}，"
                     f"建议 {item.get('rating', '--')}，现价 {self._fmt_number(item.get('latest_price'))}"
                 )
+                if item.get("alpha_score") is not None:
+                    reasons = "；".join(str(reason) for reason in (item.get("rank_reason") or [])[:2])
+                    penalties = "；".join(str(reason) for reason in (item.get("rank_penalty") or [])[:1])
+                    alpha_line = f"   - Alpha {item.get('alpha_score')}/100（{item.get('alpha_grade', '--')}）"
+                    if reasons:
+                        alpha_line += f"：{reasons}"
+                    if penalties:
+                        alpha_line += f"；扣分 {penalties}"
+                    lines.append(alpha_line)
         else:
             lines.append("- 暂无推荐结果")
 
@@ -234,9 +250,14 @@ class DailyReportService:
                 decision = decision_map.get(item.get("symbol")) or {}
                 lines.append(f"### `{item['symbol']}` {item.get('name', '')}")
                 if decision:
+                    risk_control = decision.get("risk_control") or {}
                     lines.append(
                         f"- A股决策委员会：{decision.get('summary', '--')} "
                         f"操作 {decision.get('action', '--')}，仓位 {decision.get('position', '--')}"
+                        + (
+                            f"，风控上限 {risk_control.get('max_position', '--')}"
+                            if risk_control else ""
+                        )
                     )
                     for agent in (decision.get("agents") or [])[:5]:
                         lines.append(

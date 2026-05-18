@@ -67,6 +67,24 @@ class TestDefaultConstants:
         assert config.CACHE_TTL_STOCK_DATA > 0
         assert config.CACHE_TTL_INDICATORS > 0
 
+    def test_daily_report_recommendations_default_enabled(self):
+        import config
+        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is True
+
+    def test_t1_plan_auto_default_enabled(self):
+        import config
+        assert config.T1_PLAN_AUTO_ENABLED is True
+
+    def test_t1_plan_strategies_default_includes_aggressive(self):
+        import config
+        assert config.T1_PLAN_STRATEGIES == ["多因子稳健型", "激进突破型"]
+        assert config.T1_PLAN_STRATEGY == "多因子稳健型"
+
+    def test_recommend_ranker_default_enabled_without_sorting(self):
+        import config
+        assert config.RECOMMEND_RANKER_ENABLED is True
+        assert config.RECOMMEND_RANKER_SORT is False
+
 
 class TestEnvVarOverride:
     """验证环境变量覆盖"""
@@ -133,6 +151,42 @@ class TestEnvVarOverride:
         importlib.reload(config)
         assert config.AI_ENABLED is False
         monkeypatch.delenv("AI_ENABLED")
+        importlib.reload(config)
+
+    def test_daily_report_recommendations_env_override(self, monkeypatch):
+        monkeypatch.setenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false")
+        import importlib, config
+        importlib.reload(config)
+        assert config.DAILY_REPORT_INCLUDE_RECOMMENDATIONS is False
+        monkeypatch.delenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS")
+        importlib.reload(config)
+
+    def test_t1_plan_auto_env_override(self, monkeypatch):
+        monkeypatch.setenv("T1_PLAN_AUTO_ENABLED", "false")
+        import importlib, config
+        importlib.reload(config)
+        assert config.T1_PLAN_AUTO_ENABLED is False
+        monkeypatch.delenv("T1_PLAN_AUTO_ENABLED")
+        importlib.reload(config)
+
+    def test_t1_plan_strategies_env_override(self, monkeypatch):
+        monkeypatch.setenv("T1_PLAN_STRATEGIES", "激进突破型, 多因子稳健型")
+        import importlib, config
+        importlib.reload(config)
+        assert config.T1_PLAN_STRATEGIES == ["激进突破型", "多因子稳健型"]
+        assert config.T1_PLAN_STRATEGY == "激进突破型"
+        monkeypatch.delenv("T1_PLAN_STRATEGIES")
+        importlib.reload(config)
+
+    def test_recommend_ranker_env_override(self, monkeypatch):
+        monkeypatch.setenv("RECOMMEND_RANKER_ENABLED", "false")
+        monkeypatch.setenv("RECOMMEND_RANKER_SORT", "true")
+        import importlib, config
+        importlib.reload(config)
+        assert config.RECOMMEND_RANKER_ENABLED is False
+        assert config.RECOMMEND_RANKER_SORT is True
+        monkeypatch.delenv("RECOMMEND_RANKER_ENABLED")
+        monkeypatch.delenv("RECOMMEND_RANKER_SORT")
         importlib.reload(config)
 
 

@@ -182,6 +182,49 @@ def _panel(title: str, body: str, tone: str = "neutral", *, compact: bool = Fals
 
 def build_trade_plan(snapshot: dict[str, Any], data: Any = None) -> dict[str, Any]:
     """Build a deterministic trade plan from real quote, K-line and indicator data."""
+    risk_control = snapshot.get("risk_control") or {}
+    if risk_control:
+        key_levels = snapshot.get("key_levels") or {}
+        support = _num(key_levels.get("support"))
+        mid = _num(key_levels.get("mid"))
+        ma20 = _num(key_levels.get("ma20"))
+        price = _num(key_levels.get("price"))
+        score = int(snapshot.get("score") or 0)
+
+        if risk_control.get("hard_block"):
+            buy_zone = "禁止新增，等待重大风险解除"
+        elif risk_control.get("level") == "高" or score < 40:
+            buy_zone = "暂不新增，等待风险解除"
+        elif score >= 78:
+            buy_zone = _fmt_range(support, min(value for value in (mid, ma20, price) if value is not None) if any(value is not None for value in (mid, ma20, price)) else None)
+        elif score >= 62:
+            buy_zone = _fmt_range(support, mid or ma20)
+        else:
+            buy_zone = "等回踩支撑或放量突破确认"
+
+        confirm_level = _num(risk_control.get("confirm_level"))
+        if confirm_level is not None and price is not None and price >= confirm_level and score >= 60:
+            add_condition = f"已站上确认位 {confirm_level:.2f}，仍需观察量能和风险事件"
+        elif confirm_level is not None:
+            add_condition = f"放量站回 {confirm_level:.2f} 上方再考虑加仓"
+        else:
+            add_condition = "等待关键均线和量价确认"
+
+        take_profit_1 = risk_control.get("take_profit_1")
+        trim_condition = f"接近 {_fmt_level(take_profit_1)} 压力位先观察减仓" if _num(take_profit_1) is not None else "等待形成明确压力位"
+        return {
+            "current_action": risk_control.get("final_action") or snapshot.get("action"),
+            "buy_zone": buy_zone,
+            "add_condition": add_condition,
+            "stop_loss": risk_control.get("stop_loss"),
+            "take_profit_1": take_profit_1,
+            "take_profit_2": risk_control.get("take_profit_2"),
+            "trim_condition": trim_condition,
+            "position": risk_control.get("max_position") or snapshot.get("position") or "--",
+            "risk_note": "硬拦截已触发" if risk_control.get("hard_block") else "最终仓位受执行风控约束",
+            "data_basis": risk_control.get("data_basis") or "真实行情/K线/指标推导，未使用模拟或随机行情",
+        }
+
     key_levels = snapshot.get("key_levels") or {}
     price = _num(key_levels.get("price"))
     support = _num(key_levels.get("support"))
@@ -1000,6 +1043,43 @@ def _render_trade_plan(plan: dict[str, Any], tone: str) -> None:
     _panel("交易计划卡片", body, tone)
 
 
+def _render_risk_control(risk_control: dict[str, Any], tone: str) -> None:
+    if not risk_control:
+        return
+    control_tone = "bearish" if risk_control.get("hard_block") or risk_control.get("level") == "高" else "watch" if risk_control.get("level") == "中" else tone
+    trigger_html = _list_items(
+        (risk_control.get("reduce_triggers") or [])[:3],
+        icon="线",
+        empty="暂无额外降仓触发",
+        tone="bearish",
+    )
+    basis_html = _list_items(
+        (risk_control.get("basis") or [])[:3],
+        icon="据",
+        empty="暂无风控依据",
+        tone="neutral",
+    )
+    body = (
+        '<div class="trade-plan-hero">'
+        f'<span>{_escape(risk_control.get("agent"), "执行风控 Agent")}</span>'
+        f'<strong>{_escape(risk_control.get("final_action"))}</strong>'
+        f'<em>上限 {_escape(risk_control.get("max_position"))}</em>'
+        '</div>'
+        '<div class="trade-plan-grid">'
+        + _trade_plan_row("硬拦截", "已触发" if risk_control.get("hard_block") else "未触发")
+        + _trade_plan_row("风险等级", risk_control.get("level"))
+        + _trade_plan_row("仓位调整", "已下调" if risk_control.get("position_changed") else "未下调")
+        + _trade_plan_row("确认位", _fmt_level(risk_control.get("confirm_level")))
+        + '</div>'
+        '<div class="risk-control-split">'
+        f'<div><div class="decision-mini-note">降仓触发</div>{trigger_html}</div>'
+        f'<div><div class="decision-mini-note">风控依据</div>{basis_html}</div>'
+        '</div>'
+        f'<div class="decision-mini-note">{_escape(risk_control.get("data_basis"))}</div>'
+    )
+    _panel("执行风控 Agent", body, control_tone, compact=True)
+
+
 def _render_defense_dashboard(defense: dict[str, Any]) -> None:
     overall = int(defense.get("overall") or 0)
     tone = _tone_from_score(overall)
@@ -1065,6 +1145,9 @@ def _render_hero(snapshot: dict[str, Any]) -> None:
     score = int(snapshot.get("score") or 0)
     tone = snapshot.get("tone", "neutral")
     confidence = int(snapshot.get("confidence") or 0)
+    risk_control = snapshot.get("risk_control") or {}
+    position = risk_control.get("max_position") or snapshot.get("position", "--")
+    action = risk_control.get("final_action") or snapshot.get("action")
     body = f"""
     <div class="decision-hero {tone}">
       <div class="decision-score-ring {tone}">
@@ -1072,11 +1155,11 @@ def _render_hero(snapshot: dict[str, Any]) -> None:
         <span>决策分</span>
       </div>
       <div class="decision-hero-main">
-        <div class="decision-eyebrow">A股决策委员会 · 决策分 · TradingAgents Lite</div>
-        <div class="decision-hero-title">{_escape(snapshot.get("action"))}</div>
+        <div class="decision-eyebrow">A股决策委员会 · 六 Agent · TradingAgents Lite</div>
+        <div class="decision-hero-title">{_escape(action)}</div>
         <div class="decision-hero-summary">{_escape(snapshot.get("summary"))}</div>
         <div class="decision-chip-row">
-          {_chip(f"仓位 {snapshot.get('position', '--')}", tone)}
+          {_chip(f"风控仓位 {position}", tone)}
           {_chip(f"风险 {snapshot.get('risk_level', '--')}", "bearish" if snapshot.get("risk_level") == "高" else "watch" if snapshot.get("risk_level") == "中" else "bullish")}
           {_chip(f"置信度 {confidence}%", "watch" if confidence < 70 else "bullish")}
         </div>
@@ -1164,21 +1247,30 @@ def render_decision_dashboard(
     st.markdown("#### 交易计划与风控防御")
     trade_plan = build_trade_plan(snapshot, data)
     defense = build_defense_dashboard(snapshot, data, benchmark_data, extended_info, profile)
-    col_plan, col_defense = st.columns([0.9, 1.7])
+    col_plan, col_control = st.columns([1, 1])
     with col_plan:
         _render_trade_plan(trade_plan, snapshot.get("tone", "neutral"))
+    with col_control:
+        _render_risk_control(snapshot.get("risk_control") or {}, snapshot.get("tone", "neutral"))
+
+    _render_defense_dashboard(defense)
+
+    col_bull, col_bear, col_risk = st.columns(3)
+    with col_bull:
         _panel(
             "看多依据",
             _list_items(snapshot.get("bullish_points"), icon="多", empty="暂无明确看多证据", tone="bullish"),
             "bullish",
             compact=True,
         )
+    with col_bear:
         _panel(
             "看空因素",
             _list_items(snapshot.get("bearish_points"), icon="空", empty="暂无明显看空风险", tone="neutral"),
             "neutral",
             compact=True,
         )
+    with col_risk:
         risks = snapshot.get("risks") or snapshot.get("risk_alerts")
         _panel(
             "风险警报",
@@ -1186,9 +1278,7 @@ def render_decision_dashboard(
             "bearish" if risks else "neutral",
             compact=True,
         )
-    with col_defense:
-        _render_defense_dashboard(defense)
 
-    with st.expander("A股决策委员会：五层 Agent 观点", expanded=False):
+    with st.expander("A股决策委员会：五层研究 + 执行风控 Agent", expanded=False):
         agent_cards = "".join(_render_agent_card(agent) for agent in snapshot.get("agents", []))
         st.markdown(f"<div class='agent-card-grid'>{agent_cards}</div>", unsafe_allow_html=True)

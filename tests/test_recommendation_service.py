@@ -37,6 +37,16 @@ class FakeRecommender:
         return {"测试板块": {"激进突破型": [_stock("002003", "激进突破型")]}}
 
 
+class TwoStockRecommender(FakeRecommender):
+    def get_multi_factor_recommendations(self, num_stocks, progress_callback=None):
+        self.called.append(("multi", num_stocks, bool(progress_callback)))
+        weak = _stock("002010", "多因子稳健型")
+        weak.update({"score": 70, "change_pct": 7, "signals": {}, "indicators": {}})
+        strong = _stock("002011", "多因子稳健型")
+        strong.update({"score": 90, "change_pct": 1, "signals": {"macd": "金叉"}, "indicators": {}})
+        return [weak, strong]
+
+
 def _stock(symbol, strategy):
     return {
         "symbol": symbol,
@@ -64,7 +74,10 @@ def test_recommendation_service_routes_aggressive_without_changing_strategy():
     assert recommender.called == [("aggressive", 5, True)]
     assert result["title"] == "激进突破型"
     assert result["recommended"][0]["latest_price"] == 10.5
-    assert result["diagnostics"] == {"strategy": "激进突破型"}
+    assert result["recommended"][0]["alpha_score"] is not None
+    assert result["diagnostics"]["strategy"] == "激进突破型"
+    assert result["diagnostics"]["alpha_ranker"]["enabled"] is True
+    assert result["diagnostics"]["alpha_ranker"]["sorted"] is False
 
 
 def test_recommendation_service_persists_latest_result():
@@ -80,6 +93,22 @@ def test_recommendation_service_persists_latest_result():
 
     assert latest == result
     assert latest["title"] == "多因子稳健型"
+
+
+def test_recommendation_service_sorts_alpha_only_when_config_enabled(monkeypatch):
+    import recommendation_service as module
+
+    monkeypatch.setattr(module, "RECOMMEND_RANKER_SORT", True)
+    service = module.RecommendationService(
+        recommender=TwoStockRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("多因子稳健型", "全部", 5)
+
+    assert result["recommended"][0]["symbol"] == "002011"
+    assert result["diagnostics"]["alpha_ranker"]["sorted"] is True
 
 
 def test_recommendation_service_persists_t1_plan_without_changing_strategy(monkeypatch):

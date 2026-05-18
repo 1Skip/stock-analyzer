@@ -176,6 +176,15 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         f"｜{strategy or '推荐'}｜评分 {score}｜{rating}"
     )
     lines = [header]
+    if stock.get("alpha_score") is not None:
+        reasons = "；".join(str(item) for item in (stock.get("rank_reason") or [])[:2])
+        penalties = "；".join(str(item) for item in (stock.get("rank_penalty") or [])[:1])
+        alpha_line = f"  Alpha {stock.get('alpha_score')}/100（{stock.get('alpha_grade', '--')}）"
+        if reasons:
+            alpha_line += f": {reasons}"
+        if penalties:
+            alpha_line += f"；扣分 {penalties}"
+        lines.append(alpha_line)
     checks = stock.get("strategy_checks") or {}
     details = stock.get("strategy_details") or {}
     if checks:

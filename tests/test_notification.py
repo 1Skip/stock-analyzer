@@ -348,10 +348,24 @@ class TestBuildSectorReport:
     def test_sector_recommendations_include_decision_cards(self):
         from notification import build_sector_report
         data = self._make_sector_data()
+        data["算力租赁"]["激进突破型"] = [{
+            'symbol': '002001',
+            'name': '测试Alpha',
+            'latest_price': 10.0,
+            'change_pct': 1.0,
+            'strategy': '激进突破型',
+            'score': 88,
+            'rating': '强突破候选',
+            'alpha_score': 82,
+            'alpha_grade': 'A',
+            'rank_reason': ['趋势结构偏强'],
+            'rank_penalty': [],
+        }]
         title, body = build_sector_report(data)
         assert "交易计划卡片" in body
         assert "风控防御看板" in body
         assert "数据说明" in body
+        assert "Alpha 82/100" in body
 
     def test_positive_change_shows_up_arrow(self):
         from notification import build_sector_report
