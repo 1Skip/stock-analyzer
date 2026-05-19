@@ -94,6 +94,12 @@ def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=Non
     )
 
 
+def _sector_options_for_strategy(strategy):
+    if strategy in ("激进突破型", "多因子稳健型"):
+        return ["全部"]
+    return ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+
+
 def _request_key(strategy, sector, num_stocks):
     return f"{strategy}:{sector}:{int(num_stocks or 0)}"
 
@@ -560,6 +566,10 @@ def recommended_stocks_page():
 
     def on_strategy_change():
         st.session_state.rec_strategy = st.session_state.rec_strategy_radio
+        valid_sectors = _sector_options_for_strategy(st.session_state.rec_strategy)
+        if st.session_state.get("rec_sector") not in valid_sectors:
+            st.session_state.rec_sector = "全部"
+            st.session_state.rec_sector_select = "全部"
         st.session_state.rec_data_loaded = False
         st.session_state.rec_results = None
 
@@ -585,7 +595,9 @@ def recommended_stocks_page():
     else:
         st.info("多因子稳健型：先硬性过滤市值300亿以上、短期过热和重大风险事件；再按均线金叉/多头+放量、财务确认、连涨3日、主力净流入趋势≥3000万、既往15日内涨停评分，核心因子至少3/5且综合分≥70进入候选。")
 
-    sector_options = ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    sector_options = _sector_options_for_strategy(strategy)
+    if st.session_state.rec_sector not in sector_options:
+        st.session_state.rec_sector = "全部"
     sector_index = sector_options.index(st.session_state.rec_sector)
     sector = st.selectbox("选择板块", options=sector_options,
                          index=sector_index,
@@ -639,8 +651,8 @@ def recommended_stocks_page():
 
     col1, col2, col3, col4 = st.columns([1, 1.35, 1.05, 1.05])
     with col1:
-        if st.button("刷新数据", type="secondary", disabled=st.session_state.rec_is_running):
-            with status_loading("正在刷新智能推荐本地K线缓存，请稍候...", 20):
+        if st.button("刷新K线缓存", type="secondary", disabled=st.session_state.rec_is_running):
+            with status_loading("正在更新推荐策略日K缓存，不是读取T+1推荐计划缓存，请稍候...", 20):
                 cache_result = service.refresh_strategy_kline_cache()
             st.session_state.rec_data_loaded = False
             st.session_state.rec_results = None
@@ -649,7 +661,7 @@ def recommended_stocks_page():
             st.session_state.rec_history_review = None
             st.session_state.rec_last_error = None
             st.success(
-                f"本地K线缓存已刷新：成功 {cache_result.get('refreshed', 0)} / "
+                f"推荐策略日K缓存已刷新：成功 {cache_result.get('refreshed', 0)} / "
                 f"{cache_result.get('total', 0)}，失败 {cache_result.get('failed', 0)}"
             )
 

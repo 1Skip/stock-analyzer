@@ -328,6 +328,15 @@ def test_recommend_page_shows_t1_cache_hit_without_rescanning():
     assert "龙头股推荐" not in source
 
 
+def test_recommend_page_limits_sector_options_by_strategy():
+    from ui.recommend_page import _sector_options_for_strategy
+
+    assert _sector_options_for_strategy("激进突破型") == ["全部"]
+    assert _sector_options_for_strategy("多因子稳健型") == ["全部"]
+    assert _sector_options_for_strategy("短线") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    assert _sector_options_for_strategy("长线") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+
+
 def test_recommend_page_hides_internal_t1_diagnostics():
     from pathlib import Path
 
