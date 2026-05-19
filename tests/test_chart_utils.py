@@ -14,9 +14,9 @@ class TestMAConfig:
         from chart_utils import MA_CONFIG
         assert len(MA_CONFIG) == 4
 
-    def test_has_5_10_20_60(self):
+    def test_has_5_10_20_30(self):
         from chart_utils import MA_CONFIG
-        for p in [5, 10, 20, 60]:
+        for p in [5, 10, 20, 30]:
             assert p in MA_CONFIG
 
     def test_each_has_required_keys(self):

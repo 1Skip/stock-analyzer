@@ -121,27 +121,10 @@ def _render_t1_plan_meta(result):
     generated = result.get("generated_at") or "--"
     base_date = result.get("generated_trade_date") or "--"
     plan_date = result.get("plan_for_trade_date") or "--"
-    metrics = result.get("generation_metrics") or {}
-    data_status = result.get("data_status") or {}
     st.info(
         f"T+1 推荐计划：生成时间 {generated}｜基准交易日 {base_date}｜计划入场日 {plan_date}。"
         "推荐列表不会因入场检查而改变。"
     )
-    source = data_status.get("source") or "--"
-    trigger = metrics.get("trigger") or "--"
-    elapsed = metrics.get("elapsed_seconds")
-    elapsed_text = f"{elapsed:.2f}s" if isinstance(elapsed, (int, float)) else "--"
-    st.caption(f"缓存状态：{source}；生成触发：{trigger}；生成耗时：{elapsed_text}")
-    cache_metrics = data_status.get("cache_read_metrics") or {}
-    cache_elapsed = cache_metrics.get("elapsed_seconds")
-    if isinstance(cache_elapsed, (int, float)):
-        st.caption(f"缓存读取耗时：{cache_elapsed:.3f}s；未重新扫描股票池；实时行情未参与选股。")
-    preheat = data_status.get("preheat") or {}
-    if preheat:
-        st.caption(
-            f"预热状态：K线缓存 {preheat.get('kline_cache')}；"
-            f"扩展信息缓存 {preheat.get('extended_info_cache')}"
-        )
 
 
 def _render_entry_check(entry_check):
@@ -357,6 +340,52 @@ def _filter_removed_multi_factor_fields(stock, strategy_name):
     return filtered
 
 
+def _fmt_profile_money_yi(value):
+    try:
+        if value is None or value == "":
+            return "--"
+        number = float(value)
+        if number != number:
+            return "--"
+        return f"{number / 100000000:.2f}亿"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _fmt_profile_number(value, suffix="", precision=2):
+    try:
+        if value is None or value == "":
+            return "--"
+        number = float(value)
+        if number != number:
+            return "--"
+        return f"{number:.{precision}f}{suffix}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _render_recommendation_profile(stock):
+    profile = stock.get("profile") if isinstance(stock.get("profile"), dict) else {}
+    if not profile:
+        st.caption("基础资料：暂无返回，已不使用假数据补齐。")
+        return
+    industry = profile.get("industry") or "--"
+    market_cap = _fmt_profile_money_yi(profile.get("market_cap") or stock.get("market_cap"))
+    pe = _fmt_profile_number(profile.get("pe_ttm") or profile.get("pe"))
+    pb = _fmt_profile_number(profile.get("pb"))
+    turnover = _fmt_profile_number(profile.get("turnover_rate"), "%")
+    source = profile.get("source") or "公开数据源"
+    st.caption(
+        "基础资料："
+        f"行业 {html.escape(str(industry))}｜"
+        f"市值 {market_cap}｜"
+        f"PE {pe}｜"
+        f"PB {pb}｜"
+        f"换手率 {turnover}｜"
+        f"来源 {html.escape(str(source))}"
+    )
+
+
 def display_recommendation_list(recommended, strategy_name, diagnostics=None):
     """显示推荐列表"""
     if not recommended:
@@ -403,6 +432,7 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 if penalties:
                     alpha_line += f"｜扣分：{html.escape(penalties)}"
                 st.caption(alpha_line)
+            _render_recommendation_profile(stock)
 
             explanation = stock.get("explanation") if isinstance(stock.get("explanation"), dict) else {}
             if explanation:
@@ -414,9 +444,14 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                     if reasons:
                         st.markdown("**入选依据**")
                         st.markdown("\n".join(f"- {html.escape(str(item))}" for item in reasons[:5]))
-                    if risks:
+                    failed_reasons = [item for item in risks if str(item).startswith("未通过：")]
+                    other_risks = [item for item in risks if item not in failed_reasons]
+                    if failed_reasons:
+                        st.markdown("**未通过条件**")
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in failed_reasons[:5]))
+                    if other_risks:
                         st.markdown("**风险/扣分**")
-                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in risks[:5]))
+                        st.markdown("\n".join(f"- {html.escape(str(item))}" for item in other_risks[:5]))
                     if missing:
                         st.caption("缺失证据：" + "；".join(html.escape(str(item)) for item in missing[:8]))
                     entry_conditions = explanation.get("entry_conditions") or []
@@ -447,7 +482,7 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
 
             ind = stock["indicators"]
             sig = stock["signals"]
-            cols = st.columns(4)
+            cols = st.columns(5)
             with cols[0]:
                 macd_hist = ind.get("macd_hist", 0)
                 st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> 柱:{macd_hist:.2f} DIF:{ind["macd"]:.2f} DEA:{ind["macd_signal"]:.2f}</p>', unsafe_allow_html=True)
@@ -467,6 +502,15 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 boll_low = ind.get("boll_lower", 0)
                 st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>布林带:</b> UP:{boll_up:.2f} MID:{boll_mid:.2f} LOW:{boll_low:.2f}</p>', unsafe_allow_html=True)
                 st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(str(sig.get("boll", sig.get("卖出纪律", "--"))))}</p>', unsafe_allow_html=True)
+            with cols[4]:
+                ma5 = ind.get("ma5", 0)
+                ma10 = ind.get("ma10", 0)
+                ma20 = ind.get("ma20", 0)
+                ma30 = ind.get("ma30", 0)
+                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>均线:</b> MA5:{ma5:.2f} MA10:{ma10:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">MA20:{ma20:.2f} MA30:{ma30:.2f}</p>', unsafe_allow_html=True)
+            if stock.get("display_indicator_context"):
+                st.caption("指标口径：1年前复权日K，公式与个股分析页一致。")
 
             st.divider()
 

@@ -453,6 +453,37 @@ class TestGetStockDataCN:
         fetcher.get_stock_data('000001', period='1y', market='CN')
         assert len(captured) > 0 and captured[0].startswith('sz')
 
+    def test_adjust_is_part_of_cache_key_and_forwarded(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+        df = _make_ohlcv_df(days=60, base_price=10.0)
+        captured = []
+
+        def mock_ak_hist(symbol, period, start_date, end_date, adjust):
+            captured.append(adjust)
+            result = df.copy()
+            result['日期'] = result.index
+            result['开盘'] = result['open']
+            result['收盘'] = result['close']
+            result['最高'] = result['high']
+            result['最低'] = result['low']
+            result['成交量'] = result['volume']
+            return result[['日期', '开盘', '收盘', '最高', '最低', '成交量']].reset_index(drop=True)
+
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
+        monkeypatch.setattr('data_fetcher.ak.stock_zh_a_hist', mock_ak_hist)
+        monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
+                            lambda self, s, d: None)
+
+        fetcher = StockDataFetcher()
+        fetcher.set_preferred_source('akshare_em')
+        raw = fetcher.get_stock_data('000001', period='1y', market='CN')
+        qfq = fetcher.get_stock_data('000001', period='1y', market='CN', adjust='qfq')
+
+        assert raw is not None
+        assert qfq is not None
+        assert captured == ['', 'qfq']
+        assert qfq.attrs['adjust_method'] == '前复权'
+
 
 class TestGetStockDataHK:
 

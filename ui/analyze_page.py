@@ -155,7 +155,7 @@ def _build_short_history_notice(symbol, stock_name, data_len, period):
     if data_len < 20:
         return (
             f"{symbol} {display_name} 可用历史数据较少（仅{data_len}个交易日），"
-            "可能是新股/次新股或数据源只返回上市后行情。长周期指标（如 MA20/MA60、RSI24、BOLL）"
+            "可能是新股/次新股或数据源只返回上市后行情。长周期指标（如 MA20/MA30、RSI24、BOLL）"
             "暂不完整，建议优先参考分时图、价格走势和短线指标。"
         )
 
@@ -435,7 +435,7 @@ def _display_indicator_values(data):
     ma5 = _format_val(latest, 'ma5', 2)
     ma10 = _format_val(latest, 'ma10', 2)
     ma20 = _format_val(latest, 'ma20', 2)
-    ma60 = _format_val(latest, 'ma60', 2)
+    ma30 = _format_val(latest, 'ma30', 2)
     if ma5 != '--':
         st.markdown(
             f'<div style="{card}border-left:3px solid #8e8e93;">'
@@ -443,7 +443,7 @@ def _display_indicator_values(data):
             f'<span>MA5 {ma5}</span>  '
             f'<span>MA10 {ma10}</span>  '
             f'<span>MA20 {ma20}</span>  '
-            f'<span>MA60 {ma60}</span></span>'
+            f'<span>MA30 {ma30}</span></span>'
             f'</div>',
             unsafe_allow_html=True,
         )
@@ -813,7 +813,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
         _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
         futures = {
             'info': executor.submit(get_cached_stock_info, symbol, market),
-            'data': executor.submit(get_cached_stock_data, symbol, '1y', market),
+            'data': executor.submit(get_cached_stock_data, symbol, '1y', market, 'qfq' if market == "CN" else ""),
             'quote': executor.submit(get_cached_realtime_quote, symbol, market),
         }
         if market == "CN":
@@ -888,28 +888,13 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
             "period": period,
         }
 
-    if not _is_valid_quote(quote):
+    quote_is_realtime = _is_valid_quote(quote)
+    if not quote_is_realtime:
         _emit_progress(progress_callback, "实时行情兜底", 84, source="历史K线")
         quote = _quote_from_last_row(data)
 
-    if quote and data is not None and not data.empty:
-        _emit_progress(progress_callback, "合并当日价量", 88)
-        today = pd.Timestamp.now().normalize()
-        if data.index[-1].normalize() == today:
-            idx = data.index[-1]
-            data.loc[idx, 'close'] = quote['price']
-            data.loc[idx, 'high'] = max(data.loc[idx, 'high'], quote['high'])
-            data.loc[idx, 'low'] = min(data.loc[idx, 'low'], quote['low'])
-            data.loc[idx, 'volume'] = quote.get('volume', data.loc[idx, 'volume'])
-        else:
-            realtime_row = pd.DataFrame({
-                'open': [quote['open']],
-                'high': [quote['high']],
-                'low': [quote['low']],
-                'close': [quote['price']],
-                'volume': [quote['volume']]
-            }, index=[pd.Timestamp.now()])
-            data = pd.concat([data, realtime_row])
+    if quote_is_realtime:
+        _emit_progress(progress_callback, "实时行情完成", 88)
 
     stock_name = resolved_name or symbol
     if isinstance(info, dict):

@@ -26,10 +26,10 @@ STOCK_INPUT_CACHE_VERSION = "stock-input-v3-full-a-share-name-index"
 
 
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
-def get_cached_stock_data(symbol, period, market):
+def get_cached_stock_data(symbol, period, market, adjust=""):
     """缓存股票数据获取"""
     try:
-        return quote_service.get_stock_data(symbol, period=period, market=market)
+        return quote_service.get_stock_data(symbol, period=period, market=market, adjust=adjust)
     except Exception:
         logger.warning("缓存层获取股票数据失败: symbol=%s market=%s period=%s", symbol, market, period, exc_info=True)
         return None

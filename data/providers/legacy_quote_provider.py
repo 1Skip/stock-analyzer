@@ -14,8 +14,8 @@ class LegacyQuoteProvider:
     def __init__(self, fetcher: StockDataFetcher | None = None):
         self.fetcher = fetcher or StockDataFetcher()
 
-    def get_stock_data(self, symbol: str, period: str = "1y", market: str = "CN"):
-        return self.fetcher.get_stock_data(symbol, period=period, market=market)
+    def get_stock_data(self, symbol: str, period: str = "1y", market: str = "CN", adjust: str = ""):
+        return self.fetcher.get_stock_data(symbol, period=period, market=market, adjust=adjust)
 
     def get_realtime_quote(self, symbol: str, market: str = "CN"):
         return self.fetcher.get_realtime_quote(symbol, market)

@@ -259,14 +259,18 @@ def test_recommend_page_shows_t1_cache_hit_without_rescanning():
     assert "龙头股推荐" not in source
 
 
-def test_recommend_page_shows_t1_cache_and_elapsed_status():
+def test_recommend_page_hides_internal_t1_diagnostics():
     from pathlib import Path
 
     source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
 
-    assert "缓存状态" in source
-    assert "生成耗时" in source
-    assert "预热状态" in source
+    assert "T+1 推荐计划：生成时间" in source
+    assert "数据来源" not in source
+    assert "生成方式" not in source
+    assert "生成耗时" not in source
+    assert "预热状态" not in source
+    assert "not_requested" not in source
+    assert 'trigger = metrics.get("trigger") or "--"' not in source
 
 
 def test_recommend_page_groups_plan_review_buttons():
@@ -950,6 +954,40 @@ def test_analyze_page_explains_code_or_name_input():
     assert "支持输入股票代码或名称" in source
     assert "000001、平安银行、贵州茅台、AAPL、00700" in source
     assert 'label_visibility="collapsed"' not in source.split('key="analyze_symbol_input"', 1)[0].split('st.text_input(', 1)[1]
+
+
+def test_analyze_page_uses_qfq_daily_kline_without_realtime_indicator_merge():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "get_cached_stock_data, symbol, '1y', market, 'qfq' if market == \"CN\" else \"\"" in source
+    assert "pd.concat([data, realtime_row])" not in source
+    assert "data.loc[idx, 'close'] = quote['price']" not in source
+    assert "MA30" in source
+
+
+def test_recommend_page_displays_profile_fields():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_recommendation_profile" in source
+    assert "基础资料：" in source
+    assert "市值" in source
+    assert "PE" in source
+    assert "PB" in source
+    assert "换手率" in source
+
+
+def test_recommend_page_hides_internal_not_requested_status():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "not_requested" not in source
+    assert 'trigger = metrics.get("trigger") or "--"' not in source
+    assert "预热状态" not in source
 
 
 def test_sidebar_watchlist_shows_full_list_and_single_detail():

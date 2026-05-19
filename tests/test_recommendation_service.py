@@ -15,16 +15,63 @@ class FakeCache:
 class FakeQuoteService:
     def get_batch_realtime_quotes(self, symbols, market="CN"):
         return {
-            symbols[0]: {"price": 10.5, "change_pct": 2.0}
+            symbols[0]: {
+                "price": 10.5,
+                "change_pct": 2.0,
+                "open": 10.2,
+                "high": 10.8,
+                "low": 10.1,
+                "volume": 100000,
+                "source": "test realtime",
+            }
         } if symbols else {}
 
-    def get_stock_data(self, symbol, period="1y", market="CN"):
+    def get_stock_data(self, symbol, period="1y", market="CN", adjust=""):
+        import pandas as pd
+
+        self.last_adjust = adjust
+
+        dates = pd.date_range("2025-12-01", periods=80, freq="B")
+        close = [10 + index * 0.03 for index in range(len(dates))]
+        return pd.DataFrame({
+            "date": dates,
+            "open": [value - 0.05 for value in close],
+            "high": [value + 0.12 for value in close],
+            "low": [value - 0.12 for value in close],
+            "close": close,
+            "volume": [100000 + index * 100 for index in range(len(dates))],
+        })
+
+
+class FakeQuoteServiceWithFuture(FakeQuoteService):
+    def get_stock_data(self, symbol, period="1y", market="CN", adjust=""):
         import pandas as pd
 
         return pd.DataFrame({
             "date": ["2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25"],
+            "open": [9.8, 10.2, 10.5, 10.4, 10.6, 10.8],
+            "high": [10.2, 10.8, 11.0, 10.7, 11.1, 11.3],
+            "low": [9.7, 10.0, 10.4, 10.1, 10.5, 10.7],
             "close": [10.0, 10.5, 10.8, 10.2, 10.9, 11.0],
+            "volume": [100000, 110000, 120000, 115000, 130000, 125000],
         })
+
+
+class FakeFundamentalService:
+    def __init__(self):
+        self.called = []
+
+    def get_stock_profile(self, symbol, market="CN"):
+        self.called.append((symbol, market))
+        return {
+            "symbol": symbol,
+            "industry": "电子 — 消费电子",
+            "market_cap": 12_300_000_000,
+            "pe_ttm": 18.6,
+            "pb": 2.1,
+            "turnover_rate": 3.2,
+            "source": "测试基础资料",
+        }
 
 
 class FakeRecommender:
@@ -86,6 +133,64 @@ def test_recommendation_service_routes_aggressive_without_changing_strategy():
     assert result["diagnostics"]["strategy"] == "激进突破型"
     assert result["diagnostics"]["alpha_ranker"]["enabled"] is True
     assert result["diagnostics"]["alpha_ranker"]["sorted"] is False
+
+
+def test_recommendation_display_indicators_use_analysis_page_context():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    recommended = [_stock("002001", "test")]
+
+    service._refresh_final_quotes(recommended)
+    stock = recommended[0]
+
+    assert stock["display_indicator_context"]["period"] == "1y"
+    assert stock["display_indicator_context"]["adjust"] == "qfq"
+    assert stock["display_indicator_context"]["realtime_merged"] is False
+    assert service.quote_service.last_adjust == "qfq"
+    assert stock["indicators"]["ma30"] > 0
+    assert stock["indicators"] != {}
+
+
+def test_recommendation_service_fills_display_profile_without_changing_strategy():
+    fundamentals = FakeFundamentalService()
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        fundamental_service=fundamentals,
+        result_cache=FakeCache(),
+    )
+    recommended = [_stock("002001", "test")]
+
+    service._refresh_final_quotes(recommended)
+    stock = recommended[0]
+
+    assert fundamentals.called == [("002001", "CN")]
+    assert stock["profile"]["industry"] == "电子 — 消费电子"
+    assert stock["profile"]["market_cap"] == 12_300_000_000
+    assert stock["latest_price"] == 10.5
+
+
+def test_recommendation_service_ignores_invalid_zero_realtime_quote():
+    class BadQuoteService(FakeQuoteService):
+        def get_batch_realtime_quotes(self, symbols, market="CN"):
+            return {symbols[0]: {"price": 0, "change_pct": -100, "source": "bad quote"}} if symbols else {}
+
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=BadQuoteService(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    recommended = [_stock("002001", "test")]
+
+    service._refresh_final_quotes(recommended)
+    stock = recommended[0]
+
+    assert stock["latest_price"] == 10
+    assert stock["change_pct"] == 1
 
 
 def test_recommendation_service_persists_latest_result():
@@ -163,7 +268,7 @@ def test_t1_plan_history_is_saved_and_read_only():
     recommender = FakeRecommender()
     service = RecommendationService(
         recommender=recommender,
-        quote_service=FakeQuoteService(),
+        quote_service=FakeQuoteServiceWithFuture(),
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()

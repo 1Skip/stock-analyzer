@@ -10,7 +10,7 @@ MA_CONFIG = {
     5:  {"period": 5,  "color": "orange", "label": "MA5"},
     10: {"period": 10, "color": "cyan",   "label": "MA10"},
     20: {"period": 20, "color": "blue",   "label": "MA20"},
-    60: {"period": 60, "color": "purple", "label": "MA60"},
+    30: {"period": 30, "color": "purple", "label": "MA30"},
 }
 
 

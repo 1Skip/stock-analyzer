@@ -4,6 +4,7 @@ from quality_monitor import (
     build_backtest_risk_summary,
     build_compare_scorecard,
     build_hot_data_status,
+    build_recommendation_explanation,
     build_stock_data_quality_summary,
 )
 
@@ -51,3 +52,45 @@ def test_hot_data_status_reports_empty_sections():
     assert status["status"] == "partial"
     assert status["counts"]["gainers"] == 1
     assert status["missing"] == ["losers"]
+
+
+def test_recommendation_missing_evidence_uses_chinese_labels():
+    stock = {
+        "symbol": "600000",
+        "name": "test",
+        "score": 72,
+        "latest_price": 10,
+        "indicators": {"ma20": 9.5, "boll_lower": 8.8},
+    }
+
+    explanation = build_recommendation_explanation(stock, strategy="多因子稳健型")
+
+    assert "扩展信息（财务/资金/公告/风险事件）" in explanation["missing_data"]
+    assert "基础资料（行业/市值/估值/换手率）" in explanation["missing_data"]
+    assert "extended_info" not in explanation["missing_data"]
+    assert "profile" not in explanation["missing_data"]
+
+
+def test_recommendation_explanation_does_not_promote_failed_strategy_check():
+    stock = {
+        "symbol": "600000",
+        "name": "test",
+        "score": 72,
+        "latest_price": 10,
+        "strategy_checks": {
+            "市值<300亿": True,
+            "均线金叉+放量": False,
+            "财务确认": True,
+            "连涨3日": True,
+        },
+        "strategy_details": {
+            "技术说明": "均线满足，量比 0.02 未达 1.2",
+            "财务确认": "最新净利润未亏损",
+            "连涨3日": "连续3日上涨",
+        },
+    }
+
+    explanation = build_recommendation_explanation(stock, strategy="多因子稳健型")
+
+    assert "均线满足，量比 0.02 未达 1.2" not in explanation["why_selected"]
+    assert any("未通过：均线金叉+放量" in item for item in explanation["risk_flags"])

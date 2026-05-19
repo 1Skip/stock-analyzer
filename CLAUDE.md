@@ -16,6 +16,8 @@
 
 **需求记录红线**：写入 `CLAUDE.md`、memory、README 或其他项目文档时，只能记录用户明确提出、已经确认或已经完成验证的需求与 bug 修复；不得把助手自己的建议、猜测、扩展想法或未确认方案当成需求写进去。用户要求“更新今天需求和 bug”时，要区分已完成事项、已修复 bug 和仅为文档同步的事项，禁止为了凑记录而新增不存在的需求。
 
+**个股分析指标口径红线**：A 股个股分析页的 K 线、成交量图和技术指标数值必须以 `1y` 前复权日 K 为基准，技术指标公式继续按 MyTT / 同花顺风格口径计算，展示值统一保留两位小数；实时行情只允许用于最新价展示、分时或入场执行检查，禁止合并进原始日 K 线参与个股分析页指标计算。智能推荐页展示出来的 MACD/KDJ/BOLL/MA 等指标必须复用同一口径，不能只在单只股票上做特例修复。个股分析页展示均线为 MA5/MA10/MA20/MA30，后续任何改动都必须先得到用户明确确认，并用真实股票数据对比验证后再汇报。
+
 ## 2. AI 编码协作 12 条执行规则
 
 以后在本项目内使用 Claude Code/Codex/其他 AI 编码助手时，默认按以下规则执行。
@@ -88,6 +90,7 @@
 - **A股基础资料兜底**：`FundamentalDataService` 会构建并缓存全量基础资料索引，组合东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表；当个股基础接口只返回 `-`、`----` 或北交所“已切换”旧代码时，按代码/股票名称补齐行业、上市日期、股本、市值和 PB
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
+- **A股个股分析指标/K线口径**：个股分析页固定使用 `get_cached_stock_data(symbol, "1y", market, "qfq")` 获取前复权日 K，K 线图、成交量图和指标卡片都基于这份日 K；实时行情不写回日 K，不参与 MACD/KDJ/BOLL/MA 计算。智能推荐页的展示指标在选股完成后重新按同一口径计算，保证与个股分析页一致；选股策略本身不因展示口径调整而改变。
 - **分层数据服务**：新增 `data/providers/`、`data/services/`、`data/cache.py`、`data/health.py`、`data/models.py`、`data/runtime.py`，参考 `a-stock-data` 的接口分层思路，但按本项目渐进迁移；当前 `FundamentalDataService.get_stock_profile()` 返回标准 `StockProfile` dict，`QuoteDataService` 统一承接 K线、实时行情、分时、批量报价、大盘指数和数据源切换，`StockInfoService` 承接财务摘要/资金流/新闻/市场资讯；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异
 - **基础资料/估值**：A股个股分析页并行调用 `get_cached_stock_profile()`，AKShare 获取股票简称/行业/上市日期/股本/市值，腾讯行情补 PE/PB/换手率，辅助数据最多短暂等待，不阻塞 K线主流程
 - **扩展信息非阻塞**：个股页“财务 / 资金 / 新闻”和“市场快讯 / 催化消息”走 `get_cached_stock_extended_info()`，Web 首屏拉取财务、资金流、东方财富个股新闻和财新数据通市场资讯核心层，最多短暂等待；失败返回加载提示，不影响主图表和技术指标
@@ -109,7 +112,7 @@
 - **KDJ**：标准递推公式，前 n-1 天 K=D=50，第 n 天 K=D=RSV
 - **BOLL**：20 日中轨，2 倍标准差
 - **MACD**：12/26/9 标准参数
-- **MA**：5/10/20/60 四条均线
+- **MA**：指标列保留 5/10/20/30/60 均线；个股分析页和智能推荐页展示使用 MA5/MA10/MA20/MA30，不展示 MA60 替代 MA30
 - **信号判断**：`TechnicalIndicators.get_signals()` 综合四个指标给出偏多信号/偏空信号/观望
 
 ## 5. 数据字段规范
@@ -121,7 +124,7 @@
 - `macd`, `macd_signal`, `macd_hist`
 - `kdj_k`, `kdj_d`, `kdj_j`
 - `boll_upper`, `boll_mid`, `boll_lower`, `boll_width`, `boll_percent`
-- `ma5`, `ma10`, `ma20`, `ma60`
+- `ma5`, `ma10`, `ma20`, `ma30`, `ma60`
 
 ## 6. 已知问题（修改时注意）
 
@@ -265,6 +268,7 @@ pip-audit
 - 新增 Streamlit 页面时，在侧边栏导航中注册
 - 图表修改：Plotly 和 Matplotlib 版本行为不同，建议改完后在 Web 和 CLI 都验证
 - 修改技术指标计算逻辑后，必须用真实数据验证输出值范围（如 RSI 0-100、BOLL 上轨≥中轨≥下轨）
+- **个股分析页技术指标/K线/成交量图是红线**：不得为了性能、实时性或单页显示方便，擅自把实时行情合并进 A 股日 K 指标计算，也不得把个股分析页和智能推荐页展示指标拆成两套口径；发现两页同股指标不一致时，默认按 bug 排查数据源、复权、周期、公式和展示字段。
 - **所有网络调用必须加超时保护**：调用 AKShare / yfinance / 新浪等外部数据源时，用 `concurrent.futures.ThreadPoolExecutor` + `future.result(timeout=N)` 包装，超时后降级而非卡死。已在 `get_cached_stock_info`(5s) / `get_cached_stock_data`(20s) / `get_cached_realtime_quote`(3s) / `_get_spot_snapshot`(8s) 统一实现
 - **绝对禁止使用模拟/随机/假数据**作为股票行情、价格、成交量、换手率等任何交易数据。所有数据必须从真实数据源获取（AKShare/新浪/yfinance）。`np.random`、`random` 等仅限用于网络退避抖动、测试夹具生成等非业务场景
 - 新增依赖需同时更新 `requirements.txt` 和 `.devcontainer/devcontainer.json`（如有硬编码依赖）

@@ -6,7 +6,10 @@ import signal
 import sys
 import time
 import logging
+import os
 from datetime import datetime
+from functools import wraps
+from pathlib import Path
 
 import schedule
 
@@ -23,6 +26,81 @@ from notification import send_push, build_analysis_report, build_sector_report
 from reports.exporter import save_markdown_report
 
 logger = logging.getLogger(__name__)
+
+LOCK_DIR = Path(os.getenv("SCHEDULER_LOCK_DIR", ".cache"))
+SCHEDULER_INSTANCE_LOCK_PATH = LOCK_DIR / "scheduler.instance.lock"
+SCHEDULED_ANALYSIS_LOCK_PATH = LOCK_DIR / "scheduled_analysis.lock"
+T1_PREHEAT_LOCK_PATH = LOCK_DIR / "t1_plan_preheat.lock"
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    try:
+        first_line = lock_path.read_text(encoding="utf-8").splitlines()[0]
+        return int(first_line.strip())
+    except Exception:
+        return None
+
+
+def _acquire_pid_lock(lock_path: Path) -> int | None:
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            payload = f"{os.getpid()}\n{datetime.now().isoformat(timespec='seconds')}\n"
+            os.write(fd, payload.encode("utf-8"))
+            return fd
+        except FileExistsError:
+            pid = _read_lock_pid(lock_path)
+            if pid is None or not _process_exists(pid):
+                try:
+                    lock_path.unlink()
+                    continue
+                except OSError:
+                    return None
+            return None
+
+
+def _release_pid_lock(fd: int | None, lock_path: Path) -> None:
+    if fd is not None:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    try:
+        if _read_lock_pid(lock_path) == os.getpid():
+            lock_path.unlink()
+    except OSError:
+        pass
+
+
+def _skip_if_locked(lock_path: Path, label: str):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            fd = _acquire_pid_lock(lock_path)
+            if fd is None:
+                logger.warning("%s 正在执行，跳过本次重复触发", label)
+                return None
+            try:
+                return func(*args, **kwargs)
+            finally:
+                _release_pid_lock(fd, lock_path)
+
+        return wrapper
+
+    return decorator
 
 
 def _load_watchlist_from_file():
@@ -57,6 +135,7 @@ def _generate_daily_report():
         return None
 
 
+@_skip_if_locked(T1_PREHEAT_LOCK_PATH, "T+1 推荐计划预生成")
 def run_t1_plan_preheat():
     """自动生成 T+1 推荐计划；只调用既有策略，不改变选股条件。"""
     logger.info(
@@ -97,6 +176,7 @@ def run_t1_plan_preheat():
         return None
 
 
+@_skip_if_locked(SCHEDULED_ANALYSIS_LOCK_PATH, "定时分析")
 def run_scheduled_analysis():
     """执行定时分析：自选股摘要 → 四板块推荐 → 每日报告。"""
     logger.info(f"定时分析开始 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -209,24 +289,33 @@ def run_scheduled_analysis():
 
 def start_scheduler():
     """启动定时调度循环，处理 SIGINT/SIGTERM 优雅退出"""
+    instance_lock_fd = _acquire_pid_lock(SCHEDULER_INSTANCE_LOCK_PATH)
+    if instance_lock_fd is None:
+        logger.warning("调度器已经在运行，本次启动已跳过，避免重复生成和重复推送")
+        return
+
     logger.info(f"定时调度已启动 — 每日 {SCHEDULE_TIME} 执行")
 
-    if SCHEDULE_RUN_IMMEDIATELY:
-        logger.info("立即执行首次分析...")
-        run_scheduled_analysis()
+    try:
+        if SCHEDULE_RUN_IMMEDIATELY:
+            logger.info("立即执行首次分析...")
+            run_scheduled_analysis()
 
-    schedule.every().day.at(SCHEDULE_TIME).do(run_scheduled_analysis)
-    if T1_PLAN_AUTO_ENABLED:
-        schedule.every().day.at(T1_PLAN_SCHEDULE_TIME).do(run_t1_plan_preheat)
-        logger.info(f"T+1 推荐计划自动预生成已开启：每日 {T1_PLAN_SCHEDULE_TIME} 执行")
+        schedule.every().day.at(SCHEDULE_TIME).do(run_scheduled_analysis)
+        if T1_PLAN_AUTO_ENABLED:
+            schedule.every().day.at(T1_PLAN_SCHEDULE_TIME).do(run_t1_plan_preheat)
+            logger.info(f"T+1 推荐计划自动预生成已开启：每日 {T1_PLAN_SCHEDULE_TIME} 执行")
 
-    def _shutdown(signum, frame):
-        logger.info("收到退出信号，调度器关闭")
-        sys.exit(0)
+        def _shutdown(signum, frame):
+            logger.info("收到退出信号，调度器关闭")
+            _release_pid_lock(instance_lock_fd, SCHEDULER_INSTANCE_LOCK_PATH)
+            sys.exit(0)
 
-    signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+        signal.signal(signal.SIGINT, _shutdown)
+        signal.signal(signal.SIGTERM, _shutdown)
 
-    while True:
-        schedule.run_pending()
-        time.sleep(30)
+        while True:
+            schedule.run_pending()
+            time.sleep(30)
+    finally:
+        _release_pid_lock(instance_lock_fd, SCHEDULER_INSTANCE_LOCK_PATH)

@@ -89,11 +89,29 @@ def plot_candlestick_chart(data, title=""):
     if 'volume' in data.columns:
         vol_colors = [inc_color if data['close'].iloc[i] >= data['open'].iloc[i] else dec_color
                       for i in range(len(data))]
+        volume_wan_shou = data['volume'] / 1_000_000
         fig.add_trace(go.Bar(
-            x=data.index, y=data['volume'],
-            name="成交量",
+            x=data.index, y=volume_wan_shou,
+            name="成交量(万手)",
             marker_color=vol_colors,
             showlegend=False,
+            hovertemplate='成交量: %{y:.2f}万手<extra></extra>',
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=volume_wan_shou.rolling(5).mean(),
+            mode='lines',
+            name='成交量MA5',
+            line=dict(color='gray', width=1),
+            hovertemplate='成交量MA5: %{y:.2f}万手<extra></extra>',
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=volume_wan_shou.rolling(10).mean(),
+            mode='lines',
+            name='成交量MA10',
+            line=dict(color='purple', width=1),
+            hovertemplate='成交量MA10: %{y:.2f}万手<extra></extra>',
         ), row=2, col=1)
 
     # 布局
@@ -109,6 +127,7 @@ def plot_candlestick_chart(data, title=""):
     )
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(title_text="万手", row=2, col=1)
 
     # 子图标题更显眼
     for annotation in fig.layout.annotations:
@@ -116,6 +135,7 @@ def plot_candlestick_chart(data, title=""):
         annotation.font.color = '#8e8e93'
 
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
+    return fig
 
 
 def plot_macd_chart(data):

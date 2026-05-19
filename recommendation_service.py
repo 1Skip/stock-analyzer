@@ -9,7 +9,13 @@ import requests
 
 from config import CACHE_TTL_RECOMMENDATION_RESULTS, RECOMMEND_RANKER_ENABLED, RECOMMEND_RANKER_SORT
 from data.cache import JsonFileCache
+from data.services.fundamental_service import FundamentalDataService
 from data.services.quote_service import QuoteDataService
+from indicator_context import (
+    DISPLAY_INDICATOR_PERIOD,
+    build_indicator_snapshot,
+    prepare_indicator_frame,
+)
 from quality_monitor import (
     attach_recommendation_explanations,
     evaluate_plan_outcomes,
@@ -35,6 +41,21 @@ def _safe_float(value: Any) -> float | None:
         return number
     except (TypeError, ValueError):
         return None
+
+
+def _valid_quote_for_display(quote: dict[str, Any] | None) -> bool:
+    if not isinstance(quote, dict):
+        return False
+    price = _safe_float(quote.get("price"))
+    if price is None or price <= 0:
+        return False
+    change_pct = _safe_float(quote.get("change_pct"))
+    if change_pct is not None and change_pct <= -99:
+        return False
+    prev_close = _safe_float(quote.get("prev_close"))
+    if prev_close is not None and prev_close <= 0:
+        return False
+    return True
 
 
 def _fetch_eastmoney_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
@@ -137,10 +158,12 @@ class RecommendationService:
         self,
         recommender: StockRecommender | None = None,
         quote_service: QuoteDataService | None = None,
+        fundamental_service: FundamentalDataService | None = None,
         result_cache: JsonFileCache | None = None,
     ):
         self.recommender = recommender or StockRecommender()
         self.quote_service = quote_service or QuoteDataService()
+        self.fundamental_service = fundamental_service or FundamentalDataService()
         self.result_cache = result_cache or JsonFileCache(
             "recommendation_results",
             CACHE_TTL_RECOMMENDATION_RESULTS,
@@ -436,11 +459,70 @@ class RecommendationService:
                 quotes = future.result(timeout=3)
             for item in recommended:
                 quote = quotes.get(item.get("symbol")) if isinstance(quotes, dict) else None
-                if quote:
+                if _valid_quote_for_display(quote):
                     item["latest_price"] = quote["price"]
                     item["change_pct"] = quote["change_pct"]
+                    item["_display_quote"] = quote
         except Exception:
+            quotes = {}
+        self._refresh_display_profiles(recommended)
+        self._refresh_display_indicators(recommended)
+
+    def _refresh_display_profiles(self, recommended: list[dict[str, Any]] | None) -> None:
+        """Fill display profile fields for recommendation cards without changing strategy results."""
+        if not recommended:
             return
+        for item in recommended:
+            symbol = str(item.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            current = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+            needs_profile = any(
+                current.get(key) in (None, "", {})
+                for key in ("industry", "market_cap", "pe_ttm", "pb", "turnover_rate")
+            )
+            if not current or needs_profile:
+                try:
+                    fetched = self.fundamental_service.get_stock_profile(symbol, "CN")
+                except Exception:
+                    fetched = None
+                if isinstance(fetched, dict) and fetched:
+                    merged = dict(current)
+                    for key, value in fetched.items():
+                        if merged.get(key) in (None, "", {}) and value not in (None, "", {}):
+                            merged[key] = value
+                    current = merged
+            if current:
+                item["profile"] = current
+
+    def _refresh_display_indicators(self, recommended: list[dict[str, Any]] | None) -> None:
+        """Recompute displayed indicators with the same context as the stock analysis page."""
+        if not recommended:
+            return
+        for item in recommended:
+            symbol = str(item.get("symbol") or "").strip()
+            if not symbol:
+                continue
+            quote = item.pop("_display_quote", None)
+            try:
+                data = self.quote_service.get_stock_data(
+                    symbol,
+                    period=DISPLAY_INDICATOR_PERIOD,
+                    market="CN",
+                    adjust="qfq",
+                )
+                indicator_frame = prepare_indicator_frame(data)
+                snapshot = build_indicator_snapshot(indicator_frame)
+            except Exception:
+                snapshot = {}
+            if snapshot:
+                item["indicators"] = snapshot
+                item["display_indicator_context"] = {
+                    "period": DISPLAY_INDICATOR_PERIOD,
+                    "adjust": "qfq",
+                    "formula": "TechnicalIndicators on forward-adjusted daily K-line",
+                    "realtime_merged": False,
+                }
 
     @staticmethod
     def _attach_sector_explanations(sector_data: dict[str, Any] | None) -> dict[str, Any]:

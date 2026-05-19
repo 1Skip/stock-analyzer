@@ -339,10 +339,10 @@ def build_recommendation_explanation(stock: dict[str, Any], *, strategy: str = "
     details = stock.get("strategy_details") if isinstance(stock.get("strategy_details"), dict) else {}
     checks = stock.get("strategy_checks") if isinstance(stock.get("strategy_checks"), dict) else {}
     passed_checks = [str(key) for key, ok in checks.items() if ok]
-    failed_checks = [str(key) for key, ok in checks.items() if not ok]
+    failed_checks = [_format_failed_check(str(key), details) for key, ok in checks.items() if not ok]
 
-    for key in ("技术说明", "财务确认", "主力净流入趋势", "买入观察"):
-        if details.get(key):
+    for key in ("技术说明", "财务确认", "主力净流入趋势"):
+        if details.get(key) and _detail_matches_passed_check(key, checks):
             reasons.append(str(details[key]))
 
     why_selected = _dedupe(reasons + [f"{strategy or stock.get('strategy') or '策略'}候选"] + passed_checks)[:5]
@@ -360,6 +360,42 @@ def build_recommendation_explanation(stock: dict[str, Any], *, strategy: str = "
         "invalid_conditions": _invalid_conditions(stock, details, risk_flags),
         "confidence_note": _confidence_note(stock, risk_flags, missing),
     }
+
+
+def _format_failed_check(label: str, details: dict[str, Any]) -> str:
+    reason_key = _detail_key_for_check(label)
+    reason = str(details.get(reason_key) or "").strip() if reason_key else ""
+    return f"未通过：{label}（{reason}）" if reason else f"未通过：{label}"
+
+
+def _detail_key_for_check(label: str) -> str | None:
+    if "均线" in label or "放量" in label or "技术" in label:
+        return "技术说明"
+    if "财务" in label:
+        return "财务确认"
+    if "连涨" in label:
+        return "连涨3日"
+    if "主力" in label or "净流入" in label:
+        return "主力净流入趋势"
+    if "涨停" in label:
+        return "15日涨停"
+    if "市值" in label:
+        return "市值过滤"
+    return None
+
+
+def _detail_matches_passed_check(detail_key: str, checks: dict[str, Any]) -> bool:
+    if not checks:
+        return True
+    aliases = {
+        "技术说明": ("均线", "放量", "技术"),
+        "财务确认": ("财务",),
+        "主力净流入趋势": ("主力", "净流入"),
+    }.get(detail_key, ())
+    if not aliases:
+        return True
+    matched = [bool(ok) for label, ok in checks.items() if any(alias in str(label) for alias in aliases)]
+    return any(matched) if matched else True
 
 
 def evaluate_plan_outcomes(
@@ -524,11 +560,11 @@ def _missing_required_fields(stock: dict[str, Any]) -> list[str]:
 def _missing_optional_evidence(stock: dict[str, Any]) -> list[str]:
     missing = []
     if not isinstance(stock.get("extended_info"), dict):
-        missing.append("extended_info")
+        missing.append("扩展信息（财务/资金/公告/风险事件）")
     if not isinstance(stock.get("profile"), dict):
-        missing.append("profile")
+        missing.append("基础资料（行业/市值/估值/换手率）")
     if stock.get("alpha_score") is None:
-        missing.append("alpha_score")
+        missing.append("Alpha评分解释")
     return missing
 
 

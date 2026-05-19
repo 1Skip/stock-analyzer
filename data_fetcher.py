@@ -364,9 +364,9 @@ class StockDataFetcher:
             logger.warning("加载离线缓存失败: %s", self._offline_cache_file, exc_info=True)
             return None
 
-    def get_stock_data(self, symbol, period="1y", interval="1d", market="US", use_cache=True):
+    def get_stock_data(self, symbol, period="1y", interval="1d", market="US", use_cache=True, adjust=""):
         """获取股票历史数据 - 带重试机制、数据源追踪、离线模式"""
-        cache_key = f"{symbol}_{period}_{interval}_{market}"
+        cache_key = f"{symbol}_{period}_{interval}_{market}_{adjust or 'raw'}"
 
         # 使用锁防止重复请求
         lock = self._get_request_lock(cache_key)
@@ -422,7 +422,19 @@ class StockDataFetcher:
                 # 尝试所有数据源
                 for source_name, source_func in sources_to_try:
                     try:
-                        result = self._retry_with_backoff(source_func, source_name, symbol, period)
+                        if adjust:
+                            result = self._retry_with_backoff(
+                                lambda source_symbol, source_period, func=source_func: func(
+                                    source_symbol,
+                                    source_period,
+                                    adjust=adjust,
+                                ),
+                                source_name,
+                                symbol,
+                                period,
+                            )
+                        else:
+                            result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
                             data_source = {
                                 'akshare_em': '东方财富',
@@ -435,7 +447,7 @@ class StockDataFetcher:
                         print(f"{source_name} 获取失败: {str(e)}")
 
                 # 所有在线源失败，尝试离线缓存
-                if result is None:
+                if result is None and not adjust:
                     result = self._load_offline_cache(symbol)
                     if result is not None:
                         data_source = result.attrs.get('data_source', '离线缓存')
@@ -484,7 +496,7 @@ class StockDataFetcher:
                 result.attrs['offline_mode'] = offline_mode
 
                 # 保存到离线缓存
-                if not offline_mode:
+                if not offline_mode and not adjust:
                     self._save_offline_cache(symbol, result)
 
             self.cache[cache_key] = (datetime.now(), result, data_source)
@@ -532,6 +544,7 @@ class StockDataFetcher:
             return None
 
         try:
+            adjust = kwargs.get("adjust") or ""
             period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
             days = period_days.get(period, 365)
 
@@ -543,7 +556,7 @@ class StockDataFetcher:
                 period="daily",
                 start_date=start_date,
                 end_date=end_date,
-                adjust=""  # 不复权，与同花顺默认一致
+                adjust=adjust
             )
 
             if df is not None and not df.empty and len(df) >= 10:
@@ -566,7 +579,7 @@ class StockDataFetcher:
                 df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
                 if len(df) >= 10:
-                    df.attrs['adjust_method'] = '不复权'
+                    df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
                     df.attrs['data_provider'] = '东方财富'
                     return df
 
@@ -581,6 +594,7 @@ class StockDataFetcher:
             return None
 
         try:
+            adjust = kwargs.get("adjust") or ""
             # 转换period为天数
             period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
             days = period_days.get(period, 365)
@@ -599,7 +613,7 @@ class StockDataFetcher:
                 symbol=ak_symbol,
                 start_date=start_date,
                 end_date=end_date,
-                adjust=""  # 不复权，与同花顺默认一致
+                adjust=adjust
             )
 
             if df is not None and not df.empty and len(df) >= 10:
@@ -614,7 +628,7 @@ class StockDataFetcher:
                 df = df.dropna(subset=['open', 'high', 'low', 'close'])
 
                 if len(df) >= 10:
-                    df.attrs['adjust_method'] = '不复权'
+                    df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
                     return df
 
         except Exception as e:

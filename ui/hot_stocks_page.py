@@ -9,6 +9,14 @@ from ui.loading import make_progress_reporter
 from quality_monitor import build_hot_data_status
 
 
+_HOT_SECTION_LABELS = {
+    "gainers": "个股涨幅榜",
+    "losers": "个股跌幅榜",
+    "sectors": "行业板块排行",
+    "concepts": "概念板块排行",
+}
+
+
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
 def get_cached_hot_stocks(market):
     """缓存热门股票数据"""
@@ -174,7 +182,8 @@ def hot_stocks_page():
         + f"；刷新检查 {status.get('checked_at', '--')}"
     )
     if status.get("missing"):
-        st.warning("部分榜单为空：" + "、".join(status.get("missing") or []))
+        missing_labels = [_HOT_SECTION_LABELS.get(key, key) for key in (status.get("missing") or [])]
+        st.warning("部分榜单为空：" + "、".join(missing_labels))
 
     if market == "CN":
         sectors = data.get('sectors', [])
@@ -196,7 +205,7 @@ def hot_stocks_page():
             df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
             st.dataframe(df_styled, use_container_width=True, hide_index=True)
         else:
-            st.info("暂无行业板块数据")
+            st.info("暂无行业板块排行数据：当前行业板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
 
         st.subheader("概念板块排行")
         if concepts:
@@ -204,7 +213,7 @@ def hot_stocks_page():
             df_c_styled = df_concepts.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
             st.dataframe(df_c_styled, use_container_width=True, hide_index=True)
         else:
-            st.info("暂无概念板块数据")
+            st.info("暂无概念板块排行数据：当前概念板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
 
         st.subheader("个股涨幅榜")
         df_gainers = pd.DataFrame(gainers)

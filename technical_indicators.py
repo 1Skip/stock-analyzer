@@ -140,7 +140,7 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
-    def calculate_ma(data, periods=[5, 10, 20, 60]):
+    def calculate_ma(data, periods=[5, 10, 20, 30, 60]):
         """
         计算移动平均线 — MyTT（同花顺标准算法）
         """

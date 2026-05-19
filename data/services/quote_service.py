@@ -17,10 +17,12 @@ class QuoteDataService:
     def __init__(self, provider: LegacyQuoteProvider | None = None):
         self.provider = provider or LegacyQuoteProvider()
 
-    def get_stock_data(self, symbol: str, period: str = "1y", market: str = "CN"):
+    def get_stock_data(self, symbol: str, period: str = "1y", market: str = "CN", adjust: str = ""):
         symbol = self._normalize_symbol(symbol)
         if not symbol:
             return None
+        if adjust:
+            return self.provider.get_stock_data(symbol, period=period, market=market, adjust=adjust)
         return self.provider.get_stock_data(symbol, period=period, market=market)
 
     def get_realtime_quote(self, symbol: str, market: str = "CN") -> dict[str, Any] | None:

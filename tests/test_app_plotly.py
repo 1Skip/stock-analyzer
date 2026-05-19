@@ -45,7 +45,7 @@ def sample_data():
         'ma5': close + 0.05,
         'ma10': close + 0.02,
         'ma20': close - 0.02,
-        'ma60': close - 0.05,
+        'ma30': close - 0.05,
     }, index=dates)
     return df
 
@@ -73,9 +73,18 @@ class TestPlotCandlestickChart:
             'volume': [1000000]*10,
             'macd': macd, 'macd_signal': signal,
             'macd_hist': macd - signal,
-            'ma5': [10]*10, 'ma10': [10]*10, 'ma20': [10]*10, 'ma60': [10]*10,
+            'ma5': [10]*10, 'ma10': [10]*10, 'ma20': [10]*10, 'ma30': [10]*10,
         }, index=dates)
         plot_candlestick_chart(df)  # 不抛异常即通过
+
+    def test_volume_chart_uses_wan_shou_and_volume_ma(self, sample_data):
+        from app import plot_candlestick_chart
+        fig = plot_candlestick_chart(sample_data)
+        names = [trace.name for trace in fig.data]
+        volume_trace = next(trace for trace in fig.data if trace.name == "成交量(万手)")
+        assert round(float(volume_trace.y[0]), 4) == round(sample_data["volume"].iloc[0] / 1_000_000, 4)
+        assert "成交量MA5" in names
+        assert "成交量MA10" in names
 
     def test_no_crash_missing_ma_columns(self):
         """缺失均线列不崩溃"""

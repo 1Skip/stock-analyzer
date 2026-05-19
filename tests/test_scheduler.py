@@ -228,6 +228,8 @@ class TestStartScheduler:
     def test_immediate_run(self):
         """SCHEDULE_RUN_IMMEDIATELY 时立即执行一次"""
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", True), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
              patch("scheduler.run_scheduled_analysis") as mock_run, \
              patch("scheduler.schedule"), \
              patch("scheduler.signal.signal"), \
@@ -244,6 +246,8 @@ class TestStartScheduler:
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
              patch("scheduler.SCHEDULE_TIME", "15:30"), \
              patch("scheduler.T1_PLAN_AUTO_ENABLED", False), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
              patch("scheduler.schedule") as mock_schedule, \
              patch("scheduler.signal.signal"), \
              patch("scheduler.time.sleep", side_effect=StopIteration):
@@ -260,6 +264,8 @@ class TestStartScheduler:
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
              patch("scheduler.SCHEDULE_TIME", "15:30"), \
              patch("scheduler.T1_PLAN_SCHEDULE_TIME", "15:45"), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
              patch("scheduler.schedule") as mock_schedule, \
              patch("scheduler.signal.signal"), \
              patch("scheduler.time.sleep", side_effect=StopIteration):
@@ -271,6 +277,16 @@ class TestStartScheduler:
             at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
             assert "15:30" in at_calls
             assert "15:45" in at_calls
+
+    def test_start_scheduler_skips_when_instance_lock_exists(self):
+        """重复启动调度器时直接跳过，避免同一时间重复生成/推送。"""
+        with patch("scheduler._acquire_pid_lock", return_value=None), \
+             patch("scheduler.schedule") as mock_schedule:
+            from scheduler import start_scheduler
+
+            start_scheduler()
+
+            mock_schedule.every.assert_not_called()
 
 
 class TestWatchlistPriority:

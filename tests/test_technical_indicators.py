@@ -190,6 +190,7 @@ class TestMA:
         assert 'ma5' in df.columns
         assert 'ma10' in df.columns
         assert 'ma20' in df.columns
+        assert 'ma30' in df.columns
         assert 'ma60' in df.columns
 
     def test_ma_uptrend_order(self, uptrend_data):
@@ -214,7 +215,7 @@ class TestCalculateAll:
                     'rsi', 'rsi_6', 'rsi_12', 'rsi_24',
                     'kdj_k', 'kdj_d', 'kdj_j',
                     'boll_upper', 'boll_mid', 'boll_lower',
-                    'ma5', 'ma10', 'ma20', 'ma60']
+                    'ma5', 'ma10', 'ma20', 'ma30', 'ma60']
         for col in expected:
             assert col in df.columns, f"缺少列: {col}"
 
