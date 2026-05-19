@@ -8,6 +8,7 @@ from typing import Any
 import streamlit as st
 
 from decision_committee import build_a_share_decision
+from trade_plan import build_trade_plan_from_levels
 
 
 def build_decision_snapshot(
@@ -183,48 +184,6 @@ def _panel(title: str, body: str, tone: str = "neutral", *, compact: bool = Fals
 def build_trade_plan(snapshot: dict[str, Any], data: Any = None) -> dict[str, Any]:
     """Build a deterministic trade plan from real quote, K-line and indicator data."""
     risk_control = snapshot.get("risk_control") or {}
-    if risk_control:
-        key_levels = snapshot.get("key_levels") or {}
-        support = _num(key_levels.get("support"))
-        mid = _num(key_levels.get("mid"))
-        ma20 = _num(key_levels.get("ma20"))
-        price = _num(key_levels.get("price"))
-        score = int(snapshot.get("score") or 0)
-
-        if risk_control.get("hard_block"):
-            buy_zone = "禁止新增，等待重大风险解除"
-        elif risk_control.get("level") == "高" or score < 40:
-            buy_zone = "暂不新增，等待风险解除"
-        elif score >= 78:
-            buy_zone = _fmt_range(support, min(value for value in (mid, ma20, price) if value is not None) if any(value is not None for value in (mid, ma20, price)) else None)
-        elif score >= 62:
-            buy_zone = _fmt_range(support, mid or ma20)
-        else:
-            buy_zone = "等回踩支撑或放量突破确认"
-
-        confirm_level = _num(risk_control.get("confirm_level"))
-        if confirm_level is not None and price is not None and price >= confirm_level and score >= 60:
-            add_condition = f"已站上确认位 {confirm_level:.2f}，仍需观察量能和风险事件"
-        elif confirm_level is not None:
-            add_condition = f"放量站回 {confirm_level:.2f} 上方再考虑加仓"
-        else:
-            add_condition = "等待关键均线和量价确认"
-
-        take_profit_1 = risk_control.get("take_profit_1")
-        trim_condition = f"接近 {_fmt_level(take_profit_1)} 压力位先观察减仓" if _num(take_profit_1) is not None else "等待形成明确压力位"
-        return {
-            "current_action": risk_control.get("final_action") or snapshot.get("action"),
-            "buy_zone": buy_zone,
-            "add_condition": add_condition,
-            "stop_loss": risk_control.get("stop_loss"),
-            "take_profit_1": take_profit_1,
-            "take_profit_2": risk_control.get("take_profit_2"),
-            "trim_condition": trim_condition,
-            "position": risk_control.get("max_position") or snapshot.get("position") or "--",
-            "risk_note": "硬拦截已触发" if risk_control.get("hard_block") else "最终仓位受执行风控约束",
-            "data_basis": risk_control.get("data_basis") or "真实行情/K线/指标推导，未使用模拟或随机行情",
-        }
-
     key_levels = snapshot.get("key_levels") or {}
     price = _num(key_levels.get("price"))
     support = _num(key_levels.get("support"))
@@ -237,56 +196,22 @@ def build_trade_plan(snapshot: dict[str, Any], data: Any = None) -> dict[str, An
     confidence = int(snapshot.get("confidence") or 0)
     action = snapshot.get("action") or "等待确认"
     buffer = _atr_buffer(data, price) or ((price or support or resistance or 0) * 0.02)
-
-    confirm_candidates = [value for value in (mid, ma20, ma60) if value is not None]
-    confirm_level = max(confirm_candidates) if confirm_candidates else None
-    stop_anchor = support if support is not None else ma60
-    stop_loss = stop_anchor - buffer if stop_anchor is not None else None
-    take_profit_1 = resistance
-    take_profit_2 = None
-    if resistance is not None and support is not None:
-        take_profit_2 = resistance + max(0, resistance - support) * 0.5
-
-    if risk_level == "高" or score < 40:
-        current_action = "降仓回避"
-        buy_zone = "暂不新增，等待风险解除"
-    elif confidence < 55:
-        current_action = "等待确认"
-        buy_zone = "等待数据确认后再定"
-    elif score >= 78:
-        current_action = "积极关注 / 分批建仓"
-        buy_zone = _fmt_range(support, min(value for value in (mid, ma20, price) if value is not None) if any(value is not None for value in (mid, ma20, price)) else None)
-    elif score >= 62:
-        current_action = "轻仓试探"
-        buy_zone = _fmt_range(support, mid or ma20)
-    else:
-        current_action = action
-        buy_zone = "等回踩支撑或放量突破确认"
-
-    if price is not None and confirm_level is not None and price >= confirm_level and score >= 60:
-        add_condition = f"已站上确认位 {confirm_level:.2f}，仍需观察量能和风险事件"
-    elif confirm_level is not None:
-        add_condition = f"放量站回 {confirm_level:.2f} 上方再考虑加仓"
-    else:
-        add_condition = "等待关键均线和量价确认"
-
-    if take_profit_1 is not None:
-        trim_condition = f"接近 {take_profit_1:.2f} 压力位先观察减仓"
-    else:
-        trim_condition = "等待形成明确压力位"
-
-    return {
-        "current_action": current_action,
-        "buy_zone": buy_zone,
-        "add_condition": add_condition,
-        "stop_loss": stop_loss,
-        "take_profit_1": take_profit_1,
-        "take_profit_2": take_profit_2,
-        "trim_condition": trim_condition,
-        "position": snapshot.get("position") or "--",
-        "risk_note": "高风险优先控制回撤" if risk_level == "高" else "按计划分批，不追高满仓",
-        "data_basis": "真实行情/K线/指标推导，未使用模拟或随机行情",
-    }
+    return build_trade_plan_from_levels(
+        price=price,
+        support=support,
+        mid=mid,
+        resistance=resistance,
+        ma20=ma20,
+        ma60=ma60,
+        score=score,
+        confidence=confidence,
+        risk_level=risk_level,
+        action=action,
+        position=snapshot.get("position") or "--",
+        buffer=buffer,
+        risk_control=risk_control,
+        data_basis="真实行情/K线/指标推导，未使用模拟或随机行情",
+    )
 
 
 def _fmt_percent(value: Any, *, signed: bool = False) -> str:

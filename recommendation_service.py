@@ -7,7 +7,14 @@ from typing import Any, Callable
 import time
 import requests
 
-from config import CACHE_TTL_RECOMMENDATION_RESULTS, RECOMMEND_RANKER_ENABLED, RECOMMEND_RANKER_SORT
+from config import (
+    CACHE_TTL_RECOMMENDATION_RESULTS,
+    RECOMMEND_RANKER_ENABLED,
+    RECOMMEND_RANKER_SORT,
+    T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+    T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS,
+    T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS,
+)
 from data.cache import JsonFileCache
 from data.services.fundamental_service import FundamentalDataService
 from data.services.quote_service import QuoteDataService
@@ -26,6 +33,7 @@ from quality_monitor import (
 )
 from recommend_ranker import enrich_recommendations_with_alpha
 from stock_recommendation import StockRecommender
+from trade_plan import enrich_recommendations_with_trade_plan
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
@@ -438,6 +446,11 @@ class RecommendationService:
             strategy=strategy,
             sector=sector,
         )
+        enrich_recommendations_with_trade_plan(
+            recommended,
+            strategy=strategy,
+            sector=sector,
+        )
         diagnostics = dict(diagnostics or {})
         diagnostics["quality"] = summarize_recommendation_quality(recommended)
         return {
@@ -533,8 +546,13 @@ class RecommendationService:
         for sector, strategies in sector_data.items():
             enriched[sector] = {}
             for strategy, stocks in (strategies or {}).items():
-                enriched[sector][strategy] = attach_recommendation_explanations(
+                strategy_stocks = attach_recommendation_explanations(
                     stocks or [],
+                    strategy=strategy,
+                    sector=sector,
+                )
+                enriched[sector][strategy] = enrich_recommendations_with_trade_plan(
+                    strategy_stocks,
                     strategy=strategy,
                     sector=sector,
                 )
@@ -555,27 +573,101 @@ class RecommendationService:
     def _preheat_extended_info_cache(self, recommended: list[dict[str, Any]] | None) -> dict[str, Any]:
         stocks = recommended or []
         if not stocks:
-            return {"status": "skipped", "reason": "empty_recommendation", "total": 0, "refreshed": 0, "failed": 0}
+            return {
+                "status": "skipped",
+                "reason": "empty_recommendation",
+                "total": 0,
+                "attempted": 0,
+                "refreshed": 0,
+                "failed": 0,
+                "skipped": 0,
+                "deep_layers": T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+            }
+        symbols = [
+            str((stock or {}).get("symbol") or "").strip()
+            for stock in stocks
+            if str((stock or {}).get("symbol") or "").strip()
+        ]
+        invalid = len(stocks) - len(symbols)
+        max_symbols = max(0, int(T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS or 0))
+        timeout_seconds = max(0.0, float(T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS or 0))
+        if max_symbols <= 0:
+            return {
+                "status": "skipped",
+                "reason": "max_symbols_zero",
+                "total": len(stocks),
+                "attempted": 0,
+                "refreshed": 0,
+                "failed": 0,
+                "skipped": len(stocks),
+                "max_symbols": max_symbols,
+                "timeout_seconds": timeout_seconds,
+                "deep_layers": T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+            }
+        selected_symbols = symbols[:max_symbols]
+        limit_skipped = max(0, len(symbols) - len(selected_symbols))
+        started = time.perf_counter()
         try:
             from data.services.info_service import StockInfoService
             info_service = StockInfoService()
+            attempted = 0
             refreshed = 0
             failed = 0
-            for stock in stocks:
-                symbol = str((stock or {}).get("symbol") or "").strip()
-                if not symbol:
-                    continue
+            timed_out = False
+            for symbol in selected_symbols:
+                if timeout_seconds > 0 and (time.perf_counter() - started) >= timeout_seconds:
+                    timed_out = True
+                    break
+                attempted += 1
                 try:
-                    payload = info_service.get_stock_extended_info(symbol, "CN", include_deep_layers=True)
+                    payload = info_service.get_stock_extended_info(
+                        symbol,
+                        "CN",
+                        include_deep_layers=T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+                    )
                     if isinstance(payload, dict):
                         refreshed += 1
                     else:
                         failed += 1
                 except Exception:
                     failed += 1
-            return {"status": "ok", "total": len(stocks), "refreshed": refreshed, "failed": failed}
+            timeout_skipped = max(0, len(selected_symbols) - attempted) if timed_out else 0
+            skipped = invalid + limit_skipped + timeout_skipped
+            if timed_out:
+                status = "timeout"
+            elif failed and refreshed:
+                status = "partial"
+            elif failed:
+                status = "failed"
+            elif skipped:
+                status = "partial"
+            else:
+                status = "ok"
+            return {
+                "status": status,
+                "total": len(stocks),
+                "attempted": attempted,
+                "refreshed": refreshed,
+                "failed": failed,
+                "skipped": skipped,
+                "max_symbols": max_symbols,
+                "timeout_seconds": timeout_seconds,
+                "elapsed_seconds": round(time.perf_counter() - started, 3),
+                "deep_layers": T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+            }
         except Exception as exc:
-            return {"status": "failed", "error": str(exc), "total": len(stocks), "refreshed": 0, "failed": len(stocks)}
+            return {
+                "status": "failed",
+                "error": str(exc),
+                "total": len(stocks),
+                "attempted": 0,
+                "refreshed": 0,
+                "failed": len(stocks),
+                "skipped": 0,
+                "max_symbols": max_symbols,
+                "timeout_seconds": timeout_seconds,
+                "deep_layers": T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
+            }
 
     def _fetch_entry_realtime_quotes(self, symbols: list[str]) -> tuple[dict[str, dict[str, Any]], str]:
         quotes = _fetch_eastmoney_realtime_quotes(symbols)

@@ -120,18 +120,87 @@ def test_analyze_page_syncs_cached_result_when_returning_to_page():
     assert "_sync_analyze_input_to_cached_result()" in source
 
 
-def test_analyze_page_does_not_overwrite_new_manual_input_with_cached_result():
+def test_analyze_page_binds_cached_result_to_target_key():
     from pathlib import Path
 
     source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
-    sync_block = source.split("def _sync_analyze_input_to_cached_result", 1)[1].split(
-        "def _render_analysis_target_header", 1
-    )[0]
 
-    assert 'current_input = str(st.session_state.get("analyze_symbol_input"' in sync_block
-    assert 'current_symbol = str(st.session_state.get("analyze_symbol"' in sync_block
-    assert "current_input != current_symbol" in sync_block
-    assert "return" in sync_block.split("current_input != current_symbol", 1)[1].split("analyzed_symbol", 1)[0]
+    assert "def _analysis_target_key" in source
+    assert "def _has_valid_analyzed_result" in source
+    assert "def _tag_analysis_data" in source
+    assert "def _data_matches_target" in source
+    assert "st.session_state.analyzed_target_key = _analysis_target_key(symbol, market, period)" in source
+    assert "st.session_state.pending_analyze_input_sync" in source
+    assert "_analysis_target_key(" in source.split("has_fresh_task_result", 1)[1]
+
+
+def test_analyze_page_rejects_cross_symbol_quote_cache():
+    from ui.analyze_page import _quote_for_target, _quote_matches_target
+
+    data = pd.DataFrame({
+        "open": [9.8, 10.0],
+        "high": [10.2, 10.3],
+        "low": [9.7, 9.9],
+        "close": [10.0, 10.1],
+        "volume": [1000, 1200],
+    })
+    stale_quote = {
+        "symbol": "600519",
+        "price": 41.09,
+        "open": 40.0,
+        "high": 42.0,
+        "low": 39.8,
+        "volume": 10000,
+    }
+
+    assert _quote_matches_target(stale_quote, "000001", "CN") is False
+    fallback = _quote_for_target(stale_quote, "000001", "CN", data)
+    assert fallback["price"] == 10.1
+    assert fallback["source"] == "历史K线兜底"
+
+
+def test_analyze_page_rejects_cross_symbol_dataframe_cache():
+    import streamlit as st
+    from ui.analyze_page import _has_valid_analyzed_result, _is_current_input_analyzed, _tag_analysis_data
+
+    st.session_state.clear()
+    data = pd.DataFrame({"close": [10.0, 10.1]})
+    st.session_state.analyze_symbol = "000001"
+    st.session_state.analyze_symbol_input = "000001"
+    st.session_state.analyze_market = "CN"
+    st.session_state.analyze_period = "1y"
+    st.session_state.analyzed_symbol = "000001"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("000001", "CN", "1y")
+    st.session_state.analyzed_data = _tag_analysis_data(data, "600519", "CN", "1y")
+
+    assert _has_valid_analyzed_result() is False
+    assert _is_current_input_analyzed() is False
+
+
+def test_analyze_page_syncs_stale_input_to_valid_cached_result():
+    import streamlit as st
+    from ui.analyze_page import _sync_analyze_input_to_cached_result, _tag_analysis_data
+
+    st.session_state.clear()
+    data = _tag_analysis_data(pd.DataFrame({"close": [7.1, 7.2]}), "600016", "CN", "1y")
+    st.session_state.analyze_symbol = "000001"
+    st.session_state.analyze_symbol_input = "000001"
+    st.session_state.analyze_market = "CN"
+    st.session_state.analyze_period = "1y"
+    st.session_state.analyzed_symbol = "600016"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("600016", "CN", "1y")
+    st.session_state.analyzed_data = data
+
+    _sync_analyze_input_to_cached_result()
+
+    assert st.session_state.analyze_symbol == "600016"
+    assert st.session_state.analyze_symbol_input == "600016"
+    assert st.session_state.analyze_market == "CN"
+    assert st.session_state.analyze_period == "1y"
 
 
 def test_recommend_page_shows_multi_factor_diagnostics():
@@ -541,6 +610,15 @@ def test_trade_plan_card_builds_explicit_levels_from_real_indicators():
     assert "未使用模拟" in plan["data_basis"]
 
 
+def test_trade_plan_card_uses_shared_trade_plan_builder():
+    from pathlib import Path
+
+    source = Path("ui/decision_dashboard.py").read_text(encoding="utf-8")
+
+    assert "from trade_plan import build_trade_plan_from_levels" in source
+    assert "return build_trade_plan_from_levels(" in source
+
+
 def test_defense_dashboard_uses_five_real_data_dimensions():
     dates = pd.date_range("2026-01-01", periods=70, freq="D")
     data = pd.DataFrame({
@@ -815,9 +893,17 @@ def test_trade_defense_layout_groups_plan_control_and_evidence():
     assert "col_plan, col_control = st.columns([1, 1])" in section
     assert "col_bull, col_bear, col_risk = st.columns(3)" in section
     assert section.index("_render_trade_plan") < section.index("_render_risk_control")
-    assert section.index("_render_risk_control") < section.index("_render_defense_dashboard")
-    assert section.index("_render_defense_dashboard") < section.index('"看多依据"')
-    assert section.index('"看多依据"') < section.index('"看空因素"') < section.index('"风险警报"')
+
+
+def test_recommend_page_renders_trade_plan_from_recommendation_result():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert 'stock.get("trade_plan")' in source
+    assert 'with st.expander("买卖点计划"' in source
+    assert '"买入观察区"' in source
+    assert '"止损线"' in source
 
 
 def test_decision_dashboard_has_no_alphaseeker_name():

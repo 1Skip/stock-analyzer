@@ -222,7 +222,25 @@ def test_observability_does_not_change_strategy_selected_order(monkeypatch):
 
     assert [stock["symbol"] for stock in result["recommended"]] == ["002010", "002011"]
     assert all("explanation" in stock for stock in result["recommended"])
+    assert all("trade_plan" in stock for stock in result["recommended"])
     assert result["diagnostics"]["quality"]["stock_count"] == 2
+
+
+def test_trade_plan_is_added_after_selection_without_changing_order():
+    service = RecommendationService(
+        recommender=TwoStockRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("多因子稳健型", "全部", 5)
+
+    assert [stock["symbol"] for stock in result["recommended"]] == ["002010", "002011"]
+    plan = result["recommended"][0]["trade_plan"]
+    assert plan["buy_zone"]
+    assert plan["stop_loss"] is not None
+    assert "不使用盘中实时行情" in plan["data_basis"]
+    assert "不参与选股" in plan["data_basis"]
 
 
 def test_recommendation_service_sorts_alpha_only_when_config_enabled(monkeypatch):
@@ -312,6 +330,79 @@ def test_t1_plan_records_preheat_and_elapsed_metrics_without_changing_strategy(m
     assert plan["generation_metrics"]["elapsed_ms"] >= 0
     assert plan["data_status"]["preheat"]["kline_cache"]["status"] == "ok"
     assert plan["data_status"]["preheat"]["extended_info_cache"]["status"] == "ok"
+
+
+def test_preheat_extended_info_cache_is_shallow_and_bounded(monkeypatch):
+    import data.services.info_service as info_module
+    import recommendation_service as module
+
+    calls = []
+
+    class FakeInfoService:
+        def get_stock_extended_info(self, symbol, market, include_deep_layers=False):
+            calls.append((symbol, market, include_deep_layers))
+            return {"symbol": symbol}
+
+    monkeypatch.setattr(module, "T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS", 2)
+    monkeypatch.setattr(module, "T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS", 20)
+    monkeypatch.setattr(module, "T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP", False)
+    monkeypatch.setattr(info_module, "StockInfoService", FakeInfoService)
+    service = module.RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service._preheat_extended_info_cache([
+        {"symbol": "002001"},
+        {"symbol": "002002"},
+        {"symbol": "002003"},
+    ])
+
+    assert calls == [("002001", "CN", False), ("002002", "CN", False)]
+    assert result["status"] == "partial"
+    assert result["attempted"] == 2
+    assert result["refreshed"] == 2
+    assert result["skipped"] == 1
+    assert result["deep_layers"] is False
+
+
+def test_preheat_extended_info_cache_stops_on_timeout(monkeypatch):
+    import data.services.info_service as info_module
+    import recommendation_service as module
+
+    calls = []
+
+    class FakeInfoService:
+        def get_stock_extended_info(self, symbol, market, include_deep_layers=False):
+            calls.append(symbol)
+            return {"symbol": symbol}
+
+    tick = {"value": 0}
+
+    def fake_perf_counter():
+        tick["value"] += 25
+        return tick["value"]
+
+    monkeypatch.setattr(module, "T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS", 5)
+    monkeypatch.setattr(module, "T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS", 20)
+    monkeypatch.setattr(info_module, "StockInfoService", FakeInfoService)
+    monkeypatch.setattr(module.time, "perf_counter", fake_perf_counter)
+    service = module.RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service._preheat_extended_info_cache([
+        {"symbol": "002001"},
+        {"symbol": "002002"},
+    ])
+
+    assert calls == []
+    assert result["status"] == "timeout"
+    assert result["attempted"] == 0
+    assert result["skipped"] == 2
 
 
 def test_latest_t1_plan_marks_cache_source():

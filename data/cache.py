@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import base64
 import re
 import threading
 import time
@@ -26,7 +27,15 @@ def _get_lock(path: Path) -> threading.Lock:
 
 
 def _safe_key(key: str) -> str:
-    return re.sub(r"[^0-9A-Za-z_.:-]+", "_", key)
+    raw = str(key or "")
+    if re.fullmatch(r"[0-9A-Za-z_.:-]+", raw):
+        return raw
+    encoded = base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"b64_{encoded}"
+
+
+def _legacy_safe_key(key: str) -> str:
+    return re.sub(r"[^0-9A-Za-z_.:-]+", "_", str(key or ""))
 
 
 class JsonFileCache:
@@ -40,6 +49,8 @@ class JsonFileCache:
     def get(self, key: str) -> Any | None:
         payload = self._read()
         item = payload.get(_safe_key(key))
+        if not item:
+            item = payload.get(_legacy_safe_key(key))
         if not item:
             return None
         try:

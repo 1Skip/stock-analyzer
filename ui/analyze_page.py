@@ -130,6 +130,60 @@ def _quote_from_last_row(data):
     }
 
 
+def _normalize_target_symbol(symbol, market):
+    text = str(symbol or "").strip()
+    if market == "CN" and text.isdigit():
+        return text.zfill(6)
+    if market == "HK" and text.isdigit():
+        return text.zfill(5)
+    return text.upper() if text.isascii() else text
+
+
+def _analysis_target_key(symbol, market, period):
+    return (
+        _normalize_target_symbol(symbol, market),
+        str(market or ""),
+        str(period or ""),
+    )
+
+
+def _quote_matches_target(quote, symbol, market):
+    if not isinstance(quote, dict):
+        return False
+    quote_symbol = quote.get("symbol") or quote.get("code")
+    if not quote_symbol:
+        return False
+    expected = _normalize_target_symbol(symbol, market)
+    raw_actual = str(quote_symbol).strip()
+    actual_parts = [
+        raw_actual,
+        raw_actual.split(".", 1)[0],
+        raw_actual.split("_", 1)[0],
+    ]
+    actual_values = [_normalize_target_symbol(part, market) for part in actual_parts if part]
+    if market in ("CN", "HK"):
+        return any(actual.endswith(expected) for actual in actual_values)
+    return any(actual == expected for actual in actual_values)
+
+
+def _quote_for_target(quote, symbol, market, data):
+    if _is_valid_quote(quote) and _quote_matches_target(quote, symbol, market):
+        return quote
+    return _quote_from_last_row(data)
+
+
+def _tag_analysis_data(data, symbol, market, period):
+    if data is not None and hasattr(data, "attrs"):
+        data.attrs["analysis_target_key"] = _analysis_target_key(symbol, market, period)
+    return data
+
+
+def _data_matches_target(data, symbol, market, period):
+    if data is None or not hasattr(data, "attrs"):
+        return False
+    return data.attrs.get("analysis_target_key") == _analysis_target_key(symbol, market, period)
+
+
 def _latest_news_date(news):
     """返回新闻列表中的最新可见日期。"""
     candidates = []
@@ -510,7 +564,7 @@ def _render_current_stock_header(symbol: str, market: str, period: str, stock_na
 
 def _get_analyzed_target():
     """返回已完成分析对应的代码、名称、市场和周期。"""
-    if st.session_state.get("analyzed_data") is None:
+    if not _has_valid_analyzed_result():
         return None
     symbol = st.session_state.get("analyzed_symbol") or st.session_state.get("analyze_symbol")
     market = st.session_state.get("analyzed_market") or st.session_state.get("analyze_market", "CN")
@@ -525,6 +579,7 @@ def _clear_analyzed_result():
         "analyzed_symbol",
         "analyzed_market",
         "analyzed_period",
+        "analyzed_target_key",
         "analyzed_data",
         "analyzed_signals",
         "analyzed_quote",
@@ -532,31 +587,49 @@ def _clear_analyzed_result():
         "analyzed_profile",
         "analyzed_extended_info",
         "analyzed_intraday_data",
+        "pending_analyze_input_sync",
     ]:
         st.session_state.pop(key, None)
 
 
 def _is_current_input_analyzed():
     """判断当前输入框/市场/周期是否仍对应已完成分析结果。"""
+    if not _has_valid_analyzed_result():
+        return False
     target = _resolve_watchlist_target(
         st.session_state.get("analyze_symbol_input", st.session_state.get("analyze_symbol", "")),
         st.session_state.get("analyze_market", "CN"),
     )
     input_symbol = target[0] if target else str(st.session_state.get("analyze_symbol_input", "")).strip()
-    return (
-        input_symbol == st.session_state.get("analyzed_symbol")
-        and st.session_state.get("analyze_market") == st.session_state.get("analyzed_market")
-        and st.session_state.get("analyze_period") == st.session_state.get("analyzed_period")
-    )
+    return _analysis_target_key(
+        input_symbol,
+        st.session_state.get("analyze_market"),
+        st.session_state.get("analyze_period"),
+    ) == st.session_state.get("analyzed_target_key")
+
+
+def _has_valid_analyzed_result():
+    """确保已分析缓存自身的 symbol/market/period 归属完整，避免切页回来串台。"""
+    if st.session_state.get("analyzed_data") is None:
+        return False
+    symbol = st.session_state.get("analyzed_symbol")
+    market = st.session_state.get("analyzed_market")
+    period = st.session_state.get("analyzed_period")
+    if not symbol or not market or not period:
+        return False
+    expected = _analysis_target_key(symbol, market, period)
+    if not _data_matches_target(st.session_state.get("analyzed_data"), symbol, market, period):
+        return False
+    stored = st.session_state.get("analyzed_target_key")
+    if stored is None:
+        st.session_state.analyzed_target_key = expected
+        return True
+    return stored == expected
 
 
 def _sync_analyze_input_to_cached_result():
     """页面切回个股分析时，确保顶部输入/当前标的与已分析结果一致。"""
-    if st.session_state.get("analyzed_data") is None:
-        return
-    current_input = str(st.session_state.get("analyze_symbol_input", "") or "").strip()
-    current_symbol = str(st.session_state.get("analyze_symbol", "") or "").strip()
-    if current_input and current_symbol and current_input != current_symbol:
+    if not _has_valid_analyzed_result():
         return
     analyzed_symbol = st.session_state.get("analyzed_symbol")
     analyzed_market = st.session_state.get("analyzed_market")
@@ -888,7 +961,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
             "period": period,
         }
 
-    quote_is_realtime = _is_valid_quote(quote)
+    quote_is_realtime = _is_valid_quote(quote) and _quote_matches_target(quote, symbol, market)
     if not quote_is_realtime:
         _emit_progress(progress_callback, "实时行情兜底", 84, source="历史K线")
         quote = _quote_from_last_row(data)
@@ -908,6 +981,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
     _emit_progress(progress_callback, "计算技术指标", 94)
     data = TechnicalIndicators.calculate_all(data)
+    data = _tag_analysis_data(data, symbol, market, period)
     _emit_progress(progress_callback, "生成交易信号", 98)
     signals = TechnicalIndicators.get_signals(data)
 
@@ -943,6 +1017,14 @@ def analyze_stock_page():
         st.session_state.analyze_selected_suggestion = ""
     if 'quick_stock_query' not in st.session_state:
         st.session_state.quick_stock_query = ""
+    pending_analyze_input_sync = st.session_state.pop("pending_analyze_input_sync", None)
+    if pending_analyze_input_sync:
+        st.session_state.analyze_symbol = pending_analyze_input_sync["symbol"]
+        st.session_state.analyze_symbol_input = pending_analyze_input_sync["symbol"]
+        st.session_state.analyze_market = pending_analyze_input_sync.get("market", st.session_state.analyze_market)
+        st.session_state.analyze_market_select = st.session_state.analyze_market
+        st.session_state.analyze_period = pending_analyze_input_sync.get("period", st.session_state.analyze_period)
+        st.session_state.analyze_period_select = st.session_state.analyze_period
     pending_watchlist_analysis = st.session_state.pop("pending_watchlist_analysis", None)
     if pending_watchlist_analysis:
         st.session_state.analyze_symbol = pending_watchlist_analysis["symbol"]
@@ -1149,22 +1231,34 @@ def analyze_stock_page():
             symbol = task_result["symbol"]
             market = task_result["market"]
             period = task_result["period"]
+            data = _tag_analysis_data(task_result["data"], symbol, market, period)
             st.session_state.analyze_symbol = symbol
             st.session_state.analyzed_symbol = symbol
             st.session_state.analyzed_market = market
             st.session_state.analyzed_period = period
-            st.session_state.analyzed_data = task_result["data"]
+            st.session_state.analyzed_target_key = _analysis_target_key(symbol, market, period)
+            st.session_state.analyzed_data = data
             st.session_state.analyzed_signals = task_result["signals"]
             st.session_state.analyzed_quote = task_result["quote"]
             st.session_state.analyzed_stock_name = task_result["stock_name"]
             st.session_state.analyzed_profile = task_result["profile"]
             st.session_state.analyzed_extended_info = task_result["extended_info"]
             st.session_state.analyzed_intraday_data = task_result["intraday_data"]
+            st.session_state.pending_analyze_input_sync = {
+                "symbol": symbol,
+                "market": market,
+                "period": period,
+            }
+            st.rerun()
 
     # rerun 恢复
     has_fresh_task_result = (
-        st.session_state.get("analyzed_data") is not None
-        and st.session_state.get("analyze_symbol") == st.session_state.get("analyzed_symbol")
+        _has_valid_analyzed_result()
+        and _analysis_target_key(
+            st.session_state.get("analyze_symbol"),
+            st.session_state.get("analyze_market"),
+            st.session_state.get("analyze_period"),
+        ) == st.session_state.get("analyzed_target_key")
     )
     if _is_current_input_analyzed() or has_fresh_task_result:
         cached_data = st.session_state.get("analyzed_data")
@@ -1178,7 +1272,7 @@ def analyze_stock_page():
             _render_analysis_results(
                 display_data,
                 st.session_state.get("analyzed_signals", {}),
-                st.session_state.get("analyzed_quote"),
+                _quote_for_target(st.session_state.get("analyzed_quote"), cached_symbol, cached_market, display_data),
                 cached_symbol,
                 st.session_state.get("analyzed_stock_name", ""),
                 cached_market,

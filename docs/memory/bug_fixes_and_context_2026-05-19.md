@@ -26,3 +26,22 @@
 - 结果：`793 passed, 21 warnings`
 - 追加局部测试：`tests/test_recommendation_service.py tests/test_ui_enhancements.py`，结果 `90 passed`
 - 追加局部测试：`tests/test_quality_monitor.py tests/test_hot_stocks_page.py`，结果 `9 passed`
+
+## 追加记录：T+1 买卖点、飞书推送与个股分析状态修复
+
+- 智能推荐页的推荐结果已接入收盘后日 K 口径的 `trade_plan`，用于展示买入观察区、加仓确认、止损线、压力/止盈位、失效条件和仓位建议；该字段在推荐生成后追加，不参与原始选股、评分或排序。
+- 推荐页买卖点与个股分析页决策仪表盘复用同一个底层交易计划生成器，保持支撑位、BOLL、均线、ATR/缓冲和风险提示口径一致。
+- 飞书 T+1 推荐计划推送读取已生成计划中的 `trade_plan`，推送正文包含交易计划卡片、风控防御看板、买入观察区、止损线和压力位；不新增盘中实时追高/跌破支撑重算逻辑。
+- `scheduler.py` 的 T+1 预生成目标按用户确认后的边界执行：短线/长线分别覆盖 `全部、苹果概念、特斯拉概念、电力、算力租赁`，多因子稳健型和激进突破型只生成 `全部`，默认每组 5 只。
+- 本机配置已验证：`SCHEDULE_ENABLED`、`NOTIFY_ENABLED`、`T1_PLAN_AUTO_ENABLED`、`T1_PLAN_PUSH_ENABLED` 均为开启；真实调度进程已处理为单实例锁持有状态，避免两个独立调度器并发写缓存和重复推送。
+- 新增 `github_watchlist_sync.py`，支持把网页端 `watchlist.json` 归一化后覆盖 GitHub Actions 的 `WATCHLIST_JSON` Secret；2026-05-19 已真实同步当前 2 只自选股到 GitHub Actions，返回 `WATCHLIST_JSON updated`。
+- 飞书 Webhook 已做真实发送验证：第一次测试证明 Webhook 连通但 shell 内联中文编码错误会变成问号；随后使用正确编码发送“股票分析系统中文推送修正测试”，飞书群内中文标题和正文显示正常。
+- 修复个股分析页切换页面后顶部搜索框/当前标的与下方已分析数据不一致的问题：当页面恢复时，只要存在有效已分析结果，就把 `analyze_symbol`、`analyze_symbol_input`、市场和周期同步到该结果，避免“顶部平安银行、下方民生银行数据”的错位。
+- 本次修复不是民生银行单股特例，新增回归测试覆盖“输入框残留 `000001`，已分析结果为 `600016`”时恢复后统一到 `600016` 的通用状态链路。
+
+## 追加验证结果
+
+- 全量测试：`.venv\Scripts\python.exe -m pytest -q` -> `821 passed, 20 warnings`。
+- 个股分析真实数据链路：`600016` 返回股票名称“民生银行”、`000001` 返回股票名称“平安银行”，两者 `target_key` 与 DataFrame `analysis_target_key` 均匹配。
+- 推送外部链路：GitHub Actions `WATCHLIST_JSON` Secret 同步成功；飞书真实中文测试消息发送成功。
+- 未完成边界：浏览器点击级自动化验证因 Browser 通道不可用未完成；部分 T+1 组合缓存仍需用户在页面逐个点击生成后补齐，不记录为已完成。

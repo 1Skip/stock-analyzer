@@ -156,6 +156,36 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
     return title, body
 
 
+def build_t1_plan_report(plans: dict[str, Any]) -> tuple[str, str]:
+    """Build a Feishu/WeChat report for cached T+1 plans generated after close."""
+    title = "T+1 推荐计划"
+    body_lines = []
+    for strategy, plan in (plans or {}).items():
+        if not isinstance(plan, dict):
+            continue
+        generated = plan.get("generated_at") or "--"
+        plan_date = plan.get("plan_for_trade_date") or "--"
+        sector = plan.get("sector") or "全部"
+        recommended = plan.get("recommended") or []
+        status = plan.get("status")
+        body_lines.append(f"## {strategy}")
+        body_lines.append(f"生成时间: {generated}｜板块: {sector}｜计划日: {plan_date}")
+        if status in {"timeout", "failed"}:
+            error = ((plan.get("data_status") or {}).get("error") or "生成失败") if isinstance(plan.get("data_status"), dict) else "生成失败"
+            body_lines.append(f"状态: {status}｜{error}")
+            body_lines.append("")
+            continue
+        if not recommended:
+            body_lines.append("暂无推荐")
+            body_lines.append("")
+            continue
+        for stock in recommended:
+            body_lines.extend(_build_sector_stock_lines(stock))
+        body_lines.append("")
+    body = "\n".join(body_lines).strip()
+    return title, body or "暂无 T+1 推荐计划"
+
+
 def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
     """Render a sector recommendation with the same decision cards used by watchlist push."""
     price = _number(stock.get("latest_price") or stock.get("price"))
@@ -185,6 +215,7 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         if penalties:
             alpha_line += f"；扣分 {penalties}"
         lines.append(alpha_line)
+    lines.extend(_build_trade_plan_push_lines(stock))
     lines.extend(_build_explanation_push_lines(stock))
     checks = stock.get("strategy_checks") or {}
     details = stock.get("strategy_details") or {}
@@ -218,6 +249,36 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         logger.info("推荐股决策卡生成失败，保留基础推荐信息: %s", exc)
 
     return lines
+
+
+def _build_trade_plan_push_lines(stock: dict[str, Any]) -> list[str]:
+    plan = stock.get("trade_plan") if isinstance(stock.get("trade_plan"), dict) else {}
+    if not plan:
+        return []
+    lines = [
+        (
+            "  买卖点: "
+            f"观察区 {plan.get('buy_zone') or '--'}；"
+            f"止损 {_format_plan_level(plan.get('stop_loss'))}；"
+            f"第一压力 {_format_plan_level(plan.get('take_profit_1'))}；"
+            f"仓位 {plan.get('position') or '--'}"
+        )
+    ]
+    if plan.get("add_condition"):
+        lines.append(f"  加仓确认: {plan['add_condition']}")
+    invalid = plan.get("invalid_conditions") or []
+    if invalid:
+        lines.append(f"  失效条件: {'；'.join(str(item) for item in invalid[:2])}")
+    return lines
+
+
+def _format_plan_level(value: Any) -> str:
+    try:
+        if value is None or value == "":
+            return "--"
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value)
 
 
 def _build_explanation_push_lines(stock: dict[str, Any]) -> list[str]:

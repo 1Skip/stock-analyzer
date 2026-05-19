@@ -44,34 +44,81 @@ class TestRunScheduledAnalysis:
     def test_t1_plan_preheat_calls_all_configured_strategies_without_realtime_selection(self, monkeypatch):
         """T+1 预生成会调用所有配置策略，不执行入场实时检查。"""
         fake_service = MagicMock()
-        fake_service.run_t1_plan.side_effect = lambda strategy, *_args, **_kwargs: {
+        fake_service.run_t1_plan.side_effect = lambda strategy, sector, *_args, **_kwargs: {
             "strategy": strategy,
+            "sector": sector,
             "recommended": [{"symbol": "002001"}],
             "generation_metrics": {"elapsed_seconds": 1.2},
         }
-        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["多因子稳健型", "激进突破型"])
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["短线", "长线", "多因子稳健型", "激进突破型"])
+        monkeypatch.setattr("scheduler.T1_PLAN_SECTORS", ["全部", "电力"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTOR", "全部")
         monkeypatch.setattr("scheduler.T1_PLAN_NUM_STOCKS", 5)
         monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_KLINE", True)
         monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_EXTENDED_INFO", True)
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGY_TIMEOUT_SECONDS", 0)
         monkeypatch.setattr("recommendation_service.RecommendationService", lambda: fake_service)
 
         from scheduler import run_t1_plan_preheat
         plans = run_t1_plan_preheat()
 
-        assert plans["多因子稳健型"]["recommended"][0]["symbol"] == "002001"
-        assert plans["激进突破型"]["recommended"][0]["symbol"] == "002001"
-        assert fake_service.run_t1_plan.call_count == 2
-        called_strategies = [call.args[0] for call in fake_service.run_t1_plan.call_args_list]
-        assert called_strategies == ["多因子稳健型", "激进突破型"]
+        assert plans["短线:全部"]["recommended"][0]["symbol"] == "002001"
+        assert plans["长线:电力"]["recommended"][0]["symbol"] == "002001"
+        assert plans["多因子稳健型:全部"]["recommended"][0]["symbol"] == "002001"
+        assert plans["激进突破型:全部"]["recommended"][0]["symbol"] == "002001"
+        assert fake_service.run_t1_plan.call_count == 6
+        called_targets = [(call.args[0], call.args[1]) for call in fake_service.run_t1_plan.call_args_list]
+        assert called_targets == [
+            ("短线", "全部"),
+            ("短线", "电力"),
+            ("长线", "全部"),
+            ("长线", "电力"),
+            ("多因子稳健型", "全部"),
+            ("激进突破型", "全部"),
+        ]
         for call in fake_service.run_t1_plan.call_args_list:
-            assert call.args[1:3] == ("全部", 5)
+            assert call.args[2:3] == (5,)
             assert call.kwargs == {
                 "trigger": "scheduler",
                 "preheat_kline": True,
                 "preheat_extended_info": True,
             }
         fake_service.check_entry_plan.assert_not_called()
+
+    def test_t1_plan_preheat_returns_timeout_without_realtime_selection(self, monkeypatch):
+        import subprocess
+        import scheduler
+
+        class SlowProcess:
+            pid = 12345
+            returncode = None
+
+            def communicate(self, timeout=None):
+                raise subprocess.TimeoutExpired(cmd="t1", timeout=timeout)
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                return None
+
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGY_TIMEOUT_SECONDS", 1)
+        monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_KLINE", True)
+        monkeypatch.setattr("scheduler.T1_PLAN_PREHEAT_EXTENDED_INFO", True)
+        monkeypatch.setattr("scheduler.subprocess.Popen", lambda *args, **kwargs: SlowProcess())
+        monkeypatch.setattr("scheduler._terminate_process_tree", lambda process: None)
+
+        plan = scheduler._run_t1_plan_strategy_with_timeout(
+            service=MagicMock(),
+            strategy="多因子稳健型",
+            sector="全部",
+            num_stocks=5,
+        )
+
+        assert plan["status"] == "timeout"
+        assert plan["recommended"] == []
+        assert plan["generation_metrics"]["realtime_used_for_selection"] is False
+        assert plan["generation_metrics"]["scan_scope_changed"] is False
 
     def test_no_notify_channels_skips_push(self, sector_data):
         """通知未开启时不调用发送"""

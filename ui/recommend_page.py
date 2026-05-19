@@ -386,6 +386,28 @@ def _render_recommendation_profile(stock):
     )
 
 
+def _render_trade_plan(stock):
+    plan = stock.get("trade_plan") if isinstance(stock.get("trade_plan"), dict) else {}
+    if not plan:
+        return
+    with st.expander("买卖点计划", expanded=True):
+        cols = st.columns(4)
+        cols[0].metric("买入观察区", plan.get("buy_zone") or "--")
+        cols[1].metric("止损线", _fmt_profile_number(plan.get("stop_loss")))
+        cols[2].metric("第一压力", _fmt_profile_number(plan.get("take_profit_1")))
+        cols[3].metric("建议仓位", plan.get("position") or "--")
+        if plan.get("add_condition"):
+            st.markdown(f"**加仓确认**：{html.escape(str(plan['add_condition']))}")
+        invalid = plan.get("invalid_conditions") or []
+        if invalid:
+            st.markdown("**失效条件**")
+            st.markdown("\n".join(f"- {html.escape(str(item))}" for item in invalid[:4]))
+        if plan.get("take_profit_2") is not None:
+            st.caption(f"第二目标位：{_fmt_profile_number(plan.get('take_profit_2'))}")
+        if plan.get("data_basis"):
+            st.caption(html.escape(str(plan["data_basis"])))
+
+
 def display_recommendation_list(recommended, strategy_name, diagnostics=None):
     """显示推荐列表"""
     if not recommended:
@@ -433,6 +455,7 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                     alpha_line += f"｜扣分：{html.escape(penalties)}"
                 st.caption(alpha_line)
             _render_recommendation_profile(stock)
+            _render_trade_plan(stock)
 
             explanation = stock.get("explanation") if isinstance(stock.get("explanation"), dict) else {}
             if explanation:

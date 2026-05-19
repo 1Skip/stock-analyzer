@@ -219,14 +219,24 @@ T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "true").lower() == "tru
 T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
 _T1_PLAN_STRATEGIES_RAW = os.getenv(
     "T1_PLAN_STRATEGIES",
-    os.getenv("T1_PLAN_STRATEGY", "多因子稳健型,激进突破型"),
+    os.getenv("T1_PLAN_STRATEGY", "短线,长线,多因子稳健型,激进突破型"),
 )
 T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(",") if item.strip()]
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
-T1_PLAN_SECTOR = os.getenv("T1_PLAN_SECTOR", "全部")
+_T1_PLAN_SECTORS_RAW = os.getenv(
+    "T1_PLAN_SECTORS",
+    os.getenv("T1_PLAN_SECTOR", "全部,苹果概念,特斯拉概念,电力,算力租赁"),
+)
+T1_PLAN_SECTORS = [item.strip() for item in _T1_PLAN_SECTORS_RAW.split(",") if item.strip()]
+T1_PLAN_SECTOR = T1_PLAN_SECTORS[0] if T1_PLAN_SECTORS else "全部"
 T1_PLAN_NUM_STOCKS = int(os.getenv("T1_PLAN_NUM_STOCKS", "5"))
 T1_PLAN_PREHEAT_KLINE = os.getenv("T1_PLAN_PREHEAT_KLINE", "true").lower() == "true"
 T1_PLAN_PREHEAT_EXTENDED_INFO = os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO", "true").lower() == "true"
+T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS = int(os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS", "5"))
+T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS", "20"))
+T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP = os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP", "false").lower() == "true"
+T1_PLAN_STRATEGY_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_STRATEGY_TIMEOUT_SECONDS", "300"))
+T1_PLAN_PUSH_ENABLED = os.getenv("T1_PLAN_PUSH_ENABLED", "true").lower() == "true"
 
 # ============================================================
 # 通知推送配置
@@ -247,6 +257,11 @@ FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "")  # 事件订阅验证 Token
 
 # API 服务
+GITHUB_WATCHLIST_SYNC_ENABLED = os.getenv("GITHUB_WATCHLIST_SYNC_ENABLED", "false").lower() == "true"
+GITHUB_WATCHLIST_SYNC_REPO = os.getenv("GITHUB_WATCHLIST_SYNC_REPO", os.getenv("GITHUB_REPO", ""))
+GITHUB_WATCHLIST_SYNC_SECRET = os.getenv("GITHUB_WATCHLIST_SYNC_SECRET", "WATCHLIST_JSON")
+GITHUB_WATCHLIST_SYNC_TIMEOUT = float(os.getenv("GITHUB_WATCHLIST_SYNC_TIMEOUT", "15"))
+
 API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8900"))
 API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")  # 默认仅本地访问
 API_AUTH_KEY = os.getenv("API_AUTH_KEY", "")  # API 鉴权密钥（为空则跳过验证）

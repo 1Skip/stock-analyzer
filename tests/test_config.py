@@ -77,8 +77,9 @@ class TestDefaultConstants:
 
     def test_t1_plan_strategies_default_includes_aggressive(self):
         import config
-        assert config.T1_PLAN_STRATEGIES == ["多因子稳健型", "激进突破型"]
-        assert config.T1_PLAN_STRATEGY == "多因子稳健型"
+        assert config.T1_PLAN_STRATEGIES == ["短线", "长线", "多因子稳健型", "激进突破型"]
+        assert config.T1_PLAN_STRATEGY == "短线"
+        assert config.T1_PLAN_SECTORS == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
 
     def test_recommend_ranker_default_enabled_without_sorting(self):
         import config
@@ -176,6 +177,15 @@ class TestEnvVarOverride:
         assert config.T1_PLAN_STRATEGIES == ["激进突破型", "多因子稳健型"]
         assert config.T1_PLAN_STRATEGY == "激进突破型"
         monkeypatch.delenv("T1_PLAN_STRATEGIES")
+        importlib.reload(config)
+
+    def test_t1_plan_sectors_env_override(self, monkeypatch):
+        monkeypatch.setenv("T1_PLAN_SECTORS", "全部, 电力")
+        import importlib, config
+        importlib.reload(config)
+        assert config.T1_PLAN_SECTORS == ["全部", "电力"]
+        assert config.T1_PLAN_SECTOR == "全部"
+        monkeypatch.delenv("T1_PLAN_SECTORS")
         importlib.reload(config)
 
     def test_recommend_ranker_env_override(self, monkeypatch):
