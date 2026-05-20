@@ -335,6 +335,15 @@ pip-audit
 
 **Skill 文件位置**：`.claude/skills/<skill-name>/SKILL.md`
 
+### 11.1 Codex 项目级 Skill
+
+本仓库同时随附 Codex Skill：
+
+- 路径：`.codex/skills/stock-analyzer/SKILL.md`
+- 作用：把本项目红线、真实链路验证规范、推荐/T+1 边界、飞书/GitHub Actions/调度/缓存检查和“更新推送”流程固化为 Codex 执行 SOP。
+- 分工：`CLAUDE.md` 仍是项目红线、架构约定和长期协作规则的正式来源；Codex Skill 不替代 `CLAUDE.md`，只负责在 Codex 工作时强化执行这些规则。
+- 使用：处理本仓库任务时可明确要求“使用 stock-analyzer skill”，尤其是涉及推荐策略、T+1、推送、缓存、调度、真实链路验证和更新推送时。
+
 ## 12. 安全注意事项
 
 ### 敏感文件

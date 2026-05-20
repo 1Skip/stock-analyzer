@@ -1,5 +1,6 @@
 # 项目 Memory 索引
 
+- [Bug fixes & context 2026-05-20](bug_fixes_and_context_2026-05-20.md) — 新增项目随附 Codex Skill，固化项目红线、真实链路验证规范和“更新推送”流程；明确 Skill 是执行 SOP，CLAUDE.md 仍是项目红线正式来源。
 - [Bug fixes & context 2026-05-19](bug_fixes_and_context_2026-05-19.md) — A 股个股分析指标与同花顺口径重新对齐，智能推荐展示指标复用同一口径，T+1 买卖点与飞书推送接入，GitHub Actions 自选股 Secret 同步验证，个股分析切页错位修复。
 - [Bug fixes & context 2026-05-17](bug_fixes_and_context_2026-05-17.md) — T+1 推荐计划缓存、收盘后预热入口、入场检查实时兜底、页面状态隔离、真实进度条、个股搜索残留修复、PEG 口径复用和资金流接口排查。
 - [Bug fixes & context 2026-05-16](bug_fixes_and_context_2026-05-16.md) — 智能推荐策略定版、全市场策略池、缓存加速、真实阶段进度、周末 K 线过滤与需求严格执行约束。
