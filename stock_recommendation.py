@@ -502,6 +502,9 @@ class StockRecommender:
             'boll_upper': round(latest['boll_upper'], 2),
             'boll_mid': round(latest['boll_mid'], 2),
             'boll_lower': round(latest['boll_lower'], 2),
+            'main_accumulation': round(latest.get('main_accumulation', 0), 2),
+            'accumulation_risk': round(latest.get('accumulation_risk', 0), 2),
+            'accumulation_trend': round(latest.get('accumulation_trend', 0), 2),
         }
 
     def get_hot_stocks_cn(self, limit=20):

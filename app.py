@@ -34,6 +34,7 @@ from ui.charts import (  # noqa: F401
     plot_intraday_chart,
     plot_kdj_chart,
     plot_macd_chart,
+    plot_main_accumulation_chart,
     plot_rsi_chart,
 )
 from ui.ai_analysis_ui import AI_MODEL_OPTIONS, _detect_provider  # noqa: F401

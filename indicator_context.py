@@ -143,6 +143,9 @@ def build_indicator_snapshot(data: pd.DataFrame | None) -> dict[str, float]:
         "ma20": 2,
         "ma30": 2,
         "ma60": 2,
+        "main_accumulation": 2,
+        "accumulation_risk": 2,
+        "accumulation_trend": 2,
     }
     snapshot: dict[str, float] = {}
     for key, precision in keys.items():

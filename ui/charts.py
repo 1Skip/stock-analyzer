@@ -42,6 +42,7 @@ def latest_indicator_values(data, indicator):
         "rsi": [("RSI6", "rsi_6"), ("RSI12", "rsi_12"), ("RSI24", "rsi_24")],
         "kdj": [("K", "kdj_k"), ("D", "kdj_d"), ("J", "kdj_j")],
         "boll": [("价格", "close"), ("上轨", "boll_upper"), ("中轨", "boll_mid"), ("下轨", "boll_lower")],
+        "main_accumulation": [("主力吸货", "main_accumulation"), ("风险", "accumulation_risk"), ("涨跌", "accumulation_trend")],
     }
     return [(label, _latest_number(data, column)) for label, column in mapping.get(indicator, [])]
 
@@ -269,6 +270,45 @@ def plot_boll_chart(data):
     fig.update_xaxes(showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
+    return fig
+
+
+def plot_main_accumulation_chart(data):
+    """绘制同花顺公式「主力吸货」指标图。"""
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=data.index,
+        y=data['main_accumulation'],
+        name='主力吸货',
+        marker_color='rgba(255, 51, 255, 0.72)',
+        hovertemplate='主力吸货 %{y:.2f}<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data['accumulation_risk'],
+        mode='lines',
+        name='风险',
+        line=dict(color='#34c759', width=1.8),
+        hovertemplate='风险 %{y:.2f}<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data['accumulation_trend'],
+        mode='lines',
+        name='涨跌',
+        line=dict(color='#ff3b30', width=1.8),
+        hovertemplate='涨跌 %{y:.2f}<extra></extra>',
+    ))
+    fig.add_hline(y=0, line_dash="solid", line_color="#8e8e93", opacity=0.5)
+    fig.update_layout(**_indicator_layout(
+        "",
+        height=300,
+        margin=dict(l=20, r=20, t=28, b=20),
+        legend=dict(font=dict(size=10), orientation='h', yanchor='bottom', y=1.04, xanchor='left', x=0),
+    ))
+    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_yaxes(showgrid=False, zeroline=False)
     return fig
 
 

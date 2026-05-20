@@ -206,6 +206,31 @@ class TestMA:
         assert last['ma5'] < last['ma20']
 
 
+class TestMainAccumulation:
+    """主力吸货公式指标测试"""
+
+    def test_main_accumulation_columns_exist(self, uptrend_data):
+        df = TechnicalIndicators.calculate_main_accumulation(uptrend_data)
+        assert 'main_accumulation' in df.columns
+        assert 'accumulation_risk' in df.columns
+        assert 'accumulation_trend' in df.columns
+
+    def test_main_accumulation_length_preserved(self, uptrend_data):
+        df = TechnicalIndicators.calculate_main_accumulation(uptrend_data)
+        assert len(df) == len(uptrend_data)
+
+    def test_main_accumulation_values_are_finite(self, flat_price_data):
+        df = TechnicalIndicators.calculate_main_accumulation(flat_price_data)
+        for col in ['main_accumulation', 'accumulation_risk', 'accumulation_trend']:
+            assert np.isfinite(df[col]).all()
+
+    def test_main_accumulation_uses_low_break_signal(self, uptrend_data):
+        data = uptrend_data.copy()
+        data.loc[data.index[-1], 'low'] = data['low'].min() - 1
+        df = TechnicalIndicators.calculate_main_accumulation(data)
+        assert df['main_accumulation'].iloc[-1] >= 0
+
+
 class TestCalculateAll:
     """综合计算测试"""
 
@@ -215,7 +240,8 @@ class TestCalculateAll:
                     'rsi', 'rsi_6', 'rsi_12', 'rsi_24',
                     'kdj_k', 'kdj_d', 'kdj_j',
                     'boll_upper', 'boll_mid', 'boll_lower',
-                    'ma5', 'ma10', 'ma20', 'ma30', 'ma60']
+                    'ma5', 'ma10', 'ma20', 'ma30', 'ma60',
+                    'main_accumulation', 'accumulation_risk', 'accumulation_trend']
         for col in expected:
             assert col in df.columns, f"缺少列: {col}"
 

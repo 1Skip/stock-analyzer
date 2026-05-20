@@ -20,7 +20,7 @@ from ui.cached_data import (
 from ui.charts import (
     latest_indicator_values,
     plot_candlestick_chart, plot_macd_chart, plot_rsi_chart, plot_kdj_chart,
-    plot_boll_chart, plot_intraday_chart,
+    plot_boll_chart, plot_main_accumulation_chart, plot_intraday_chart,
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
 from ui.decision_dashboard import render_decision_dashboard
@@ -502,6 +502,21 @@ def _display_indicator_values(data):
             unsafe_allow_html=True,
         )
 
+    if 'main_accumulation' in data.columns:
+        accumulation = _format_val(latest, 'main_accumulation', 2)
+        risk = _format_val(latest, 'accumulation_risk', 2)
+        trend = _format_val(latest, 'accumulation_trend', 2)
+        st.markdown(
+            f'<div style="{card}border-left:3px solid #ff33ff;">'
+            f'<span><b style="margin-right:10px;">主力吸货</b>'
+            f'<span style="color:#ff33ff">吸货 {accumulation}</span>  '
+            f'<span style="color:#34c759">风险 {risk}</span>  '
+            f'<span style="color:#ff3b30">涨跌 {trend}</span></span>'
+            f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">同花顺公式，由真实日K推导</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
 
 def _resolve_watchlist_target(symbol: str, market: str) -> tuple[str, str] | None:
     """尽量把当前输入解析成可加入自选的代码和名称。"""
@@ -667,6 +682,7 @@ def _render_analysis_target_header(symbol, stock_name, market, period, *, show_w
             """,
             unsafe_allow_html=True,
         )
+
     if show_watchlist and col_watchlist is not None:
         with col_watchlist:
             if is_in_watchlist(symbol, market):
@@ -798,7 +814,13 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         fig = plot_boll_chart(data)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑩ 原始数据
+    # ⑩ 主力吸货
+    with st.expander("主力吸货 指标", expanded=False):
+        _render_chart_header("主力吸货", latest_indicator_values(data, "main_accumulation"))
+        fig = plot_main_accumulation_chart(data)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    # ⑪ 原始数据
     with st.expander("查看原始数据"):
         st.dataframe(data.tail(20))
 

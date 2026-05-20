@@ -62,6 +62,27 @@ class TestBuildAnalysisReport:
         )
         assert "AI解读" not in body
 
+    def test_analysis_report_includes_main_accumulation(self):
+        from notification import build_analysis_report
+
+        _, body = build_analysis_report(
+            "000001",
+            "平安银行",
+            10.00,
+            1.00,
+            {"recommendation": "偏多"},
+            indicators={
+                "main_accumulation": 3.21,
+                "accumulation_risk": 42,
+                "accumulation_trend": 55.6,
+            },
+        )
+
+        assert "主力吸货" in body
+        assert "吸货 3.21" in body
+        assert "风险 42.00" in body
+        assert "真实日K推导" in body
+
     def test_with_trade_plan_and_defense_dashboard(self):
         from notification import build_analysis_report
 
@@ -336,6 +357,21 @@ class TestBuildSectorReport:
         assert "市值过滤" in body
         assert "主力净流入趋势" in body
         assert "15日涨停" in body
+
+    def test_sector_report_includes_main_accumulation(self):
+        from notification import build_sector_report
+        data = self._make_sector_data()
+        data["电力"]["短线"][0]["indicators"] = {
+            "main_accumulation": 2.5,
+            "accumulation_risk": 18,
+            "accumulation_trend": 33.3,
+        }
+
+        _, body = build_sector_report(data)
+
+        assert "主力吸货" in body
+        assert "吸货 2.50" in body
+        assert "涨跌 33.30" in body
 
     def test_includes_stock_info(self):
         from notification import build_sector_report

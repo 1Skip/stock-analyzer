@@ -5,7 +5,7 @@
 """
 import pandas as pd
 import numpy as np
-from MyTT import EMA, MA, KDJ, RSI
+from MyTT import EMA, MA, KDJ, RSI, SMA
 
 
 class TechnicalIndicators:
@@ -28,6 +28,7 @@ class TechnicalIndicators:
         df = TechnicalIndicators.calculate_boll(df)
         df = TechnicalIndicators.calculate_kdj(df)
         df = TechnicalIndicators.calculate_ma(df)
+        df = TechnicalIndicators.calculate_main_accumulation(df)
 
         return df
 
@@ -150,6 +151,72 @@ class TechnicalIndicators:
         for period in periods:
             df[f'ma{period}'] = MA(close, period)
 
+        return df
+
+    @staticmethod
+    def calculate_main_accumulation(data):
+        """
+        计算同花顺公式「主力吸货」指标。
+
+        该指标完全由真实日 K 的 open/high/low/close 推导，不读取也不模拟任何
+        同花顺私有插件数据。公式中的 IF(CLOSE*1.2, X, Y) 在同花顺里恒为真，
+        因此按 VAR2*10 处理。
+        """
+        df = data.copy()
+        close = df['close'].values.astype(np.float64)
+        high = df['high'].values.astype(np.float64)
+        low = df['low'].values.astype(np.float64)
+
+        prev_low = np.roll(low, 1)
+        prev_low[0] = np.nan
+        low_diff = low - prev_low
+
+        denominator = SMA(np.maximum(low_diff, 0), 3, 1)
+        numerator = SMA(np.abs(low_diff), 3, 1)
+        var2 = np.divide(
+            numerator,
+            denominator,
+            out=np.zeros_like(numerator, dtype=np.float64),
+            where=denominator != 0,
+        ) * 100
+        var2 = np.nan_to_num(var2, nan=0.0, posinf=0.0, neginf=0.0)
+        var3 = EMA(var2 * 10, 3)
+
+        low_38 = pd.Series(low).rolling(38, min_periods=1).min().values
+        high_var3_38 = pd.Series(var3).rolling(38, min_periods=1).max().values
+        low_90 = pd.Series(low).rolling(90, min_periods=1).min().values
+        var6 = np.where(np.nan_to_num(low_90, nan=0.0) != 0, 1.0, 0.0)
+        raw_accumulation = np.where(low <= low_38, (var3 + high_var3_38 * 2) / 2, 0)
+        main_accumulation = EMA(raw_accumulation, 3) / 618 * var6
+        main_accumulation = np.nan_to_num(main_accumulation, nan=0.0, posinf=0.0, neginf=0.0)
+
+        low_21 = pd.Series(low).rolling(21, min_periods=1).min().values
+        high_21 = pd.Series(high).rolling(21, min_periods=1).max().values
+        range_21 = high_21 - low_21
+        var8 = np.divide(
+            close - low_21,
+            range_21,
+            out=np.zeros_like(close, dtype=np.float64),
+            where=range_21 != 0,
+        ) * 100
+        var9 = SMA(var8, 13, 8)
+        accumulation_risk = np.ceil(SMA(var9, 13, 8))
+
+        low_27 = pd.Series(low).rolling(27, min_periods=1).min().values
+        high_27 = pd.Series(high).rolling(27, min_periods=1).max().values
+        range_27 = high_27 - low_27
+        rsv_27 = np.divide(
+            close - low_27,
+            range_27,
+            out=np.zeros_like(close, dtype=np.float64),
+            where=range_27 != 0,
+        ) * 100
+        trend_raw = 3 * SMA(rsv_27, 5, 1) - 2 * SMA(SMA(rsv_27, 5, 1), 3, 1)
+        accumulation_trend = MA(trend_raw, 5)
+
+        df['main_accumulation'] = main_accumulation
+        df['accumulation_risk'] = np.nan_to_num(accumulation_risk, nan=0.0, posinf=0.0, neginf=0.0)
+        df['accumulation_trend'] = np.nan_to_num(accumulation_trend, nan=0.0, posinf=0.0, neginf=0.0)
         return df
 
     @staticmethod

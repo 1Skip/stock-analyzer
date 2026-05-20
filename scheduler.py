@@ -231,6 +231,7 @@ def run_scheduled_analysis():
                      'entry_hint': item.get('entry_hint', '')},
                     decision=decision,
                     extended_info=extended_info,
+                    indicators=item.get("indicators") or {},
                 )
                 reports.append((title, body))
 

@@ -215,6 +215,7 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         if penalties:
             alpha_line += f"；扣分 {penalties}"
         lines.append(alpha_line)
+    lines.extend(_build_main_accumulation_push_lines(stock))
     lines.extend(_build_trade_plan_push_lines(stock))
     lines.extend(_build_explanation_push_lines(stock))
     checks = stock.get("strategy_checks") or {}
@@ -249,6 +250,23 @@ def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
         logger.info("推荐股决策卡生成失败，保留基础推荐信息: %s", exc)
 
     return lines
+
+
+def _build_main_accumulation_push_lines(stock: dict[str, Any]) -> list[str]:
+    indicators = stock.get("indicators") if isinstance(stock.get("indicators"), dict) else {}
+    accumulation = _number(indicators.get("main_accumulation"))
+    risk = _number(indicators.get("accumulation_risk"))
+    trend = _number(indicators.get("accumulation_trend"))
+    if accumulation is None and risk is None and trend is None:
+        return []
+    parts = []
+    if accumulation is not None:
+        parts.append(f"吸货 {accumulation:.2f}")
+    if risk is not None:
+        parts.append(f"风险 {risk:.2f}")
+    if trend is not None:
+        parts.append(f"涨跌 {trend:.2f}")
+    return [f"  主力吸货: {'；'.join(parts)}（同花顺公式，真实日K推导）"]
 
 
 def _build_trade_plan_push_lines(stock: dict[str, Any]) -> list[str]:
@@ -317,7 +335,8 @@ def build_analysis_report(symbol: str, name: str, price: float,
                            change_pct: float, signals: dict,
                            ai_summary: str = "",
                            decision: dict | None = None,
-                           extended_info: dict | None = None) -> tuple[str, str]:
+                           extended_info: dict | None = None,
+                           indicators: dict | None = None) -> tuple[str, str]:
     """构造推送标题和正文"""
     direction = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡"
     title = f"{name}({symbol}) {price:.2f} {direction}{change_pct:+.2f}%"
@@ -330,6 +349,9 @@ def build_analysis_report(symbol: str, name: str, price: float,
 
     body = f"价格: {price:.2f} ({change_pct:+.2f}%)\n"
     body += f"信号: {signal_text}\n"
+    accumulation_lines = _build_main_accumulation_push_lines({"indicators": indicators or {}})
+    if accumulation_lines:
+        body += "\n" + "\n".join(line.strip() for line in accumulation_lines) + "\n"
     if decision:
         from reports.decision_cards import build_decision_card_markdown
 

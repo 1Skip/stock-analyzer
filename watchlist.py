@@ -129,7 +129,8 @@ def _fetch_single_stock(item):
         # 提取指标快照
         indicators = {}
         for key in ('macd', 'macd_signal', 'rsi', 'kdj_k', 'kdj_d', 'kdj_j',
-                    'boll_upper', 'boll_mid', 'boll_lower', 'ma5', 'ma10', 'ma20'):
+                    'boll_upper', 'boll_mid', 'boll_lower', 'ma5', 'ma10', 'ma20',
+                    'main_accumulation', 'accumulation_risk', 'accumulation_trend'):
             val = latest.get(key)
             indicators[key] = round(float(val), 4) if val is not None and not (isinstance(val, float) and _pd.isna(val)) else None
 

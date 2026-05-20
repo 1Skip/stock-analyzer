@@ -42,6 +42,9 @@ def sample_data():
         'boll_upper': close + 0.5,
         'boll_mid': close,
         'boll_lower': close - 0.5,
+        'main_accumulation': np.linspace(0, 8, 15),
+        'accumulation_risk': np.linspace(20, 70, 15),
+        'accumulation_trend': np.linspace(30, 80, 15),
         'ma5': close + 0.05,
         'ma10': close + 0.02,
         'ma20': close - 0.02,
@@ -192,6 +195,23 @@ class TestPlotBollChart:
         assert '上轨' in names
         assert '中轨' in names
         assert '下轨' in names
+
+
+class TestPlotMainAccumulationChart:
+
+    def test_returns_figure(self, sample_data):
+        from app import plot_main_accumulation_chart
+        fig = plot_main_accumulation_chart(sample_data)
+        from plotly.graph_objects import Figure
+        assert isinstance(fig, Figure)
+
+    def test_has_main_accumulation_traces(self, sample_data):
+        from app import plot_main_accumulation_chart
+        fig = plot_main_accumulation_chart(sample_data)
+        names = [t.name for t in fig.data]
+        assert '主力吸货' in names
+        assert '风险' in names
+        assert '涨跌' in names
 
 
 # ============================================================
