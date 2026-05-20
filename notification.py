@@ -113,49 +113,6 @@ def _build_feishu_markdown_elements(body: str, max_chars: int = 3500) -> list[di
     return [{"tag": "markdown", "content": chunk} for chunk in chunks]
 
 
-def build_sector_report(sector_data: dict) -> tuple[str, str]:
-    """构造板块推荐推送标题和正文
-
-    Args:
-        sector_data: get_all_sector_recommendations() 的返回值
-            {板块名: {'短线': [...], '长线': [...]}}
-
-    Returns:
-        (title, body) 元组
-    """
-    SECTOR_ICONS = {
-        "算力租赁": "💻",
-        "电力": "⚡",
-        "苹果概念": "🍎",
-        "特斯拉概念": "🚗",
-    }
-
-    title = "📊 板块策略推荐 — 短线/长线"
-
-    body_lines = []
-    for sector_name in ["算力租赁", "电力", "苹果概念", "特斯拉概念"]:
-        data = sector_data.get(sector_name)
-        if not data:
-            continue
-
-        icon = SECTOR_ICONS.get(sector_name, "📌")
-        body_lines.append(f"## {icon} {sector_name}")
-
-        for strategy_name in ["短线", "长线"]:
-            stocks = data.get(strategy_name, [])
-            if stocks:
-                body_lines.append(f"**{strategy_name}**")
-                for stock in stocks:
-                    body_lines.extend(_build_sector_stock_lines(stock))
-            else:
-                body_lines.append(f"**{strategy_name}**: 暂无推荐")
-
-        body_lines.append("")
-
-    body = "\n".join(body_lines).strip()
-    return title, body
-
-
 def build_t1_plan_report(plans: dict[str, Any]) -> tuple[str, str]:
     """Build a Feishu/WeChat report for cached T+1 plans generated after close."""
     title = "T+1 推荐计划"

@@ -2328,41 +2328,6 @@ class StockRecommender:
             'indicators': self._build_indicators_dict(latest)
         }
 
-    def get_all_sector_recommendations(self, short_top_n=None, long_top_n=None):
-        """
-        获取全部4个板块的短线+长线推荐，并发分析加速
-        返回 {板块名: {'短线': [...], '长线': [...]}}
-        """
-        from config import SECTOR_PUSH_TOP_N, SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N
-
-        result = {}
-        short_top_n = short_top_n or SECTOR_PUSH_SHORT_TOP_N or SECTOR_PUSH_TOP_N
-        long_top_n = long_top_n or SECTOR_PUSH_LONG_TOP_N or SECTOR_PUSH_TOP_N
-
-        def analyze_sector(sector_name):
-            short = self.get_sector_short_term_recommendations(sector_name, num_stocks=short_top_n)
-            long = self.get_sector_long_term_recommendations(sector_name, num_stocks=long_top_n)
-            aggressive = self.get_sector_aggressive_breakout_recommendations(sector_name, num_stocks=short_top_n)
-            multi_factor = self.get_sector_multi_factor_recommendations(sector_name, num_stocks=long_top_n)
-            return sector_name, {
-                '短线': short,
-                '长线': long,
-                '激进突破型': aggressive,
-                '多因子稳健型': multi_factor,
-            }
-
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(analyze_sector, s): s for s in SECTOR_STOCKS}
-            for future in as_completed(futures):
-                try:
-                    sector_name, data = future.result()
-                    result[sector_name] = data
-                except Exception as e:
-                    print(f"板块分析失败: {e}")
-
-        return result
-
-
 if __name__ == "__main__":
     # 测试代码
     recommender = StockRecommender()

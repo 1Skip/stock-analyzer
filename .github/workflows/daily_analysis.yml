@@ -2,9 +2,20 @@ name: 飞书每日股票分析推送
 
 on:
   schedule:
-    # 北京时间 15:30，GitHub Actions 使用 UTC
+    # 北京时间 15:30，GitHub Actions 使用 UTC：自选股摘要 + 大盘/完整日报
     - cron: "30 7 * * 1-5"
+    # 北京时间 15:45，GitHub Actions 使用 UTC：统一 T+1 推荐计划
+    - cron: "45 7 * * 1-5"
   workflow_dispatch:
+    inputs:
+      task:
+        description: "运行任务"
+        required: true
+        default: "daily"
+        type: choice
+        options:
+          - daily
+          - t1-plan
 
 jobs:
   analyze:
@@ -155,21 +166,35 @@ jobs:
               print("未配置 WATCHLIST_JSON/STOCK_LIST，本次日报自选股为空。")
           PY
 
-      - name: 运行定时分析并推送
+      - name: 运行每日摘要和完整日报
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '30 7 * * 1-5' || github.event_name == 'workflow_dispatch' && inputs.task == 'daily' }}
         env:
           NOTIFY_CHANNELS: ${{ vars.NOTIFY_CHANNELS || 'feishu' }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
-          AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-chat' }}
+          AI_MODEL: ${{ vars.AI_MODEL || 'deepseek/deepseek-v4-pro' }}
           AI_BASE_URL: ${{ secrets.AI_BASE_URL }}
           AI_DEBATE_ENABLED: ${{ vars.AI_DEBATE_ENABLED || 'false' }}
           AI_DEBATE_MAX_SYMBOLS: ${{ vars.AI_DEBATE_MAX_SYMBOLS || '3' }}
           DAILY_REPORT_ENABLED: "true"
           DAILY_REPORT_PUSH_ENABLED: "true"
-          DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "true"
+          DAILY_REPORT_INCLUDE_RECOMMENDATIONS: "false"
           DAILY_REPORT_DIR: reports/history
         run: python main.py --notify
+
+      - name: 运行 T+1 推荐计划预生成并推送
+        if: ${{ github.event_name == 'schedule' && github.event.schedule == '45 7 * * 1-5' || github.event_name == 'workflow_dispatch' && inputs.task == 't1-plan' }}
+        env:
+          NOTIFY_CHANNELS: ${{ vars.NOTIFY_CHANNELS || 'feishu' }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK_URL }}
+          T1_PLAN_AUTO_ENABLED: "true"
+          T1_PLAN_PUSH_ENABLED: "true"
+          T1_PLAN_STRATEGIES: "短线,长线,多因子稳健型,激进突破型"
+          T1_PLAN_SECTORS: "苹果概念,特斯拉概念,电力,算力租赁"
+          T1_PLAN_NUM_STOCKS: "5"
+        run: python main.py --t1-plan-preheat
 
       - name: 上传日报产物
         if: always()

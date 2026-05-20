@@ -84,12 +84,6 @@ CACHE_TTL_HOT_STOCKS = 180    # 热门股票排行
 CACHE_TTL_INDICATORS = 600    # 技术指标计算
 CACHE_TTL_WATCHLIST_SUMMARY = 300  # 自选股摘要（5分钟）
 
-# 板块推送配置
-SECTOR_PUSH_ENABLED = os.getenv("SECTOR_PUSH_ENABLED", "true").lower() == "true"
-SECTOR_PUSH_TOP_N = int(os.getenv("SECTOR_PUSH_TOP_N", "3"))
-SECTOR_PUSH_SHORT_TOP_N = int(os.getenv("SECTOR_PUSH_SHORT_TOP_N", "2"))
-SECTOR_PUSH_LONG_TOP_N = int(os.getenv("SECTOR_PUSH_LONG_TOP_N", "1"))
-
 # 每日报告配置
 DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
 DAILY_REPORT_PUSH_ENABLED = os.getenv("DAILY_REPORT_PUSH_ENABLED", "true").lower() == "true"
@@ -191,7 +185,7 @@ LONG_TERM_WEIGHTS = {
 # AI 分析配置
 # ============================================================
 AI_ENABLED = os.getenv("AI_ENABLED", "true").lower() == "true"
-AI_MODEL = os.getenv("AI_MODEL", "deepseek/deepseek-chat")
+AI_MODEL = os.getenv("AI_MODEL", "deepseek/deepseek-v4-pro")
 AI_API_KEY = None if "pytest" in sys.modules else os.getenv("AI_API_KEY", None)
 AI_BASE_URL = os.getenv("AI_BASE_URL", None)
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.2"))
@@ -225,7 +219,7 @@ T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(","
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
 _T1_PLAN_SECTORS_RAW = os.getenv(
     "T1_PLAN_SECTORS",
-    os.getenv("T1_PLAN_SECTOR", "全部,苹果概念,特斯拉概念,电力,算力租赁"),
+    os.getenv("T1_PLAN_SECTOR", "苹果概念,特斯拉概念,电力,算力租赁"),
 )
 T1_PLAN_SECTORS = [item.strip() for item in _T1_PLAN_SECTORS_RAW.split(",") if item.strip()]
 T1_PLAN_SECTOR = T1_PLAN_SECTORS[0] if T1_PLAN_SECTORS else "全部"

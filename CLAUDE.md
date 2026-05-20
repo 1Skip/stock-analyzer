@@ -98,8 +98,8 @@
 - **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因、财新数据通市场资讯；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
 - **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用六 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号，执行风控层给出硬阻断、仓位纪律和操作检查；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示；日报 `DailyReportService` 已完成阶段 3 最终版决策仪表盘输出；`ai_analysis.py` 已完成阶段 4 最终版可选 LLM 多空辩论/风控经理层，未配置 `AI_API_KEY` 时自动跳过
 - **网页端状态可见性**：`ui/committee_status.py` 在侧边栏固定展示阶段 1-5 接入状态、飞书 Webhook、GitHub Actions 和 LLM 辩论开关，不依赖行情请求，避免拖慢切页。
-- **日报定时推送**：`scheduler.py` 默认按“自选股摘要 → 固定四板块推荐 → 每日完整 Markdown 日报”执行；四板块为算力租赁、电力、苹果概念、特斯拉概念，默认每板块短线 2 只 + 长线 1 只，并同步输出激进突破型/多因子稳健型候选；短线/长线保留沪深主板口径，激进突破型/多因子稳健型扫描沪深主板 + 创业板，科创板、北交所、ST、退市/异常股票不进入推荐池；热门板块页的行业板块、概念板块、个股涨跌幅榜保留全市场观察，不做主板过滤；定时推送不再用全市场推荐股补充内容，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后定时推送被推荐股全市场扫描拖慢
-- **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify`，默认 `NOTIFY_CHANNELS=feishu`；配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送日报，配置 `STOCK_LIST`（逗号分隔，支持 A 股代码/中文名）或高级 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；阶段 5 最终版支持通过 Variables `AI_DEBATE_ENABLED=true` + Secret `AI_API_KEY` 在云端启用 LLM 多空辩论；中文名解析失败会直接报错，不再误用中文名查询行情
+- **日报定时推送**：`scheduler.py` 默认 15:30 执行自选股摘要 + 每日完整 Markdown 日报；固定四板块聚合推荐推送已废弃并从调度链路移除，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后日报重复扫描全市场推荐。
+- **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify` 推送自选股摘要 + 完整日报，15:45 运行 `python main.py --t1-plan-preheat` 推送统一 T+1 推荐计划；默认 `NOTIFY_CHANNELS=feishu`，配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送，配置 `STOCK_LIST` 或 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；阶段 5 最终版支持通过 Variables `AI_DEBATE_ENABLED=true` + Secret `AI_API_KEY` 在云端启用 LLM 多空辩论。
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
 - **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
@@ -409,9 +409,9 @@ pip-audit
 ### 13.1 今日需求落地
 
 - **A 股决策委员会**：借鉴 TradingAgents，但按 A 股重构为技术分析、资金情绪、基本面、题材板块、风险事件、执行风控六 Agent；个股页、日报和状态卡片均已接入。
-- **日报与推送闭环**：GitHub Actions 工作日 15:30 自动运行；飞书/企业微信 Webhook 支持；推送顺序为自选股摘要 → 固定四板块推荐 → 完整 Markdown 日报。
-- **推送卡片口径**：自选股摘要、四板块推荐股和完整 Markdown 日报都输出“交易计划卡片 + 风控防御看板”；配置页“一键测试推送”只测 Webhook 连通性，不代表正式推送内容。
-- **推荐边界**：热门板块保留全市场；短线/长线推荐保留沪深主板口径；激进突破型/多因子稳健型扫描沪深主板 + 创业板；固定四板块为算力租赁、电力、苹果概念、特斯拉概念。
+- **日报与推送闭环**：GitHub Actions 工作日 15:30 自动推送自选股摘要 + 完整 Markdown 日报，15:45 自动推送统一 T+1 推荐计划；飞书/企业微信 Webhook 支持。
+- **推送卡片口径**：自选股摘要、T+1 推荐计划和完整 Markdown 日报都输出“交易计划卡片 + 风控防御看板”；配置页“一键测试推送”只测 Webhook 连通性，不代表正式推送内容。
+- **推荐边界**：热门板块保留全市场；短线/长线推荐保留沪深主板口径；激进突破型/多因子稳健型扫描沪深主板 + 创业板；15:45 T+1 计划中短线/长线覆盖苹果概念、特斯拉概念、电力、算力租赁四板块，激进突破型/多因子稳健型只生成全市场 `全部`。
 - **自选股闭环**：网页端自选股持久化到 `watchlist.json`；侧栏常驻；点击自选股直接打开主页个股分析；云端 Actions 通过 `STOCK_LIST` / `WATCHLIST_JSON` 配置自选股。
 - **中文名称识别**：A 股名称搜索使用全量索引 + 静态兜底 + 模糊/错序匹配；个股分析、股票对比、回测、飞书命令尽量保持同一解析逻辑。
 - **个股扩展信息**：基础资料/估值、财务、资金、新闻、市场快讯以非阻塞方式加载；新闻层补充东方财富个股新闻和财新数据通市场资讯。

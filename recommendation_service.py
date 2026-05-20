@@ -359,18 +359,6 @@ class RecommendationService:
     def refresh_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
         return self.recommender.refresh_strategy_kline_cache(*args, **kwargs)
 
-    def run_all_sector_recommendations(
-        self,
-        short_top_n: int | None = None,
-        long_top_n: int | None = None,
-    ) -> dict[str, Any]:
-        """Keep the existing sector push semantics on the shared service."""
-        sector_data = self.recommender.get_all_sector_recommendations(
-            short_top_n=short_top_n,
-            long_top_n=long_top_n,
-        )
-        return self._attach_sector_explanations(sector_data)
-
     def _run_uncached(
         self,
         strategy: str,
@@ -536,27 +524,6 @@ class RecommendationService:
                     "formula": "TechnicalIndicators on forward-adjusted daily K-line",
                     "realtime_merged": False,
                 }
-
-    @staticmethod
-    def _attach_sector_explanations(sector_data: dict[str, Any] | None) -> dict[str, Any]:
-        """Attach explanation blocks to sector push results without changing order."""
-        if not isinstance(sector_data, dict):
-            return {}
-        enriched: dict[str, Any] = {}
-        for sector, strategies in sector_data.items():
-            enriched[sector] = {}
-            for strategy, stocks in (strategies or {}).items():
-                strategy_stocks = attach_recommendation_explanations(
-                    stocks or [],
-                    strategy=strategy,
-                    sector=sector,
-                )
-                enriched[sector][strategy] = enrich_recommendations_with_trade_plan(
-                    strategy_stocks,
-                    strategy=strategy,
-                    sector=sector,
-                )
-        return enriched
 
     def _preheat_kline_cache(self) -> dict[str, Any]:
         try:

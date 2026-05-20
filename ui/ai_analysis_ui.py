@@ -13,9 +13,8 @@ from ui.loading import render_status_loading
 
 AI_MODEL_OPTIONS = {
     # 国内模型
-    "deepseek/deepseek-chat": "DeepSeek V3",
-    "deepseek/deepseek-reasoner": "DeepSeek R1",
     "deepseek/deepseek-v4-pro": "DeepSeek V4 Pro",
+    "deepseek/deepseek-reasoner": "DeepSeek R1",
     "zhipuai/glm-4-flash": "智谱 GLM-4 Flash（免费）",
     "zhipuai/glm-4": "智谱 GLM-4",
     "moonshot/moonshot-v1-8k": "Kimi (Moonshot)",

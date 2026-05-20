@@ -16,16 +16,15 @@ from pathlib import Path
 import schedule
 
 from config import (
-    SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY, NOTIFY_ENABLED, NOTIFY_CHANNELS,
-    SECTOR_PUSH_ENABLED, DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
+    SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY, NOTIFY_ENABLED,
+    DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
     DAILY_REPORT_INCLUDE_RECOMMENDATIONS, DAILY_REPORT_DIR,
-    SECTOR_PUSH_SHORT_TOP_N, SECTOR_PUSH_LONG_TOP_N,
     T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGIES,
     T1_PLAN_SECTOR, T1_PLAN_SECTORS, T1_PLAN_NUM_STOCKS, T1_PLAN_PREHEAT_KLINE,
     T1_PLAN_PREHEAT_EXTENDED_INFO, T1_PLAN_STRATEGY_TIMEOUT_SECONDS,
     T1_PLAN_PUSH_ENABLED,
 )
-from notification import send_push, build_analysis_report, build_sector_report, build_t1_plan_report
+from notification import send_push, build_analysis_report, build_t1_plan_report
 from reports.exporter import save_markdown_report
 
 logger = logging.getLogger(__name__)
@@ -181,15 +180,10 @@ def run_t1_plan_preheat():
 
 @_skip_if_locked(SCHEDULED_ANALYSIS_LOCK_PATH, "定时分析")
 def run_scheduled_analysis():
-    """执行定时分析：自选股摘要 → 四板块推荐 → 每日报告。"""
+    """执行 15:30 定时分析：自选股摘要 → 每日完整报告。"""
     logger.info(f"定时分析开始 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-        from stock_recommendation import StockRecommender
-        from recommendation_service import RecommendationService
-
-        recommender = StockRecommender()
-        recommendation_service = RecommendationService(recommender=recommender)
         reports = []
 
         # 优先分析自选股
@@ -234,20 +228,6 @@ def run_scheduled_analysis():
                     indicators=item.get("indicators") or {},
                 )
                 reports.append((title, body))
-
-        # 固定四板块推荐：每个板块短线 2 只 + 长线 1 只（可通过环境变量覆盖）
-        if SECTOR_PUSH_ENABLED:
-            try:
-                sector_data = recommendation_service.run_all_sector_recommendations(
-                    short_top_n=SECTOR_PUSH_SHORT_TOP_N,
-                    long_top_n=SECTOR_PUSH_LONG_TOP_N,
-                )
-                if sector_data:
-                    sector_title, sector_body = build_sector_report(sector_data)
-                    reports.append((sector_title, sector_body))
-                    logger.info("板块推荐已生成")
-            except Exception as e:
-                logger.warning(f"板块推荐分析失败，跳过: {e}")
 
         if not reports and not DAILY_REPORT_ENABLED:
             logger.warning("无有效分析结果，跳过推送")

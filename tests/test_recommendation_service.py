@@ -88,9 +88,6 @@ class FakeRecommender:
         self.called.append(("multi", num_stocks, bool(progress_callback)))
         return [_stock("002002", "多因子稳健型")]
 
-    def get_all_sector_recommendations(self, short_top_n=None, long_top_n=None):
-        return {"测试板块": {"激进突破型": [_stock("002003", "激进突破型")]}}
-
 
 class TwoStockRecommender(FakeRecommender):
     def get_multi_factor_recommendations(self, num_stocks, progress_callback=None):

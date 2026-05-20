@@ -1526,19 +1526,6 @@ class TestStrategyRecommendations:
         assert result.attrs["data_source"] == "策略K线本地缓存"
         assert called["api"] is False
 
-    def test_all_sector_recommendations_include_new_strategies(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.SECTOR_STOCKS', {"测试板块": [{'code': '300750', 'name': '宁德时代'}]})
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_short_term_recommendations', lambda self, sector_name, num_stocks=5: [])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_long_term_recommendations', lambda self, sector_name, num_stocks=5: [])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations', lambda self, sector_name, num_stocks=5: [{"strategy": "激进突破型"}])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations', lambda self, sector_name, num_stocks=5: [{"strategy": "多因子稳健型"}])
-
-        result = recommender.get_all_sector_recommendations(short_top_n=1, long_top_n=1)
-
-        assert result["测试板块"]["激进突破型"][0]["strategy"] == "激进突破型"
-        assert result["测试板块"]["多因子稳健型"][0]["strategy"] == "多因子稳健型"
-
-
 # ============================================================
 # TestGetSectorShortTerm
 # ============================================================
@@ -2143,56 +2130,3 @@ class TestGetSectorLongTerm:
         result = recommender.get_sector_long_term_recommendations('测试板块', num_stocks=5)
         assert analyzed == ['000001', '600519']
         assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
-
-
-# ============================================================
-# TestGetAllSectorRecommendations
-# ============================================================
-
-class TestGetAllSectorRecommendations:
-
-    def test_returns_dict_with_4_sectors(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
-                            lambda self, code, market='CN': _mock_short_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
-                            lambda self, code, market='CN': _mock_long_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        result = recommender.get_all_sector_recommendations()
-        assert isinstance(result, dict)
-        for sector in ['苹果概念', '特斯拉概念', '电力', '算力租赁']:
-            assert sector in result
-
-    def test_each_sector_has_short_and_long(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
-                            lambda self, code, market='CN': _mock_short_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
-                            lambda self, code, market='CN': _mock_long_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        result = recommender.get_all_sector_recommendations()
-        for sector, data in result.items():
-            assert '短线' in data
-            assert '长线' in data
-            assert isinstance(data['短线'], list)
-            assert isinstance(data['长线'], list)
-
-    def test_stocks_have_strategy_field(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
-                            lambda self, code, market='CN': _mock_short_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_long_term',
-                            lambda self, code, market='CN': _mock_long_analysis(code))
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_aggressive_breakout_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        monkeypatch.setattr('stock_recommendation.StockRecommender.get_sector_multi_factor_recommendations',
-                            lambda self, sector_name, num_stocks=5: [])
-        result = recommender.get_all_sector_recommendations()
-        for sector, data in result.items():
-            for s in data['短线']:
-                assert s['strategy'] == '短线'
-            for s in data['长线']:
-                assert s['strategy'] == '长线'

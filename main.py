@@ -520,6 +520,7 @@ if __name__ == "__main__":
     parser.add_argument('--interactive', '-i', action='store_true', help='交互模式')
     parser.add_argument('--schedule', action='store_true', help='启动定时调度（需先配置环境变量）')
     parser.add_argument('--notify', action='store_true', help='运行一次分析并推送通知')
+    parser.add_argument('--t1-plan-preheat', action='store_true', help='运行一次 T+1 推荐计划预生成并推送')
     parser.add_argument('--backtest', '-b', action='store_true', help='对指定股票执行回测')
     parser.add_argument('--ai', action='store_true', help='使用AI分析（单Agent模式）')
     parser.add_argument('--multi-agent', action='store_true', help='使用多Agent协作AI分析')
@@ -539,6 +540,9 @@ if __name__ == "__main__":
     elif args.notify:
         from scheduler import run_scheduled_analysis
         run_scheduled_analysis()
+    elif args.t1_plan_preheat:
+        from scheduler import run_t1_plan_preheat
+        run_t1_plan_preheat()
     elif args.daily_report:
         from reports.daily_report_service import DailyReportService
         service = DailyReportService()

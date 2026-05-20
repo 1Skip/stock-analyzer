@@ -49,3 +49,10 @@
 - `.venv\Scripts\python.exe -m pytest tests\test_data_services.py tests\test_notification.py tests\test_scheduler.py -q` → `114 passed`。
 - `.venv\Scripts\python.exe main.py --notify` 已完成本地日报生成和正式通知流程；随后单独飞书验证推送返回 `{'feishu': True}`。
 - `git diff --check` 通过。
+
+## 定时推送分工调整
+
+- 按用户确认后的新分工，15:30 只推自选股摘要 + 大盘/完整 Markdown 日报，旧的固定四板块聚合推荐推送已从 `scheduler.py`、`notification.py`、`config.py`、`RecommendationService` 和 `StockRecommender` 聚合入口中删除。
+- 15:45 统一推 T+1 推荐计划：短线/长线覆盖苹果概念、特斯拉概念、电力、算力租赁四板块；多因子稳健型/激进突破型只生成全市场 `全部`，默认每组 5 只。该调整只改变调度与推送分工，不改变具体策略选股、评分、排序或 T+1 缓存语义。
+- GitHub Actions `.github/workflows/daily_analysis.yml` 已拆成北京时间 15:30 与 15:45 两个定时点；15:30 运行 `python main.py --notify`，15:45 运行新增入口 `python main.py --t1-plan-preheat`。云端默认 `AI_MODEL` 同步改为 `deepseek/deepseek-v4-pro`，并移除旧的 `deepseek/deepseek-chat` 默认值。
+- README、CLAUDE 和 `docs/FEISHU_GITHUB_ACTIONS.md` 已同步新的推送口径；旧的 `SECTOR_PUSH_*` 环境变量不再作为当前配置项记录。
