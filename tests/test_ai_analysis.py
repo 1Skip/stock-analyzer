@@ -294,6 +294,26 @@ class TestCallAIAnalysis:
         result = call_ai_analysis(sample_snapshot, 'model', 'key', None)
         assert result['核心结论'] == 'ok'
 
+    def test_normalizes_bare_deepseek_model(self, monkeypatch, sample_snapshot):
+        from ai_analysis import call_ai_analysis
+
+        captured = {}
+
+        class MockResponse:
+            choices = [type('Choice', (), {'message': type('Msg', (), {'content': '{"核心结论": "ok", "风险提示": [], "关键点位": {}, "操作参考": ""}'})()})()]
+
+        import litellm
+        monkeypatch.setattr(litellm, 'completion', lambda **kw: (captured.update(kw), MockResponse())[1])
+        call_ai_analysis(sample_snapshot, 'deepseek-v4-pro', 'key', 'https://api.deepseek.com')
+        assert captured['model'] == 'deepseek/deepseek-v4-pro'
+        assert captured['max_tokens'] == 2048
+
+    def test_resolve_llm_max_tokens_keeps_regular_model_limit(self):
+        from ai_analysis import resolve_llm_max_tokens
+
+        assert resolve_llm_max_tokens('openai/gpt-4o', 512) == 512
+        assert resolve_llm_max_tokens('deepseek/deepseek-reasoner', 512) == 2048
+
 
 # ============================================================
 # TestIntegration
@@ -398,6 +418,24 @@ class TestCallAgent:
         assert captured["temperature"] == 0.3
         assert captured["max_tokens"] == 256
         assert captured["timeout"] == 15
+
+    def test_normalizes_bare_deepseek_agent_model(self, monkeypatch, sample_snapshot):
+        from ai_analysis import _call_agent
+        from ai_analysis import AgentConfig
+
+        captured = {}
+
+        class MockResponse:
+            choices = [type('Choice', (), {'message': type('Msg', (), {
+                'content': '{"风险等级": "中", "风险因素": [], "矛盾信号": "", "关注点位": {}}'
+            })()})()]
+
+        import litellm
+        monkeypatch.setattr(litellm, 'completion', lambda **kw: (captured.update(kw), MockResponse())[1])
+        cfg = AgentConfig(name="风险评估", model="deepseek-v4-pro")
+        _call_agent("提示词", sample_snapshot, cfg, "api-key-123", "https://api.deepseek.com")
+        assert captured["model"] == "deepseek/deepseek-v4-pro"
+        assert captured["max_tokens"] == 2048
 
 
 # ============================================================

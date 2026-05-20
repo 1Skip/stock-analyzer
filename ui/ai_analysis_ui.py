@@ -2,7 +2,12 @@
 import re
 import streamlit as st
 from config import AI_MODEL, AI_API_KEY, AI_BASE_URL, AI_TEMPERATURE
-from ai_analysis import build_indicator_snapshot, call_ai_analysis, run_multi_agent_analysis
+from ai_analysis import (
+    build_indicator_snapshot,
+    call_ai_analysis,
+    normalize_llm_model,
+    run_multi_agent_analysis,
+)
 from ui.loading import render_status_loading
 
 
@@ -315,7 +320,9 @@ def display_ai_analysis_card(data, signals, symbol, stock_name, period):
     st.caption("默认不参与 A股决策委员会评分；需要自然语言解释时再展开使用。")
 
     key = st.session_state.get("ai_api_key") or AI_API_KEY
-    model = st.session_state.get("ai_model") or AI_MODEL
+    model = normalize_llm_model(st.session_state.get("ai_model") or AI_MODEL, AI_BASE_URL)
+    if st.session_state.get("ai_model") and st.session_state.ai_model != model:
+        st.session_state.ai_model = model
 
     if not key:
         with st.expander("设置 API Key 后启用 AI 辅助解读", expanded=False):

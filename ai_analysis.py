@@ -18,6 +18,29 @@ class AgentConfig:
     timeout: int = 30
 
 
+def normalize_llm_model(model, base_url=""):
+    """补齐 LiteLLM 需要的 provider 前缀，兼容旧的 DeepSeek 本地配置。"""
+    model_name = (model or "").strip()
+    if not model_name:
+        return model_name
+    if "/" in model_name:
+        return model_name
+
+    base = (base_url or "").lower()
+    if model_name.startswith("deepseek-") or "deepseek.com" in base:
+        return f"deepseek/{model_name}"
+
+    return model_name
+
+
+def resolve_llm_max_tokens(model, max_tokens):
+    """推理模型会先消耗 reasoning token，给它保留足够正文输出空间。"""
+    model_name = (model or "").lower()
+    if any(name in model_name for name in ("deepseek-v4-pro", "deepseek-reasoner")):
+        return max(int(max_tokens or 0), 2048)
+    return max_tokens
+
+
 def build_indicator_snapshot(data, signals, symbol, stock_name):
     """从当前数据中提取结构化指标快照"""
     latest = data.iloc[-1]
@@ -78,9 +101,10 @@ def call_ai_analysis(snapshot, model, api_key, base_url, temperature=0.2):
 
     prompt = _build_prompt(snapshot)
     snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
+    normalized_model = normalize_llm_model(model, base_url)
 
     completion_kwargs = dict(
-        model=model,
+        model=normalized_model,
         api_key=api_key,
     )
     if base_url:
@@ -99,7 +123,7 @@ def call_ai_analysis(snapshot, model, api_key, base_url, temperature=0.2):
             },
         ],
         temperature=temperature,
-        max_tokens=1024,
+        max_tokens=resolve_llm_max_tokens(normalized_model, 1024),
         timeout=30,
     )
 
@@ -297,9 +321,10 @@ def _call_agent(system_prompt, snapshot, config, api_key, base_url):
     import litellm
 
     snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
+    normalized_model = normalize_llm_model(config.model, base_url)
 
     completion_kwargs = dict(
-        model=config.model,
+        model=normalized_model,
         api_key=api_key,
     )
     if base_url:
@@ -313,7 +338,7 @@ def _call_agent(system_prompt, snapshot, config, api_key, base_url):
                 {"role": "user", "content": f"请分析以下数据：\n\n```json\n{snapshot_json}\n```"},
             ],
             temperature=config.temperature,
-            max_tokens=config.max_tokens,
+            max_tokens=resolve_llm_max_tokens(normalized_model, config.max_tokens),
             timeout=config.timeout,
         )
         raw = response.choices[0].message.content
