@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stock Analyzer"
+  short_description: "Project red lines and update workflow"
+  default_prompt: "Use $stock-analyzer for this repository's maintenance, recommendation, notification, cache, test, and update-push tasks."
