@@ -322,6 +322,10 @@ class TestBuildSectorReport:
         title, body = build_sector_report(data)
         assert "短线" in body
         assert "长线" in body
+        assert "激进突破型" not in title
+        assert "多因子稳健型" not in title
+        assert "激进突破型" not in body
+        assert "多因子稳健型" not in body
 
     def test_includes_new_strategy_details(self):
         from notification import build_sector_report
@@ -351,12 +355,10 @@ class TestBuildSectorReport:
 
         _, body = build_sector_report(data)
 
-        assert "激进突破型" in body
-        assert "多因子稳健型" in body
-        assert "策略命中" in body
-        assert "市值过滤" in body
-        assert "主力净流入趋势" in body
-        assert "15日涨停" in body
+        assert "激进突破型" not in body
+        assert "多因子稳健型" not in body
+        assert "策略命中" not in body
+        assert "主力净流入趋势" not in body
 
     def test_sector_report_includes_main_accumulation(self):
         from notification import build_sector_report
@@ -384,7 +386,7 @@ class TestBuildSectorReport:
     def test_sector_recommendations_include_decision_cards(self):
         from notification import build_sector_report
         data = self._make_sector_data()
-        data["算力租赁"]["激进突破型"] = [{
+        data["算力租赁"]["短线"] = [{
             'symbol': '002001',
             'name': '测试Alpha',
             'latest_price': 10.0,
@@ -406,7 +408,7 @@ class TestBuildSectorReport:
     def test_sector_recommendations_include_explanation_lines(self):
         from notification import build_sector_report
         data = self._make_sector_data()
-        data["算力租赁"]["多因子稳健型"] = [{
+        data["算力租赁"]["短线"] = [{
             'symbol': '002001',
             'name': '测试解释',
             'latest_price': 10.0,

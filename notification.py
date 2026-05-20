@@ -130,7 +130,7 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         "特斯拉概念": "🚗",
     }
 
-    title = "📊 板块策略推荐 — 短线/长线/突破/稳健"
+    title = "📊 板块策略推荐 — 短线/长线"
 
     body_lines = []
     for sector_name in ["算力租赁", "电力", "苹果概念", "特斯拉概念"]:
@@ -141,7 +141,7 @@ def build_sector_report(sector_data: dict) -> tuple[str, str]:
         icon = SECTOR_ICONS.get(sector_name, "📌")
         body_lines.append(f"## {icon} {sector_name}")
 
-        for strategy_name in ["短线", "长线", "激进突破型", "多因子稳健型"]:
+        for strategy_name in ["短线", "长线"]:
             stocks = data.get(strategy_name, [])
             if stocks:
                 body_lines.append(f"**{strategy_name}**")
