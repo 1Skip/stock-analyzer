@@ -101,7 +101,15 @@ class JsonFileCache:
         while fd is None:
             try:
                 fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                payload = f"{os.getpid()}\n{time.time()}\n"
+                os.write(fd, payload.encode("utf-8"))
             except FileExistsError:
+                if _is_stale_process_lock(lock_path):
+                    try:
+                        lock_path.unlink(missing_ok=True)
+                        continue
+                    except Exception:
+                        pass
                 if time.monotonic() > deadline:
                     try:
                         if time.time() - lock_path.stat().st_mtime > 60:
@@ -121,3 +129,30 @@ class JsonFileCache:
                     lock_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+
+
+def _is_stale_process_lock(lock_path: Path, max_age_seconds: float = 60.0) -> bool:
+    try:
+        stat = lock_path.stat()
+    except OSError:
+        return True
+    try:
+        lines = lock_path.read_text(encoding="utf-8").splitlines()
+        pid = int(lines[0].strip()) if lines else None
+    except Exception:
+        pid = None
+    if pid and _process_exists(pid):
+        return False
+    return time.time() - stat.st_mtime > max_age_seconds or pid is not None
+
+
+def _process_exists(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
