@@ -80,14 +80,81 @@ class TestPlotCandlestickChart:
         }, index=dates)
         plot_candlestick_chart(df)  # 不抛异常即通过
 
-    def test_volume_chart_uses_wan_shou_and_volume_ma(self, sample_data):
+    def test_candlestick_chart_does_not_embed_volume(self, sample_data):
         from app import plot_candlestick_chart
         fig = plot_candlestick_chart(sample_data)
         names = [trace.name for trace in fig.data]
-        volume_trace = next(trace for trace in fig.data if trace.name == "成交量(万手)")
-        assert round(float(volume_trace.y[0]), 4) == round(sample_data["volume"].iloc[0] / 1_000_000, 4)
-        assert "成交量MA5" in names
-        assert "成交量MA10" in names
+        assert "K线" in names
+        assert "量" not in names
+        assert "MA5" in names
+        assert "MA10" in names
+        assert not any(name in names for name in ["成交量(万手)", "成交量MA5", "成交量MA10"])
+        assert fig.layout.xaxis.type == "category"
+        assert fig.layout.xaxis.tickmode == "array"
+        assert fig.layout.xaxis.showticklabels is False
+        assert fig.layout.xaxis.rangeslider.visible is False
+        assert fig.layout.title.text == ""
+
+    def test_candlestick_chart_keeps_latest_daily_kline(self, sample_data):
+        from app import plot_candlestick_chart
+
+        fig = plot_candlestick_chart(sample_data)
+        kline_trace = next(trace for trace in fig.data if trace.name == "K线")
+
+        assert kline_trace.x[-1] == sample_data.index[-1].strftime("%Y-%m-%d")
+        assert float(kline_trace.close[-1]) == float(sample_data["close"].iloc[-1])
+
+    def test_volume_chart_uses_wan_shou_and_volume_ma(self, sample_data):
+        from app import plot_volume_chart
+        fig = plot_volume_chart(sample_data)
+        names = [trace.name for trace in fig.data]
+        volume_trace = next(trace for trace in fig.data if trace.name == "量")
+        assert round(float(volume_trace.y[0]), 4) == round(sample_data["volume"].iloc[0] / 10000, 4)
+        assert "MA5" in names
+        assert "MA10" in names
+        assert fig.layout.xaxis.type == "category"
+        assert fig.layout.yaxis.title.text == "万手"
+
+    def test_analyze_page_renders_kline_and_volume_as_separate_cards(self):
+        from pathlib import Path
+
+        source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+        chart_block = source.split('with st.expander("日K"', 1)[1].split('with st.expander("MACD 指标"', 1)[0]
+
+        assert '_render_chart_header("日K", latest_ma_values(data))' in chart_block
+        assert 'plot_candlestick_chart(data)' in chart_block
+        assert 'with st.expander("成交量"' in chart_block
+        assert 'plot_volume_chart(data, quote)' in chart_block
+        assert '_latest_volume_values(data, profile, quote)' in chart_block
+
+    def test_volume_chart_uses_realtime_volume_without_date_ticks(self, sample_data):
+        from app import plot_volume_chart
+
+        sample_data = sample_data.copy()
+        quote = {"volume": 64735.54, "volume_unit": "hand"}
+        fig = plot_volume_chart(sample_data, quote)
+
+        volume_trace = next(trace for trace in fig.data if trace.name == "量")
+        ma5_trace = next(trace for trace in fig.data if trace.name == "MA5")
+
+        assert round(float(volume_trace.y[-1]), 4) == round(64735.54 / 10000, 4)
+        expected_ma5 = sample_data["volume"].astype(float).copy()
+        expected_ma5.iloc[-1] = 64735.54
+        assert round(float(ma5_trace.y[-1]), 4) == round(expected_ma5.rolling(5).mean().iloc[-1] / 10000, 4)
+        assert fig.layout.xaxis.showticklabels is False
+
+    def test_volume_chart_appends_new_trading_day_realtime_volume(self, sample_data):
+        from app import plot_volume_chart
+
+        sample_data = sample_data.copy()
+        quote_date = (sample_data.index[-1] + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        quote = {"volume": 64735.54, "volume_unit": "hand", "quote_date": quote_date}
+        fig = plot_volume_chart(sample_data, quote)
+
+        volume_trace = next(trace for trace in fig.data if trace.name == "量")
+
+        assert len(volume_trace.y) == len(sample_data) + 1
+        assert round(float(volume_trace.y[-1]), 4) == round(64735.54 / 10000, 4)
 
     def test_no_crash_missing_ma_columns(self):
         """缺失均线列不崩溃"""
@@ -120,6 +187,7 @@ class TestPlotMACDChart:
         assert 'DIF (快线)' in names
         assert 'DEA (慢线)' in names
         assert 'MACD柱' in names
+        assert fig.layout.xaxis.showticklabels is False
 
 
 # ============================================================
@@ -141,6 +209,7 @@ class TestPlotRSIChart:
         assert 'RSI(6)' in names
         assert 'RSI(12)' in names
         assert 'RSI(24)' in names
+        assert fig.layout.xaxis.showticklabels is False
 
 
 # ============================================================
@@ -162,6 +231,7 @@ class TestPlotKDJChart:
         assert 'K' in names
         assert 'D' in names
         assert 'J' in names
+        assert fig.layout.xaxis.showticklabels is False
 
     def test_with_cross_markers(self):
         from app import plot_kdj_chart
@@ -195,6 +265,7 @@ class TestPlotBollChart:
         assert '上轨' in names
         assert '中轨' in names
         assert '下轨' in names
+        assert fig.layout.xaxis.showticklabels is False
 
 
 class TestPlotMainAccumulationChart:
@@ -268,7 +339,12 @@ class TestIndicatorLayout:
     def test_title_is_set(self):
         from app import _indicator_layout
         result = _indicator_layout("RSI 指标")
-        assert result["title"] == "RSI 指标"
+        assert result["title"]["text"] == "RSI 指标"
+
+    def test_empty_title_is_hidden(self):
+        from app import _indicator_layout
+        result = _indicator_layout("")
+        assert result["title"]["text"] == ""
 
     def test_custom_height(self):
         from app import _indicator_layout

@@ -1,7 +1,7 @@
 """
 股票数据获取模块 - 获取真实股票数据
 支持A股、港股、美股
-使用 AKShare（新浪/东方财富数据源）作为主要A股数据源，实时行情优先新浪
+使用同花顺/AKShare（新浪/东方财富数据源）作为主要A股数据源，实时行情优先新浪
 """
 import yfinance as yf
 import pandas as pd
@@ -106,6 +106,7 @@ class StockDataFetcher:
 
     # 数据源健康状态缓存
     _health_status = {
+        'ths': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'akshare_em': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'akshare': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'sina': {'healthy': True, 'last_check': None, 'fail_count': 0},
@@ -392,11 +393,13 @@ class StockDataFetcher:
 
             result = None
             data_source = None
+            result_source_name = None
             offline_mode = False
 
             if market == "CN":
                 # A股数据获取：始终构建完整回退链，按用户偏好排序
                 all_sources = [
+                    ('ths', self._get_cn_stock_data_ths, '同花顺'),
                     ('akshare_em', self._get_cn_stock_data_akshare_em, '东方财富'),
                     ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('sina', self._get_cn_stock_data_sina_fallback, '新浪财经'),
@@ -436,12 +439,22 @@ class StockDataFetcher:
                         else:
                             result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
+                            if not self._is_cn_daily_kline_fresh(result):
+                                logger.info(
+                                    "%s A股日K滞后，继续尝试下一个真实日K源: symbol=%s last=%s",
+                                    source_name,
+                                    symbol,
+                                    result.index[-1] if isinstance(result.index, pd.DatetimeIndex) else None,
+                                )
+                                continue
                             data_source = {
+                                'ths': '同花顺',
                                 'akshare_em': '东方财富',
                                 'akshare': '腾讯财经',
                                 'sina': '新浪财经',
                                 'yfinance': 'Yahoo Finance'
                             }.get(source_name, source_name)
+                            result_source_name = source_name
                             break
                     except Exception as e:
                         print(f"{source_name} 获取失败: {str(e)}")
@@ -493,6 +506,10 @@ class StockDataFetcher:
                 result.columns = [col.lower().replace(' ', '_') for col in result.columns]
                 # 添加数据源信息到DataFrame属性
                 result.attrs['data_source'] = data_source or "未知"
+                if data_source and not result.attrs.get('data_provider'):
+                    result.attrs['data_provider'] = data_source
+                if result_source_name and result_source_name != 'ths':
+                    result.attrs['source_note'] = "同花顺日K滞后时自动切换到可用真实日K源"
                 result.attrs['offline_mode'] = offline_mode
 
                 # 保存到离线缓存
@@ -501,6 +518,20 @@ class StockDataFetcher:
 
             self.cache[cache_key] = (datetime.now(), result, data_source)
             return result
+
+    @staticmethod
+    def _is_cn_daily_kline_fresh(data):
+        """判断A股日K是否包含当前最新交易日；缺当天K线时继续尝试其它真实数据源。"""
+        if data is None or data.empty or not isinstance(data.index, pd.DatetimeIndex):
+            return False
+        last_day = data.index.max().normalize()
+        now = datetime.now()
+        today = pd.Timestamp(now.date())
+        if today.weekday() >= 5:
+            return True
+        if now.hour < 15:
+            return True
+        return last_day >= today
 
     def _get_us_stock_data_sina(self, symbol, period, **kwargs):
         """使用新浪财经获取美股历史日K数据"""
@@ -536,6 +567,66 @@ class StockDataFetcher:
                 return df
         except Exception as e:
             print(f"新浪美股历史数据获取失败 {symbol}: {str(e)}")
+        return None
+
+    def _get_cn_stock_data_ths(self, symbol, period, **kwargs):
+        """使用同花顺网页端日K接口获取A股历史数据（默认前复权日K）。"""
+        try:
+            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
+            days = period_days.get(period, 365)
+            adjust = kwargs.get("adjust") or ""
+            line_code = "01" if adjust == "qfq" else "00"
+            url = f"https://d.10jqka.com.cn/v6/line/hs_{symbol}/{line_code}/last.js"
+            headers = {
+                'Referer': f'https://stockpage.10jqka.com.cn/{symbol}/',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            }
+            response = _session.get(url, headers=headers, timeout=10)
+            if response.status_code != 200 or not response.text.strip():
+                return None
+
+            text = response.text.strip()
+            start = text.find("{")
+            end = text.rfind("}")
+            if start < 0 or end < start:
+                return None
+            payload = json.loads(text[start:end + 1])
+            rows = []
+            for item in str(payload.get("data") or "").split(";"):
+                fields = item.split(",")
+                if len(fields) < 6:
+                    continue
+                rows.append({
+                    "date": fields[0],
+                    "open": fields[1],
+                    "high": fields[2],
+                    "low": fields[3],
+                    "close": fields[4],
+                    "volume": fields[5],
+                    "amount": fields[6] if len(fields) > 6 else None,
+                    "turnover_rate": fields[7] if len(fields) > 7 else None,
+                })
+
+            if len(rows) < 10:
+                return None
+
+            df = pd.DataFrame(rows)
+            df['date'] = pd.to_datetime(df['date'], format='%Y%m%d', errors='coerce')
+            df.set_index('date', inplace=True)
+            for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'turnover_rate']:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            df = df.dropna(subset=['open', 'high', 'low', 'close'])
+            cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=days)
+            df = df[df.index >= cutoff]
+
+            if len(df) >= 10:
+                df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
+                df.attrs['data_provider'] = '同花顺'
+                df.attrs['volume_unit'] = 'share'
+                return df
+        except Exception as e:
+            print(f"同花顺日K 获取失败 {symbol}: {str(e)}")
         return None
 
     def _get_cn_stock_data_akshare_em(self, symbol, period, **kwargs):
@@ -581,6 +672,7 @@ class StockDataFetcher:
                 if len(df) >= 10:
                     df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
                     df.attrs['data_provider'] = '东方财富'
+                    df.attrs['volume_unit'] = 'hand'
                     return df
 
         except Exception as e:
@@ -629,6 +721,8 @@ class StockDataFetcher:
 
                 if len(df) >= 10:
                     df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
+                    df.attrs['data_provider'] = '腾讯财经'
+                    df.attrs['volume_unit'] = 'share'
                     return df
 
         except Exception as e:
@@ -671,6 +765,8 @@ class StockDataFetcher:
                     df = df.dropna(subset=['open', 'high', 'low', 'close'])
                     if len(df) >= 10:
                         df.attrs['adjust_method'] = '未复权（新浪财经）'
+                        df.attrs['data_provider'] = '新浪财经'
+                        df.attrs['volume_unit'] = 'share'
                         return df
         except requests.exceptions.Timeout:
             print(f"新浪财经请求超时 {symbol}")
@@ -720,6 +816,7 @@ class StockDataFetcher:
                     # 标准化列名
                     data.columns = [col.lower().replace(' ', '_') for col in data.columns]
                     data.attrs['adjust_method'] = 'adjusted close（yfinance）'
+                    data.attrs['volume_unit'] = 'share'
                     return data
 
                 if attempt < max_retries - 1:
@@ -1042,8 +1139,12 @@ class StockDataFetcher:
                                 'open': float(data[1]),
                                 'high': float(data[4]),
                                 'low': float(data[5]),
-                                'volume': int(float(data[8]) / 100),
+                                'volume': float(data[8]) / 100,
+                                'volume_unit': 'hand',
                                 'prev_close': float(data[2]),
+                                'quote_date': data[30] if len(data) > 30 else None,
+                                'quote_time': data[31] if len(data) > 31 else None,
+                                'turnover_rate': None,
                                 'change': (float(data[3]) / float(data[2]) - 1) * 100
                             }
 
@@ -1060,8 +1161,10 @@ class StockDataFetcher:
                             'open': float(row['今开']),
                             'high': float(row['最高']),
                             'low': float(row['最低']),
-                            'volume': int(float(row['成交量']) / 100),
+                            'volume': float(row['成交量']) / 100,
+                            'volume_unit': 'hand',
                             'prev_close': float(row['昨收']),
+                            'turnover_rate': float(row['换手率']) if '换手率' in row and pd.notna(row['换手率']) else None,
                             'change': (float(row['最新价']) / float(row['昨收']) - 1) * 100
                         }
 
@@ -1517,7 +1620,7 @@ class StockDataFetcher:
         设置优先数据源
         source: 'auto', 'akshare', 'sina', 'yfinance'
         """
-        valid_sources = ['auto', 'akshare', 'sina', 'yfinance']
+        valid_sources = ['auto', 'ths', 'akshare_em', 'akshare', 'sina', 'yfinance']
         if source in valid_sources:
             self.preferred_source = source
             # 同时设置环境变量，让其他实例也能感知

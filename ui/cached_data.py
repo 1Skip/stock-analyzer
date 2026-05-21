@@ -22,17 +22,24 @@ fetcher = quote_service.provider.fetcher
 fundamental_service = FundamentalDataService()
 stock_info_service = StockInfoService()
 logger = logging.getLogger(__name__)
-STOCK_INPUT_CACHE_VERSION = "stock-input-v3-full-a-share-name-index"
+STOCK_INPUT_CACHE_VERSION = "stock-input-v4-ths-daily-kline-name-index"
+STOCK_DATA_CACHE_VERSION = "stock-data-v2-ths-daily-kline"
 
 
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
-def get_cached_stock_data(symbol, period, market, adjust=""):
+def get_cached_stock_data(symbol, period, market, adjust="", cache_version=STOCK_DATA_CACHE_VERSION):
     """缓存股票数据获取"""
     try:
         return quote_service.get_stock_data(symbol, period=period, market=market, adjust=adjust)
     except Exception:
         logger.warning("缓存层获取股票数据失败: symbol=%s market=%s period=%s", symbol, market, period, exc_info=True)
         return None
+
+
+def stock_data_cache_version(market="CN"):
+    if market == "CN":
+        return f"{STOCK_DATA_CACHE_VERSION}-{datetime.now().strftime('%Y%m%d%H%M')}"
+    return STOCK_DATA_CACHE_VERSION
 
 
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=16, show_spinner=False)

@@ -121,6 +121,7 @@ def display_data_source_selector():
 
         source_options = {
             'auto': '自动选择（推荐）',
+            'ths': '同花顺（日K）',
             'akshare_em': '东方财富（A股历史行情）',
             'akshare': '腾讯财经（A股备选行情）',
             'sina': '新浪财经（A股/美股实时兜底）',
@@ -141,7 +142,7 @@ def display_data_source_selector():
         with st.expander("查看详情"):
             st.markdown(
                 """
-                **A股行情优先源** — 上面的选择框只影响 A股历史K线/行情 获取顺序：东方财富 → 腾讯财经 → 新浪财经 → Yahoo Finance → 离线缓存。
+                **A股行情优先源** — 上面的选择框只影响 A股历史K线/行情 获取顺序：同花顺 → 东方财富 → 腾讯财经 → 新浪财经 → Yahoo Finance → 离线缓存。
 
                 **其他模块自动使用** — 热门板块/排行走同花顺行业/概念/全市场涨跌幅优先，新浪财经作为个股排行兜底；港股/美股仍按模块自动使用 Yahoo 和新浪。
 

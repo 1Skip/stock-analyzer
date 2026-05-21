@@ -36,6 +36,7 @@ from ui.charts import (  # noqa: F401
     plot_macd_chart,
     plot_main_accumulation_chart,
     plot_rsi_chart,
+    plot_volume_chart,
 )
 from ui.ai_analysis_ui import AI_MODEL_OPTIONS, _detect_provider  # noqa: F401
 from ui.analyze_page import _validate_symbol, display_signals  # noqa: F401

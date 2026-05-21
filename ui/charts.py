@@ -10,7 +10,7 @@ from chart_utils import resolve_color_scheme, MA_CONFIG
 def _indicator_layout(title, height=280, **extra):
     """共享指标图 layout 配置，避免 RSI/KDJ/BOLL 三处重复"""
     layout = dict(
-        title=title,
+        title=dict(text=title or ""),
         height=height,
         hovermode='x unified',
         hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
@@ -47,8 +47,24 @@ def latest_indicator_values(data, indicator):
     return [(label, _latest_number(data, column)) for label, column in mapping.get(indicator, [])]
 
 
+def latest_ma_values(data):
+    """返回日K图表右上角展示用的最新均线值。"""
+    return [(f"MA{period}", _latest_number(data, f"ma{period}")) for period in (5, 10, 20, 30)]
+
+
+def _category_axis_ticks(x_values, max_ticks=7):
+    values = list(x_values)
+    if len(values) <= max_ticks:
+        return values
+    step = max(1, len(values) // (max_ticks - 1))
+    ticks = values[::step]
+    if ticks[-1] != values[-1]:
+        ticks.append(values[-1])
+    return ticks
+
+
 def plot_candlestick_chart(data, title=""):
-    """使用 Plotly 绘制 K 线 + 成交量图"""
+    """使用 Plotly 绘制独立 K 线 + 均线图。"""
 
     scheme_name = st.session_state.get('color_scheme')
     market = st.session_state.get('analyze_market', 'CN')
@@ -56,17 +72,7 @@ def plot_candlestick_chart(data, title=""):
     inc_color = colors['increasing']
     dec_color = colors['decreasing']
 
-    from plotly.subplots import make_subplots
-
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.04,
-        row_heights=[0.72, 0.28],
-        subplot_titles=("K线 + 均线", "成交量"),
-    )
-
-    # --- Row 1: K线 + 均线 ---
+    fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=data.index,
         open=data['open'], high=data['high'], low=data['low'], close=data['close'],
@@ -74,7 +80,7 @@ def plot_candlestick_chart(data, title=""):
         increasing_line_color=inc_color,
         decreasing_line_color=dec_color,
         showlegend=False,
-    ), row=1, col=1)
+    ))
 
     for ma_conf in MA_CONFIG.values():
         col = f'ma{ma_conf["period"]}'
@@ -84,58 +90,128 @@ def plot_candlestick_chart(data, title=""):
                 mode='lines',
                 name=f'MA{ma_conf["period"]}',
                 line=dict(color=ma_conf['color'], width=1),
-            ), row=1, col=1)
+            ))
 
-    # --- Row 2: 成交量 ---
-    if 'volume' in data.columns:
-        vol_colors = [inc_color if data['close'].iloc[i] >= data['open'].iloc[i] else dec_color
-                      for i in range(len(data))]
-        volume_wan_shou = data['volume'] / 1_000_000
-        fig.add_trace(go.Bar(
-            x=data.index, y=volume_wan_shou,
-            name="成交量(万手)",
-            marker_color=vol_colors,
-            showlegend=False,
-            hovertemplate='成交量: %{y:.2f}万手<extra></extra>',
-        ), row=2, col=1)
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=volume_wan_shou.rolling(5).mean(),
-            mode='lines',
-            name='成交量MA5',
-            line=dict(color='gray', width=1),
-            hovertemplate='成交量MA5: %{y:.2f}万手<extra></extra>',
-        ), row=2, col=1)
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=volume_wan_shou.rolling(10).mean(),
-            mode='lines',
-            name='成交量MA10',
-            line=dict(color='purple', width=1),
-            hovertemplate='成交量MA10: %{y:.2f}万手<extra></extra>',
-        ), row=2, col=1)
-
-    # 布局
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    tick_values = _category_axis_ticks(x_values)
+    fig.update_traces(x=x_values)
     fig.update_layout(
-        height=520,
+        title=dict(text=title or ""),
+        height=360,
         hovermode='x unified',
+        hoverlabel=dict(bgcolor='rgba(0,0,0,0.7)', font=dict(size=11, color='#fff')),
         paper_bgcolor='rgba(0,0,0,0)',
         plot_bgcolor='rgba(0,0,0,0)',
         font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
-        margin=dict(l=20, r=20, t=40, b=20),
+        margin=dict(l=20, r=20, t=24, b=20),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
-    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_xaxes(
+        type="category",
+        tickmode="array",
+        tickvals=tick_values,
+        showticklabels=False,
+        rangeslider_visible=False,
+        showgrid=False,
+        zeroline=False,
+    )
     fig.update_yaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(title_text="万手", row=2, col=1)
+    return fig
 
-    # 子图标题更显眼
-    for annotation in fig.layout.annotations:
-        annotation.font.size = 13
-        annotation.font.color = '#8e8e93'
 
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
+def _volume_series_in_hands(data):
+    volume = data['volume']
+    unit = str(getattr(data, "attrs", {}).get("volume_unit") or "").lower()
+    if unit in {"share", "shares", "股"}:
+        return volume / 100
+    return volume
+
+
+def _quote_volume_in_hands(quote):
+    if not quote or quote.get("volume") is None:
+        return None
+    volume = float(quote["volume"])
+    unit = str(quote.get("volume_unit") or "hand").lower()
+    if unit in {"share", "shares", "股"}:
+        return volume / 100
+    return volume
+
+
+def _quote_date(quote):
+    value = (quote or {}).get("quote_date") or (quote or {}).get("date")
+    if not value:
+        return None
+    date_value = pd.to_datetime(value, errors="coerce")
+    if pd.isna(date_value):
+        return None
+    return date_value.normalize()
+
+
+def plot_volume_chart(data, quote=None):
+    """绘制独立成交量图，按同花顺风格展示量、MA5、MA10。"""
+    scheme_name = st.session_state.get('color_scheme')
+    market = st.session_state.get('analyze_market', 'CN')
+    colors = resolve_color_scheme(scheme_name, market)
+    inc_color = colors['increasing']
+    dec_color = colors['decreasing']
+
+    fig = go.Figure()
+    if 'volume' not in data.columns:
+        return fig
+
+    volume = _volume_series_in_hands(data).astype(float).copy()
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    close_values = data['close'].copy()
+    open_values = data['open'].copy()
+    quote_volume = _quote_volume_in_hands(quote)
+    if quote_volume is not None and not volume.empty:
+        quote_day = _quote_date(quote)
+        last_day = data.index[-1].normalize() if isinstance(data.index, pd.DatetimeIndex) else None
+        if quote_day is not None and last_day is not None and quote_day > last_day:
+            volume = pd.concat([volume, pd.Series([quote_volume], index=[quote_day])])
+            close_values = pd.concat([close_values, pd.Series([quote.get("price", close_values.iloc[-1])], index=[quote_day])])
+            open_values = pd.concat([open_values, pd.Series([quote.get("open", open_values.iloc[-1])], index=[quote_day])])
+            x_values = volume.index.strftime("%Y-%m-%d")
+        else:
+            volume.iloc[-1] = quote_volume
+
+    tick_values = _category_axis_ticks(x_values)
+    vol_colors = [inc_color if close_values.iloc[i] >= open_values.iloc[i] else dec_color
+                  for i in range(len(volume))]
+    volume_wan = volume / 10000
+    volume_ma5_wan = volume.rolling(5).mean() / 10000
+    volume_ma10_wan = volume.rolling(10).mean() / 10000
+    fig.add_trace(go.Bar(
+        x=x_values,
+        y=volume_wan,
+        name="量",
+        marker_color=vol_colors,
+        hovertemplate='量: %{y:.2f}万手<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=volume_ma5_wan,
+        mode='lines',
+        name='MA5',
+        line=dict(color='#8e8e93', width=1.2),
+        hovertemplate='MA5: %{y:.2f}万手<extra></extra>',
+    ))
+    fig.add_trace(go.Scatter(
+        x=x_values,
+        y=volume_ma10_wan,
+        mode='lines',
+        name='MA10',
+        line=dict(color='#a855f7', width=1.2),
+        hovertemplate='MA10: %{y:.2f}万手<extra></extra>',
+    ))
+    fig.update_layout(**_indicator_layout(
+        "",
+        height=260,
+        margin=dict(l=20, r=20, t=24, b=20),
+    ))
+    fig.update_xaxes(type="category", tickmode="array", tickvals=tick_values, showticklabels=False, showgrid=False, zeroline=False)
+    fig.update_yaxes(title_text="万手", showgrid=False, zeroline=False)
     return fig
 
 
@@ -164,9 +240,12 @@ def plot_macd_chart(data):
         name='MACD柱',
         marker_color=macd_hist_colors,
     ))
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    tick_values = _category_axis_ticks(x_values)
+    fig.update_traces(x=x_values)
     fig.add_hline(y=0, line_dash="solid", line_color="gray", opacity=0.5)
-    fig.update_layout(**_indicator_layout("MACD", height=300))
-    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_layout(**_indicator_layout("", height=300, margin=dict(l=20, r=20, t=24, b=20)))
+    fig.update_xaxes(type="category", tickmode="array", tickvals=tick_values, showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
     return fig
 
@@ -190,9 +269,12 @@ def plot_rsi_chart(data):
     fig.add_hrect(y0=0, y1=RSI_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
     fig.add_hrect(y0=RSI_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
-    fig.update_layout(**_indicator_layout("RSI", height=280, yaxis_range=[0, 100]))
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    tick_values = _category_axis_ticks(x_values)
+    fig.update_traces(x=x_values)
+    fig.update_layout(**_indicator_layout("", height=280, yaxis_range=[0, 100], margin=dict(l=20, r=20, t=24, b=20)))
 
-    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_xaxes(type="category", tickmode="array", tickvals=tick_values, showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig
@@ -223,20 +305,25 @@ def plot_kdj_chart(data):
     kdj_death = kdj_death[kdj_death > 0]
     if len(kdj_golden) > 0:
         fig.add_trace(go.Scatter(
-            x=data.index[kdj_golden], y=data['kdj_k'].iloc[kdj_golden],
+            x=data.index[kdj_golden].strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index[kdj_golden],
+            y=data['kdj_k'].iloc[kdj_golden],
             mode='markers', name='KDJ金叉', marker=dict(symbol='triangle-up', size=12, color=inc_color, line=dict(width=1)),
             showlegend=True, hovertemplate='KDJ金叉<br>%{x}<br>K: %{y:.1f}'))
     if len(kdj_death) > 0:
         fig.add_trace(go.Scatter(
-            x=data.index[kdj_death], y=data['kdj_k'].iloc[kdj_death],
+            x=data.index[kdj_death].strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index[kdj_death],
+            y=data['kdj_k'].iloc[kdj_death],
             mode='markers', name='KDJ死叉', marker=dict(symbol='triangle-down', size=12, color=dec_color, line=dict(width=1)),
             showlegend=True, hovertemplate='KDJ死叉<br>%{x}<br>K: %{y:.1f}'))
 
     fig.add_hrect(y0=0, y1=KDJ_OVERSOLD, line_width=0, fillcolor=inc_color, opacity=0.08, name="超卖区")
     fig.add_hrect(y0=KDJ_OVERBOUGHT, y1=100, line_width=0, fillcolor=dec_color, opacity=0.08, name="超买区")
 
-    fig.update_layout(**_indicator_layout("KDJ"))
-    fig.update_xaxes(showgrid=False, zeroline=False)
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    tick_values = _category_axis_ticks(x_values)
+    fig.update_traces(x=x_values, selector=lambda trace: trace.mode != 'markers')
+    fig.update_layout(**_indicator_layout("", margin=dict(l=20, r=20, t=24, b=20)))
+    fig.update_xaxes(type="category", tickmode="array", tickvals=tick_values, showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig
@@ -246,14 +333,16 @@ def plot_boll_chart(data):
     """绘制布林带图表"""
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(x=data.index, y=data['close'], name='价格', line=dict(color='black', width=2)))
-    fig.add_trace(go.Scatter(x=data.index, y=data['boll_upper'], name='上轨', line=dict(color='red')))
-    fig.add_trace(go.Scatter(x=data.index, y=data['boll_mid'], name='中轨', line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=data.index, y=data['boll_lower'], name='下轨', line=dict(color='green')))
+    x_values = data.index.strftime("%Y-%m-%d") if hasattr(data.index, "strftime") else data.index
+    tick_values = _category_axis_ticks(x_values)
+    fig.add_trace(go.Scatter(x=x_values, y=data['close'], name='价格', line=dict(color='#f8fafc', width=2.4)))
+    fig.add_trace(go.Scatter(x=x_values, y=data['boll_upper'], name='上轨', line=dict(color='red')))
+    fig.add_trace(go.Scatter(x=x_values, y=data['boll_mid'], name='中轨', line=dict(color='blue')))
+    fig.add_trace(go.Scatter(x=x_values, y=data['boll_lower'], name='下轨', line=dict(color='green')))
 
     # 填充布林带区域
     fig.add_trace(go.Scatter(
-        x=data.index.tolist() + data.index.tolist()[::-1],
+        x=list(x_values) + list(x_values)[::-1],
         y=data['boll_upper'].tolist() + data['boll_lower'].tolist()[::-1],
         fill='toself',
         fillcolor='rgba(0,100,80,0.1)',
@@ -262,12 +351,12 @@ def plot_boll_chart(data):
     ))
 
     fig.update_layout(**_indicator_layout(
-        "BOLL",
+        "",
         height=300,
-        margin=dict(l=20, r=20, t=52, b=20),
+        margin=dict(l=20, r=20, t=24, b=20),
         legend=dict(font=dict(size=10), orientation='h', yanchor='top', y=1.02, xanchor='left', x=0.06),
     ))
-    fig.update_xaxes(showgrid=False, zeroline=False)
+    fig.update_xaxes(type="category", tickmode="array", tickvals=tick_values, showticklabels=False, showgrid=False, zeroline=False)
     fig.update_yaxes(showgrid=False, zeroline=False)
 
     return fig

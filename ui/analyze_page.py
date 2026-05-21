@@ -16,11 +16,13 @@ from ui.cached_data import (
     get_cached_realtime_quote, get_cached_intraday_data,
     get_cached_stock_profile, get_cached_stock_extended_info,
     resolve_cached_stock_input, get_cached_benchmark_data,
+    stock_data_cache_version,
 )
 from ui.charts import (
     latest_indicator_values,
+    latest_ma_values,
     plot_candlestick_chart, plot_macd_chart, plot_rsi_chart, plot_kdj_chart,
-    plot_boll_chart, plot_main_accumulation_chart, plot_intraday_chart,
+    plot_boll_chart, plot_main_accumulation_chart, plot_intraday_chart, plot_volume_chart,
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
 from ui.decision_dashboard import render_decision_dashboard
@@ -380,6 +382,93 @@ def _render_chart_header(title, values=None):
     )
 
 
+def _format_ths_volume(value):
+    number = _safe_number(value)
+    if number is None:
+        return "--"
+    if abs(number) >= 100000:
+        return f"{number / 10000:.2f}万"
+    return f"{number:.2f}"
+
+
+def _volume_series_in_hands(data):
+    if data is None or data.empty or "volume" not in data.columns:
+        return None
+    volume = data["volume"]
+    unit = str(getattr(data, "attrs", {}).get("volume_unit") or "").lower()
+    if unit in {"share", "shares", "股"}:
+        return volume / 100
+    if unit in {"hand", "hands", "手"}:
+        return volume
+    return volume
+
+
+def _quote_volume_in_hands(quote):
+    quote_volume = _safe_number((quote or {}).get("volume"))
+    if quote_volume is None:
+        return None
+    unit = str((quote or {}).get("volume_unit") or "hand").lower()
+    if unit in {"share", "shares", "股"}:
+        return quote_volume / 100
+    return quote_volume
+
+
+def _quote_date(quote):
+    value = (quote or {}).get("quote_date") or (quote or {}).get("date")
+    if not value:
+        return None
+    date_value = pd.to_datetime(value, errors="coerce")
+    if pd.isna(date_value):
+        return None
+    return date_value.normalize()
+
+
+def _volume_series_for_display(data, quote=None):
+    volume = _volume_series_in_hands(data)
+    if volume is None or volume.empty:
+        return volume
+
+    quote_volume = _quote_volume_in_hands(quote)
+    if quote_volume is None:
+        return volume
+
+    display_volume = volume.astype(float).copy()
+    quote_day = _quote_date(quote)
+    last_day = None
+    if isinstance(display_volume.index, pd.DatetimeIndex) and not display_volume.index.empty:
+        last_day = display_volume.index[-1].normalize()
+
+    if quote_day is not None and last_day is not None and quote_day > last_day:
+        display_volume = pd.concat([display_volume, pd.Series([quote_volume], index=[quote_day])])
+    else:
+        display_volume.iloc[-1] = quote_volume
+    return display_volume
+
+
+def _latest_volume_values(data, profile=None, quote=None):
+    if data is None or data.empty or "volume" not in data.columns:
+        return [("量", "--"), ("MA5", "--"), ("MA10", "--"), ("换手", "--")]
+
+    volume = _volume_series_for_display(data, quote)
+    if volume is None:
+        return [("量", "--"), ("MA5", "--"), ("MA10", "--"), ("换手", "--")]
+    turnover = None
+    float_shares = _safe_number((profile or {}).get("float_shares"))
+    latest_volume = _safe_number(volume.iloc[-1])
+    if float_shares and latest_volume is not None:
+        turnover = latest_volume * 100 / float_shares * 100
+    if turnover is None and quote:
+        turnover = quote.get("turnover_rate")
+    if profile:
+        turnover = turnover if turnover is not None else profile.get("turnover_rate")
+    return [
+        ("量", _format_ths_volume(volume.iloc[-1])),
+        ("MA5", _format_ths_volume(volume.rolling(5).mean().iloc[-1])),
+        ("MA10", _format_ths_volume(volume.rolling(10).mean().iloc[-1])),
+        ("换手", _format_optional_number(turnover, "%")),
+    ]
+
+
 def display_signals(signals):
     """显示交易信号 — 4个徽章横排 + 综合建议"""
     if 'error' in signals:
@@ -635,11 +724,46 @@ def _has_valid_analyzed_result():
     expected = _analysis_target_key(symbol, market, period)
     if not _data_matches_target(st.session_state.get("analyzed_data"), symbol, market, period):
         return False
+    if not _analysis_data_is_fresh_for_display(st.session_state.get("analyzed_data"), market):
+        return False
     stored = st.session_state.get("analyzed_target_key")
     if stored is None:
         st.session_state.analyzed_target_key = expected
         return True
     return stored == expected
+
+
+def _analysis_data_is_fresh_for_display(data, market):
+    if market != "CN" or data is None or data.empty:
+        return True
+    if not isinstance(data.index, pd.DatetimeIndex):
+        return True
+    now = pd.Timestamp.now()
+    today = now.normalize()
+    if today.weekday() >= 5 or now.hour < 15:
+        return True
+    return data.index.max().normalize() >= today
+
+
+def _has_stale_analyzed_result_for_current_input():
+    data = st.session_state.get("analyzed_data")
+    symbol = st.session_state.get("analyzed_symbol")
+    market = st.session_state.get("analyzed_market")
+    period = st.session_state.get("analyzed_period")
+    if data is None or not symbol or not market or not period:
+        return False
+    if _analysis_data_is_fresh_for_display(data, market):
+        return False
+    target = _resolve_watchlist_target(
+        st.session_state.get("analyze_symbol_input", st.session_state.get("analyze_symbol", "")),
+        st.session_state.get("analyze_market", "CN"),
+    )
+    input_symbol = target[0] if target else st.session_state.get("analyze_symbol")
+    return _analysis_target_key(
+        input_symbol,
+        st.session_state.get("analyze_market"),
+        st.session_state.get("analyze_period"),
+    ) == _analysis_target_key(symbol, market, period)
 
 
 def _sync_analyze_input_to_cached_result():
@@ -659,6 +783,32 @@ def _sync_analyze_input_to_cached_result():
     if analyzed_period:
         st.session_state.analyze_period = analyzed_period
         st.session_state.analyze_period_select = analyzed_period
+
+
+def _normalize_submitted_analysis_input(raw_value, market):
+    """整理主输入框提交值，兜底处理旧代码和新代码被前端拼接的情况。"""
+    value = str(raw_value or "").strip()
+    if market == "CN" and value.isdigit() and len(value) > 6:
+        return value[-6:]
+    if market == "HK" and value.isdigit() and len(value) > 5:
+        return value[-5:]
+    return value
+
+
+def _queue_analysis_for_current_input(*, sync_input=True):
+    """把主输入框中的当前值提交为待分析标的，供按钮点击和 Enter 提交共用。"""
+    submitted_symbol = _normalize_submitted_analysis_input(
+        st.session_state.get(
+            "analyze_symbol_input",
+            st.session_state.get("analyze_symbol", ""),
+        ),
+        st.session_state.get("analyze_market", "CN"),
+    )
+    st.session_state.analyze_symbol = submitted_symbol
+    if sync_input:
+        st.session_state.analyze_symbol_input = submitted_symbol
+    st.session_state.trigger_analysis = True
+    _clear_analyzed_result()
 
 
 def _render_analysis_target_header(symbol, stock_name, market, period, *, show_watchlist=True):
@@ -786,17 +936,26 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     if AI_ENABLED:
         display_ai_analysis_card(data, signals, symbol, stock_name, period)
 
-    # ⑥ K线图
+    # ⑥ 日K图
     st.divider()
-    plot_candlestick_chart(data)
+    with st.expander("日K", expanded=True):
+        _render_chart_header("日K", latest_ma_values(data))
+        fig = plot_candlestick_chart(data)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑦ MACD
+    # ⑦ 成交量
+    with st.expander("成交量", expanded=True):
+        _render_chart_header("成交量", _latest_volume_values(data, profile, quote))
+        fig = plot_volume_chart(data, quote)
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+    # ⑧ MACD
     with st.expander("MACD 指标", expanded=False):
         _render_chart_header("MACD", latest_indicator_values(data, "macd"))
         fig = plot_macd_chart(data)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑧ RSI + KDJ 并排
+    # ⑨ RSI + KDJ 并排
     with st.expander("RSI & KDJ 指标", expanded=False):
         col_rsi, col_kdj = st.columns(2)
         with col_rsi:
@@ -808,19 +967,19 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
             fig = plot_kdj_chart(data)
             st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑨ 布林带
+    # ⑩ 布林带
     with st.expander("布林带", expanded=False):
         _render_chart_header("BOLL", latest_indicator_values(data, "boll"))
         fig = plot_boll_chart(data)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑩ 主力吸货
+    # ⑪ 主力吸货
     with st.expander("主力吸货 指标", expanded=False):
         _render_chart_header("主力吸货", latest_indicator_values(data, "main_accumulation"))
         fig = plot_main_accumulation_chart(data)
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-    # ⑪ 原始数据
+    # ⑫ 原始数据
     with st.expander("查看原始数据"):
         st.dataframe(data.tail(20))
 
@@ -908,7 +1067,14 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
         _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
         futures = {
             'info': executor.submit(get_cached_stock_info, symbol, market),
-            'data': executor.submit(get_cached_stock_data, symbol, '1y', market, 'qfq' if market == "CN" else ""),
+            'data': executor.submit(
+                get_cached_stock_data,
+                symbol,
+                '1y',
+                market,
+                'qfq' if market == "CN" else "",
+                stock_data_cache_version(market),
+            ),
             'quote': executor.submit(get_cached_realtime_quote, symbol, market),
         }
         if market == "CN":
@@ -1086,26 +1252,23 @@ def analyze_stock_page():
     # ================================================================
 
     # 第1行：搜索框 | 开始分析（核心操作，视觉焦点）
-    # 用 st.form 包住：表单提交时保证所有值批量发送，不依赖输入框的 dirty 标记
-    with st.form("search_form"):
-        col_input, col_btn = st.columns([5, 1])
-        with col_input:
-            st.caption("支持输入股票代码或名称，例如：000001、平安银行、贵州茅台、AAPL、00700")
-            st.text_input(
-                "股票代码或名称",
-                placeholder="000001 或 平安银行 · AAPL · 00700",
-                key="analyze_symbol_input",
-            )
-        with col_btn:
-            submitted = st.form_submit_button(
-                "开始分析", type="primary", use_container_width=True
-            )
-
-    if submitted:
-        st.session_state.analyze_symbol = st.session_state.analyze_symbol_input
-        st.session_state.trigger_analysis = True
-        _clear_analyzed_result()
-
+    col_input, col_btn = st.columns([5, 1])
+    with col_input:
+        st.caption("支持输入股票代码或名称，例如：000001、平安银行、贵州茅台、AAPL、00700")
+        st.text_input(
+            "股票代码或名称",
+            placeholder="000001 或 平安银行 · AAPL · 00700",
+            key="analyze_symbol_input",
+            on_change=_queue_analysis_for_current_input,
+        )
+    with col_btn:
+        st.markdown('<div class="analysis-search-button-spacer"></div>', unsafe_allow_html=True)
+        st.button(
+            "开始分析",
+            type="primary",
+            use_container_width=True,
+            on_click=_queue_analysis_for_current_input,
+        )
     analyzed_target = _get_analyzed_target() if _is_current_input_analyzed() else None
     if analyzed_target:
         _render_analysis_target_header(*analyzed_target)
@@ -1228,7 +1391,8 @@ def analyze_stock_page():
     market = st.session_state.analyze_market
     period = st.session_state.analyze_period
 
-    analyze_clicked = st.session_state.pop('trigger_analysis', False)
+    stale_cached_result = _has_stale_analyzed_result_for_current_input()
+    analyze_clicked = st.session_state.pop('trigger_analysis', False) or stale_cached_result
 
     if analyze_clicked:
         _clear_analyzed_result()

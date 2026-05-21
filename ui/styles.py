@@ -276,6 +276,15 @@ CUSTOM_CSS = """
     .select-row-button-spacer + div button {
         min-height: 2.55rem;
     }
+    .analysis-search-button-spacer {
+        height: 4.0rem;
+        margin: 0;
+        padding: 0;
+    }
+    .analysis-search-button-spacer + div [data-testid="stButton"] button,
+    .analysis-search-button-spacer + div button {
+        min-height: 2.55rem;
+    }
 
     /* ===== 分析中占位卡片 ===== */
     .analysis-loading-card {

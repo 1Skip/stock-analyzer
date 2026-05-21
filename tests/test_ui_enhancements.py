@@ -179,6 +179,46 @@ def test_analyze_page_rejects_cross_symbol_dataframe_cache():
     assert _is_current_input_analyzed() is False
 
 
+def test_analyze_page_rejects_stale_cn_daily_kline_after_close(monkeypatch):
+    import streamlit as st
+    import ui.analyze_page as analyze_page
+    from ui.analyze_page import (
+        _has_stale_analyzed_result_for_current_input,
+        _has_valid_analyzed_result,
+        _tag_analysis_data,
+    )
+
+    class FakeTimestamp(pd.Timestamp):
+        @classmethod
+        def now(cls, tz=None):
+            return pd.Timestamp("2026-05-21 17:11:00")
+
+    monkeypatch.setattr(analyze_page.pd, "Timestamp", FakeTimestamp)
+    st.session_state.clear()
+    data = pd.DataFrame(
+        {
+            "open": [14.23],
+            "high": [15.27],
+            "low": [14.00],
+            "close": [14.21],
+            "volume": [206980000],
+        },
+        index=pd.DatetimeIndex([pd.Timestamp("2026-05-20")]),
+    )
+    st.session_state.analyze_symbol = "600246"
+    st.session_state.analyze_symbol_input = "600246"
+    st.session_state.analyze_market = "CN"
+    st.session_state.analyze_period = "1y"
+    st.session_state.analyzed_symbol = "600246"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("600246", "CN", "1y")
+    st.session_state.analyzed_data = _tag_analysis_data(data, "600246", "CN", "1y")
+
+    assert _has_valid_analyzed_result() is False
+    assert _has_stale_analyzed_result_for_current_input() is True
+
+
 def test_analyze_page_syncs_stale_input_to_valid_cached_result():
     import streamlit as st
     from ui.analyze_page import _sync_analyze_input_to_cached_result, _tag_analysis_data
@@ -201,6 +241,152 @@ def test_analyze_page_syncs_stale_input_to_valid_cached_result():
     assert st.session_state.analyze_symbol_input == "600016"
     assert st.session_state.analyze_market == "CN"
     assert st.session_state.analyze_period == "1y"
+
+
+def test_analyze_page_restores_cached_result_after_page_switch():
+    import streamlit as st
+    from ui.analyze_page import _sync_analyze_input_to_cached_result, _tag_analysis_data
+
+    st.session_state.clear()
+    data = _tag_analysis_data(pd.DataFrame({"close": [7.1, 7.2]}), "600626", "CN", "1y")
+    st.session_state.analyze_symbol = "600016"
+    st.session_state.analyze_symbol_input = "600016"
+    st.session_state.analyze_market = "CN"
+    st.session_state.analyze_period = "1y"
+    st.session_state.analyzed_symbol = "600626"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("600626", "CN", "1y")
+    st.session_state.analyzed_data = data
+
+    _sync_analyze_input_to_cached_result()
+
+    assert st.session_state.analyze_symbol == "600626"
+    assert st.session_state.analyze_symbol_input == "600626"
+    assert st.session_state.analyze_market == "CN"
+    assert st.session_state.analyze_period == "1y"
+
+
+def test_analyze_page_enter_and_button_share_current_input_submit_handler():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _queue_analysis_for_current_input" in source
+    search_body = source.split('key="analyze_symbol_input"', 1)[1].split("analyzed_target =", 1)[0]
+    assert "on_change=_queue_analysis_for_current_input" in search_body
+    assert "on_click=_queue_analysis_for_current_input" in search_body
+
+
+def test_analyze_page_search_input_is_not_wrapped_in_form():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    search_body = source.split('key="analyze_symbol_input"', 1)[0].rsplit("#", 1)[-1]
+
+    assert 'with st.form("search_form")' not in search_body
+    assert "st.form_submit_button" not in source
+
+
+def test_analyze_page_queue_analysis_uses_current_text_input_value():
+    import streamlit as st
+    from ui.analyze_page import _queue_analysis_for_current_input, _tag_analysis_data
+
+    st.session_state.clear()
+    data = _tag_analysis_data(pd.DataFrame({"close": [7.1, 7.2]}), "600016", "CN", "1y")
+    st.session_state.analyze_symbol = "600016"
+    st.session_state.analyze_symbol_input = "贵州茅台"
+    st.session_state.analyzed_symbol = "600016"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("600016", "CN", "1y")
+    st.session_state.analyzed_data = data
+
+    _queue_analysis_for_current_input()
+
+    assert st.session_state.analyze_symbol == "贵州茅台"
+    assert st.session_state.trigger_analysis is True
+    assert "analyzed_data" not in st.session_state
+
+
+def test_analyze_page_queue_analysis_strips_concatenated_cn_codes():
+    import streamlit as st
+    from ui.analyze_page import _queue_analysis_for_current_input
+
+    st.session_state.clear()
+    st.session_state.analyze_symbol = "000001"
+    st.session_state.analyze_symbol_input = "000001600626"
+    st.session_state.analyze_market = "CN"
+
+    _queue_analysis_for_current_input()
+
+    assert st.session_state.analyze_symbol == "600626"
+    assert st.session_state.analyze_symbol_input == "600626"
+    assert st.session_state.trigger_analysis is True
+
+
+def test_analyze_page_queue_analysis_can_skip_input_sync_after_widget_creation():
+    import streamlit as st
+    from ui.analyze_page import _queue_analysis_for_current_input
+
+    st.session_state.clear()
+    st.session_state.analyze_symbol = "000001"
+    st.session_state.analyze_symbol_input = "000001600626"
+    st.session_state.analyze_market = "CN"
+
+    _queue_analysis_for_current_input(sync_input=False)
+
+    assert st.session_state.analyze_symbol == "600626"
+    assert st.session_state.analyze_symbol_input == "000001600626"
+    assert st.session_state.trigger_analysis is True
+
+
+def test_boll_price_line_uses_visible_dark_theme_color():
+    from pathlib import Path
+
+    source = Path("ui/charts.py").read_text(encoding="utf-8")
+    boll_body = source.split("def plot_boll_chart", 1)[1].split("def plot_main_accumulation_chart", 1)[0]
+
+    assert "name='价格', line=dict(color='#f8fafc'" in boll_body
+    assert "name='价格', line=dict(color='black'" not in boll_body
+
+
+def test_volume_header_matches_ths_hand_unit_and_turnover():
+    import pandas as pd
+    from ui.analyze_page import _latest_volume_values
+
+    data = pd.DataFrame({"volume": [
+        90414, 107126, 127865, 101912, 114174,
+        93343, 78977, 88470, 106701, 126969,
+    ]})
+    profile = {"float_shares": 458859916.0}
+
+    assert _latest_volume_values(data, profile) == [
+        ("量", "12.70万"),
+        ("MA5", "98892.00"),
+        ("MA10", "10.36万"),
+        ("换手", "2.77%"),
+    ]
+
+
+def test_volume_header_uses_realtime_volume_for_current_day_ma():
+    import pandas as pd
+    from ui.analyze_page import _latest_volume_values
+
+    data = pd.DataFrame({"volume": [
+        6192576, 8740527, 7439800, 6717828, 5904970,
+        8149267, 6880449, 6956600, 4403998, 5788700,
+    ]}, index=pd.date_range("2026-05-07", periods=10, freq="B"))
+    data.attrs["volume_unit"] = "share"
+    profile = {"float_shares": 662212199.0}
+    quote = {"volume": 64735.54, "volume_unit": "hand", "quote_date": "2026-05-21"}
+
+    assert _latest_volume_values(data, profile, quote) == [
+        ("量", "64735.54"),
+        ("MA5", "61006.60"),
+        ("MA10", "67455.69"),
+        ("换手", "0.98%"),
+    ]
 
 
 def test_recommend_page_shows_multi_factor_diagnostics():
@@ -1056,10 +1242,27 @@ def test_analyze_page_uses_qfq_daily_kline_without_realtime_indicator_merge():
 
     source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
 
-    assert "get_cached_stock_data, symbol, '1y', market, 'qfq' if market == \"CN\" else \"\"" in source
+    assert "get_cached_stock_data," in source
+    assert "stock_data_cache_version(market)" in source
+    assert "'qfq' if market == \"CN\" else \"\"" in source
     assert "pd.concat([data, realtime_row])" not in source
     assert "data.loc[idx, 'close'] = quote['price']" not in source
     assert "MA30" in source
+
+
+def test_cn_stock_data_cache_version_refreshes_by_minute(monkeypatch):
+    import ui.cached_data as cached_data
+
+    class FakeDateTime:
+        @classmethod
+        def now(cls):
+            from datetime import datetime
+            return datetime(2026, 5, 21, 17, 11)
+
+    monkeypatch.setattr(cached_data, "datetime", FakeDateTime)
+
+    assert cached_data.stock_data_cache_version("CN").endswith("202605211711")
+    assert cached_data.stock_data_cache_version("US") == cached_data.STOCK_DATA_CACHE_VERSION
 
 
 def test_recommend_page_displays_profile_fields():

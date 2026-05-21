@@ -79,7 +79,7 @@ class TestInitAndConfig:
         from data_fetcher import StockDataFetcher
         os.environ.pop('STOCK_DATA_SOURCE', None)
         fetcher = StockDataFetcher()
-        assert fetcher.preferred_source in ('auto', 'akshare', 'sina', 'yfinance')
+        assert fetcher.preferred_source in ('auto', 'ths', 'akshare_em', 'akshare', 'sina', 'yfinance')
 
     def test_init_max_retries(self):
         from data_fetcher import StockDataFetcher
@@ -276,6 +276,82 @@ class TestOfflineCache:
 # ============================================================
 
 class TestGetStockDataCN:
+
+    def test_ths_daily_kline_is_first_auto_source(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        ths_text = (
+            'quotebridge_v6_line_hs_002101_01_last({"data":"'
+            '20260507,10.05,10.09,10.00,10.00,6192576,61925760.00,0.936,,,0;'
+            '20260508,10.01,10.13,9.94,10.10,8740527,87405270.00,1.320,,,0;'
+            '20260511,10.10,10.10,9.97,10.02,7439800,74398000.00,1.124,,,0;'
+            '20260512,10.01,10.03,9.84,9.84,6717828,67178280.00,1.014,,,0;'
+            '20260513,9.88,9.96,9.85,9.90,5904970,59049700.00,0.892,,,0;'
+            '20260514,9.91,9.93,9.65,9.66,8149267,81492670.00,1.231,,,0;'
+            '20260515,9.64,9.81,9.63,9.72,6880449,68804490.00,1.039,,,0;'
+            '20260518,9.70,9.70,9.45,9.53,6956600,69566000.00,1.051,,,0;'
+            '20260519,9.53,9.62,9.51,9.61,4403998,44039980.00,0.665,,,0;'
+            '20260520,9.58,9.58,9.34,9.45,5788700,57887000.00,0.874,,,0;'
+            '20260521,9.45,9.60,9.35,9.37,6473554,64735540.00,0.978,,,0"})'
+        )
+
+        def mock_get(url, headers=None, timeout=None, **kwargs):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.text = ths_text
+            return resp
+
+        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
+                            lambda self, s, d: None)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_stock_data('002101', period='1y', market='CN', adjust='qfq')
+
+        assert result is not None
+        assert result.attrs['data_provider'] == '同花顺'
+        assert result.attrs['data_source'] == '同花顺'
+        assert result.attrs['volume_unit'] == 'share'
+        assert result.index[-1].strftime('%Y%m%d') == '20260521'
+        assert result['close'].iloc[-1] == 9.37
+        assert result['volume'].iloc[-1] == 6473554
+
+    def test_stale_ths_daily_kline_falls_back_to_fresh_real_source(self, monkeypatch):
+        import data_fetcher
+        from data_fetcher import StockDataFetcher
+
+        class FakeDateTime:
+            @classmethod
+            def now(cls):
+                return datetime(2026, 5, 21, 17, 11)
+
+            @classmethod
+            def fromisoformat(cls, value):
+                return datetime.fromisoformat(value)
+
+        ths = _make_ohlcv_df(days=60, base_price=10.0)
+        ths.index = pd.date_range(end=pd.Timestamp("2026-05-20"), periods=60, freq="B")
+        fresh = ths.copy()
+        fresh.loc[pd.Timestamp("2026-05-21"), ["open", "high", "low", "close", "volume"]] = [
+            14.70, 15.63, 14.70, 15.41, 265155668,
+        ]
+        fresh.attrs["data_provider"] = "腾讯财经"
+        fresh.attrs["volume_unit"] = "share"
+
+        monkeypatch.setattr(data_fetcher, "datetime", FakeDateTime)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_ths", lambda self, *args, **kwargs: ths)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare_em", lambda self, *args, **kwargs: None)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare", lambda self, *args, **kwargs: fresh)
+        monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
+                            lambda self, s, d: None)
+
+        fetcher = StockDataFetcher()
+        result = fetcher.get_stock_data('600246', period='1y', market='CN', adjust='qfq')
+
+        assert result.index[-1].strftime('%Y-%m-%d') == '2026-05-21'
+        assert result['close'].iloc[-1] == 15.41
+        assert result.attrs['data_source'] == '腾讯财经'
+        assert result.attrs['source_note'] == "同花顺日K滞后时自动切换到可用真实日K源"
 
     def test_akshare_success_path(self, monkeypatch):
         from data_fetcher import StockDataFetcher
@@ -713,6 +789,29 @@ class TestResolveStockInput:
         assert fetcher.resolve_stock_input('瑞鹄模具', market='CN') == ('002997', '瑞鹄模具')
         assert fetcher.resolve_stock_input('上海电力', market='CN') == ('600021', '上海电力')
 
+    def test_wantong_development_resolves_to_600246_without_network(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', False)
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_stock_name_index_file',
+            str(os.path.join('missing-cache-dir', 'stock_name_index.json')),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            'get_main_board_stocks',
+            classmethod(lambda cls: []),
+        )
+        monkeypatch.setattr(
+            StockDataFetcher,
+            '_resolve_cn_stock_name_from_spot',
+            lambda self, text: None,
+        )
+
+        fetcher = StockDataFetcher()
+        assert fetcher.resolve_stock_input('万通发展', market='CN') == ('600246', '万通发展')
+
 
 # ============================================================
 # TestGetRealtimeQuote
@@ -737,6 +836,8 @@ class TestGetRealtimeQuote:
         quote = fetcher.get_realtime_quote('000001', market='CN')
         assert quote is not None
         assert quote['price'] == 12.50
+        assert quote['volume'] == 500000
+        assert quote['volume_unit'] == 'hand'
         expected_change = (12.50 / 12.00 - 1) * 100
         assert abs(quote['change'] - expected_change) < 0.01
 
@@ -767,6 +868,8 @@ class TestGetRealtimeQuote:
         quote = fetcher.get_realtime_quote('000001', market='CN')
         assert quote is not None
         assert quote['price'] == 12.50
+        assert quote['volume'] == 500000
+        assert quote['volume_unit'] == 'hand'
         expected_change = (12.50 / 12.00 - 1) * 100
         assert abs(quote['change'] - expected_change) < 0.01
 
