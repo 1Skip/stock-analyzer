@@ -4,6 +4,7 @@ setlocal
 cd /d "%~dp0"
 set "STARTUP_DIR=%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup"
 set "SHORTCUT=%STARTUP_DIR%\Stock Analyzer.lnk"
+set "ICON=%CD%\assets\app.ico"
 
 echo ======================================
 echo      Enable Windows startup launch
@@ -16,6 +17,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$shortcut.TargetPath = '%CD%\start.bat'; " ^
   "$shortcut.WorkingDirectory = '%CD%'; " ^
   "$shortcut.WindowStyle = 7; " ^
+  "if (Test-Path -LiteralPath '%ICON%') { $shortcut.IconLocation = '%ICON%' }; " ^
   "$shortcut.Description = 'Start Stock Analyzer automatically'; " ^
   "$shortcut.Save()"
 
