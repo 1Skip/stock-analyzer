@@ -519,13 +519,12 @@ if __name__ == "__main__":
     parser.add_argument('--demo', action='store_true', help='运行演示')
     parser.add_argument('--interactive', '-i', action='store_true', help='交互模式')
     parser.add_argument('--schedule', action='store_true', help='启动定时调度（需先配置环境变量）')
-    parser.add_argument('--notify', action='store_true', help='运行一次分析并推送通知')
-    parser.add_argument('--t1-plan-preheat', action='store_true', help='运行一次 T+1 推荐计划预生成并推送')
+    parser.add_argument('--notify', action='store_true', help='?????????????????????')
+    parser.add_argument('--t1-plan-preheat', action='store_true', help='???? T+1 ???????')
     parser.add_argument('--backtest', '-b', action='store_true', help='对指定股票执行回测')
     parser.add_argument('--ai', action='store_true', help='使用AI分析（单Agent模式）')
     parser.add_argument('--multi-agent', action='store_true', help='使用多Agent协作AI分析')
     parser.add_argument('--watchlist', '-w', action='store_true', help='查看自选股信号和入场提示')
-    parser.add_argument('--api', action='store_true', help='启动飞书机器人 API 服务')
     parser.add_argument('--daily-report', action='store_true', help='生成每日 Markdown 分析报告')
     parser.add_argument('--report-dir', default='reports/history', help='每日报告输出目录')
     parser.add_argument('--no-report-recommendations', action='store_true', help='生成报告时跳过推荐股扫描')
@@ -598,9 +597,7 @@ if __name__ == "__main__":
         analyzer.show_recommended_stocks()
     elif args.watchlist:
         analyzer.show_watchlist_signals()
-    elif args.api:
-        from api_server import start
-        start()
+
     elif args.symbol:
         result = analyzer.analyze_stock(args.symbol, market=args.market, period=args.period, show_chart=True)
 

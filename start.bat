@@ -63,7 +63,7 @@ echo Browser URL: %APP_URL%
 echo Press Ctrl+C to stop the server.
 echo.
 
-findstr /R /C:"^[ ]*SCHEDULE_ENABLED[ ]*=[ ]*true[ ]*$" ".env" >nul 2>nul
+"%PY%" -c "import config; raise SystemExit(0 if config.SCHEDULE_ENABLED else 1)" >nul 2>nul
 if not errorlevel 1 (
     powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*main.py --schedule*' }) { exit 0 } else { exit 1 }" >nul 2>nul
     if errorlevel 1 (
@@ -73,7 +73,7 @@ if not errorlevel 1 (
         echo [INFO] Scheduler already appears to be running.
     )
 ) else (
-    echo [INFO] Scheduler is disabled. Set SCHEDULE_ENABLED=true in .env to enable close-after tasks.
+    echo [INFO] Scheduler is disabled. Set SCHEDULE_ENABLED=true in .env to enable local report/cache tasks.
 )
 
 start "" "%APP_URL%"

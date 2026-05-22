@@ -1378,21 +1378,14 @@ def test_backtest_page_keeps_input_and_result_state_separate():
     assert "_backtest_target_matches_input(current_result, symbol_input, market, period, eval_window)" in source
 
 
-def test_settings_page_documents_wechat_push_setup():
+def test_settings_page_removed_from_app_shell():
     from pathlib import Path
 
-    source = Path("ui/settings_page.py").read_text(encoding="utf-8")
-    workflow = Path(".github/workflows/daily_analysis.yml").read_text(encoding="utf-8")
+    app_source = Path("app.py").read_text(encoding="utf-8")
 
-    assert "企业微信" in source
-    assert 'setx NOTIFY_CHANNELS "wechat"' in source
-    assert 'setx WECHAT_WEBHOOK_URL "你的企业微信机器人Webhook"' in source
-    assert 'setx NOTIFY_CHANNELS "feishu,wechat"' in source
-    assert 'channel_labels = {"feishu": "飞书", "wechat": "企业微信"}' in source
-    assert "format_func=lambda channel: channel_labels.get(channel, channel)" in source
-    assert "WECHAT_WEBHOOK_URL" in workflow
-    assert "vars.NOTIFY_CHANNELS" in workflow
-
+    assert "settings_page" not in app_source
+    assert "????" not in app_source
+    assert not Path("ui/settings_page.py").exists()
 
 def test_market_temperature_fetches_indices_concurrently():
     from pathlib import Path

@@ -2,35 +2,31 @@
 from __future__ import annotations
 
 import html
-from pathlib import Path
 
 import streamlit as st
 
 
 def build_committee_status() -> dict:
-    """Return lightweight status metadata for the TradingAgents-inspired rollout."""
-    from config import AI_API_KEY, AI_DEBATE_ENABLED, FEISHU_WEBHOOK_URL, NOTIFY_CHANNELS
+    """Return lightweight status metadata for the local decision workflow."""
+    from config import AI_API_KEY, AI_DEBATE_ENABLED, DAILY_REPORT_ENABLED, T1_PLAN_AUTO_ENABLED
 
-    workflow_exists = Path(".github/workflows/daily_analysis.yml").exists()
-    feishu_enabled = bool(FEISHU_WEBHOOK_URL)
     debate_enabled = bool(AI_DEBATE_ENABLED and AI_API_KEY)
-    notify_enabled = "feishu" in {channel.lower() for channel in NOTIFY_CHANNELS} or feishu_enabled
     return {
         "stages": [
-            {"name": "阶段1", "label": "五层决策委员会", "done": True},
-            {"name": "阶段2", "label": "个股页仪表盘", "done": True},
-            {"name": "阶段3", "label": "日报决策仪表盘", "done": True},
+            {"name": "阶段1", "label": "六Agent决策", "done": True},
+            {"name": "阶段2", "label": "个股仪表盘", "done": True},
+            {"name": "阶段3", "label": "本地日报", "done": True, "active": DAILY_REPORT_ENABLED},
             {"name": "阶段4", "label": "LLM多空辩论", "done": True, "active": debate_enabled},
-            {"name": "阶段5", "label": "Actions飞书闭环", "done": True, "active": workflow_exists and notify_enabled},
+            {"name": "阶段5", "label": "T+1缓存预热", "done": True, "active": T1_PLAN_AUTO_ENABLED},
         ],
-        "feishu_enabled": feishu_enabled,
+        "daily_report_enabled": bool(DAILY_REPORT_ENABLED),
         "debate_enabled": debate_enabled,
-        "workflow_exists": workflow_exists,
+        "t1_preheat_enabled": bool(T1_PLAN_AUTO_ENABLED),
     }
 
 
 def render_committee_status_card() -> None:
-    """Render a compact sidebar card that makes completed phases visible."""
+    """Render a compact sidebar card for local decision workflow status."""
     status = build_committee_status()
     stage_html = "".join(
         _stage_row(
@@ -41,20 +37,20 @@ def render_committee_status_card() -> None:
         )
         for item in status["stages"]
     )
-    feishu_text = "已配置" if status["feishu_enabled"] else "未配置"
+    daily_text = "已开启" if status["daily_report_enabled"] else "未开启"
     debate_text = "已开启" if status["debate_enabled"] else "默认关闭"
-    actions_text = "已接入" if status["workflow_exists"] else "未发现"
+    t1_text = "已开启" if status["t1_preheat_enabled"] else "未开启"
     st.markdown(
         f"""
         <div class="committee-status-card">
           <div class="committee-status-eyebrow">TradingAgents Lite</div>
           <div class="committee-status-title">A股决策委员会</div>
-          <div class="committee-status-subtitle">阶段 1-5 最终版已接入</div>
+          <div class="committee-status-subtitle">本地分析闭环状态</div>
           <div class="committee-stage-list">{stage_html}</div>
           <div class="committee-status-grid">
-            <span>飞书 <b>{feishu_text}</b></span>
+            <span>本地日报 <b>{daily_text}</b></span>
             <span>LLM辩论 <b>{debate_text}</b></span>
-            <span>Actions <b>{actions_text}</b></span>
+            <span>T+1预热 <b>{t1_text}</b></span>
           </div>
         </div>
         """,

@@ -1,120 +1,12 @@
-"""
-通知推送模块
-支持企业微信 / 飞书 两个渠道
-"""
+"""???????????"""
 import logging
-import requests
-from typing import Any, Optional
-
-from config import (
-    WECHAT_WEBHOOK_URL, FEISHU_WEBHOOK_URL, NOTIFY_CHANNELS,
-)
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def send_push(title: str, body: str, channels: Optional[list[str]] = None) -> dict[str, bool]:
-    """发送推送通知到指定渠道
-
-    Args:
-        title: 标题
-        body: 正文（支持 Markdown）
-        channels: 渠道列表，默认使用 NOTIFY_CHANNELS 配置
-
-    Returns:
-        {channel: success} 字典
-    """
-    targets = channels or NOTIFY_CHANNELS
-    results = {}
-
-    for ch in targets:
-        ch = ch.strip().lower()
-        try:
-            if ch == "wechat":
-                results[ch] = _send_wechat(title, body)
-            elif ch == "feishu":
-                results[ch] = _send_feishu(title, body)
-            else:
-                logger.warning(f"未知通知渠道: {ch}")
-                results[ch] = False
-        except Exception as e:
-            logger.error(f"{ch} 推送失败: {e}")
-            results[ch] = False
-
-    return results
-
-
-def _send_wechat(title: str, body: str) -> bool:
-    """企业微信机器人 Webhook"""
-    if not WECHAT_WEBHOOK_URL:
-        logger.warning("企业微信 webhook 未配置")
-        return False
-
-    content = f"## {title}\n{body}"
-    resp = requests.post(
-        WECHAT_WEBHOOK_URL,
-        json={"msgtype": "markdown", "markdown": {"content": content}},
-        timeout=10,
-    )
-    ok = resp.status_code == 200 and resp.json().get("errcode") == 0
-    if not ok:
-        logger.warning(f"企业微信推送失败: {resp.text}")
-    return ok
-
-
-def _send_feishu(title: str, body: str) -> bool:
-    """飞书机器人 Webhook — 交互式卡片"""
-    if not FEISHU_WEBHOOK_URL:
-        logger.warning("飞书 webhook 未配置")
-        return False
-    elements = _build_feishu_markdown_elements(body)
-
-    resp = requests.post(
-        FEISHU_WEBHOOK_URL,
-        json={
-            "msg_type": "interactive",
-            "card": {
-                "header": {
-                    "title": {"tag": "plain_text", "content": title},
-                    "template": "blue",
-                },
-                "elements": elements,
-            },
-        },
-        timeout=10,
-    )
-    ok = resp.status_code == 200 and resp.json().get("code") == 0
-    if not ok:
-        logger.warning(f"飞书推送失败: {resp.text}")
-    return ok
-
-
-def _build_feishu_markdown_elements(body: str, max_chars: int = 3500) -> list[dict]:
-    """把长 Markdown 拆成多个飞书卡片元素，降低超长日报推送失败概率。"""
-    text = str(body or "").strip()
-    if not text:
-        return [{"tag": "markdown", "content": "暂无内容"}]
-    chunks = []
-    current = ""
-    for block in text.split("\n\n"):
-        candidate = block if not current else f"{current}\n\n{block}"
-        if len(candidate) <= max_chars:
-            current = candidate
-            continue
-        if current:
-            chunks.append(current)
-        if len(block) <= max_chars:
-            current = block
-        else:
-            chunks.extend(block[index:index + max_chars] for index in range(0, len(block), max_chars))
-            current = ""
-    if current:
-        chunks.append(current)
-    return [{"tag": "markdown", "content": chunk} for chunk in chunks]
-
-
 def build_t1_plan_report(plans: dict[str, Any]) -> tuple[str, str]:
-    """Build a Feishu/WeChat report for cached T+1 plans generated after close."""
+    """Build a Markdown summary for cached T+1 plans generated after close."""
     title = "T+1 推荐计划"
     body_lines = []
     for strategy, plan in (plans or {}).items():
@@ -144,7 +36,7 @@ def build_t1_plan_report(plans: dict[str, Any]) -> tuple[str, str]:
 
 
 def _build_sector_stock_lines(stock: dict[str, Any]) -> list[str]:
-    """Render a sector recommendation with the same decision cards used by watchlist push."""
+    """Render a sector recommendation with the same decision cards used by reports."""
     price = _number(stock.get("latest_price") or stock.get("price"))
     change_pct = _number(stock.get("change_pct")) or 0.0
     direction = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡"
@@ -294,7 +186,7 @@ def build_analysis_report(symbol: str, name: str, price: float,
                            decision: dict | None = None,
                            extended_info: dict | None = None,
                            indicators: dict | None = None) -> tuple[str, str]:
-    """构造推送标题和正文"""
+    """构造报告标题和正文"""
     direction = "📈" if change_pct > 0 else "📉" if change_pct < 0 else "➡"
     title = f"{name}({symbol}) {price:.2f} {direction}{change_pct:+.2f}%"
 

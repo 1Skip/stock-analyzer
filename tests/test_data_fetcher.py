@@ -1285,7 +1285,7 @@ class TestIndexRealtime:
 
         def counted_akshare(fetcher_self, symbol, period):
             call_count[0] += 1
-            dates = pd.date_range('2025-06-01', periods=30, freq='B')
+            dates = pd.date_range(end=pd.Timestamp.now().normalize(), periods=30, freq='B')
             n = len(dates)
             return pd.DataFrame({
                 'open': [10]*n, 'high': [10.5]*n,
@@ -1293,6 +1293,10 @@ class TestIndexRealtime:
                 'volume': [1000000]*n,
             }, index=dates)
 
+        monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_ths',
+                           lambda self, symbol, period: None)
+        monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_akshare_em',
+                           lambda self, symbol, period: None)
         monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_akshare', counted_akshare)
         monkeypatch.setattr(StockDataFetcher, '_get_cn_stock_data_sina_fallback',
                            lambda self, symbol, period: None)

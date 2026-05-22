@@ -15,7 +15,3 @@ schedule>=1.2
 pytest>=8.0
 pytest-cov>=7.0
 pytest-mock>=3.12
-
-# 飞书机器人 API 服务（可选）
-fastapi>=0.115
-uvicorn[standard]>=0.34

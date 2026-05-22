@@ -191,7 +191,7 @@ def hot_stocks_page():
         gainers = data.get('gainers', [])
         losers = data.get('losers', [])
 
-        st.caption("热门板块与个股涨跌幅榜用于观察全市场热度，保留创业板、科创板、北交所；智能推荐和推荐股推送才仅限沪深主板。")
+        st.caption("热门板块与个股涨跌幅榜用于观察全市场热度，保留创业板、科创板、北交所；智能推荐和推荐计划才仅限沪深主板。")
 
         st.subheader("行业板块排行")
         if sectors:

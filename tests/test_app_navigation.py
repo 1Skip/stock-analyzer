@@ -13,7 +13,6 @@ def test_all_sidebar_pages_route_to_renderer():
         "股票对比",
         "回测验证",
         "历史日报",
-        "配置推送",
     ]
 
     for page in pages:
@@ -67,24 +66,35 @@ def test_custom_css_does_not_keep_stale_pages_visible():
     assert "[data-stale=\"true\"]" not in CUSTOM_CSS
 
 
-def test_committee_status_card_exposes_all_phases(monkeypatch):
-    monkeypatch.setattr("config.FEISHU_WEBHOOK_URL", "")
-    monkeypatch.setattr("config.NOTIFY_CHANNELS", [])
-    monkeypatch.setattr("config.AI_DEBATE_ENABLED", False)
-    monkeypatch.setattr("config.AI_API_KEY", None)
-
+def test_committee_status_card_renders_local_status_only(monkeypatch):
+    import inspect
+    import app
+    import config
     from ui.committee_status import build_committee_status
 
+    source = inspect.getsource(app.main)
+
+    assert "render_committee_status_card" in source
+
+    monkeypatch.setattr(config, "AI_DEBATE_ENABLED", True)
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(config, "DAILY_REPORT_ENABLED", True)
+    monkeypatch.setattr(config, "T1_PLAN_AUTO_ENABLED", True)
+
     status = build_committee_status()
+    labels = [item["label"] for item in status["stages"]]
+    status_text = " ".join(
+        [item["name"] for item in status["stages"]]
+        + labels
+        + ["本地日报", "LLM辩论", "T+1预热"]
+    )
 
     assert len(status["stages"]) == 5
-    assert all(item["done"] for item in status["stages"])
-    assert status["debate_enabled"] is False
-
-
-def test_committee_status_css_exists():
-    assert "committee-status-card" in CUSTOM_CSS
-    assert "committee-stage-row" in CUSTOM_CSS
+    assert "本地日报" in labels
+    assert "LLM多空辩论" in labels
+    assert "T+1缓存预热" in labels
+    for removed_text in ["飞书", "企业微信", "Actions", "推送"]:
+        assert removed_text not in status_text
 
 
 def test_page_switch_preserves_page_state_and_reruns(monkeypatch):
@@ -92,7 +102,7 @@ def test_page_switch_preserves_page_state_and_reruns(monkeypatch):
     import streamlit as st
 
     st.session_state.clear()
-    st.session_state["_active_page"] = "配置推送"
+    st.session_state["_active_page"] = "历史日报"
     st.session_state["hot_data"] = {"old": True}
     st.session_state["hot_data_loaded"] = True
     st.session_state["rec_results"] = {"old": True}
@@ -237,13 +247,13 @@ def test_page_switch_second_run_keeps_light_sidebar(monkeypatch):
     monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: None)
     monkeypatch.setattr(st, "caption", lambda *args, **kwargs: None, raising=False)
     monkeypatch.setattr(st, "radio", lambda *args, **kwargs: "股票对比", raising=False)
-    monkeypatch.setattr(app, "render_committee_status_card", lambda: None)
     monkeypatch.setattr(app, "_render_main_page", lambda page: calls.append(f"render:{page}"))
+    monkeypatch.setattr(app, "render_committee_status_card", lambda: calls.append("committee"))
     monkeypatch.setattr(app, "display_market_temperature", lambda: calls.append("market"))
     monkeypatch.setattr(app, "display_watchlist_sidebar", lambda: calls.append("watchlist") or None)
     monkeypatch.setattr(app, "display_data_source_selector", lambda: calls.append("source"))
 
     app.main()
 
-    assert calls == ["watchlist", "source", "market", "render:股票对比"]
+    assert calls == ["committee", "watchlist", "source", "market", "render:股票对比"]
     assert app._PAGE_SWITCH_PENDING_KEY not in st.session_state

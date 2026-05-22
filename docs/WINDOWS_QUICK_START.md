@@ -7,20 +7,20 @@
 3. 首次运行会自动创建 `.venv` 并安装依赖。
 4. 浏览器会自动打开 `http://localhost:8501`。
 
-## 本机开启 LLM / 飞书
+## 本机开启 LLM
 
-如果希望本机网页左侧状态卡也显示 LLM 多空辩论、飞书已配置：
+如果希望本机网页左侧状态卡显示 LLM 多空辩论已开启：
 
 1. 复制项目根目录的 `.env.example`，重命名为 `.env`。
-2. 打开 `.env`，把 `AI_API_KEY` 改成你的 DeepSeek Key。
-3. 如需本机飞书推送，把 `FEISHU_WEBHOOK_URL` 改成你的飞书机器人 Webhook。
+2. 打开 `.env`，把 `AI_API_KEY` 改成你的模型 API Key。
+3. 按需配置 `AI_BASE_URL`、`AI_MODEL`、`AI_DEBATE_ENABLED`。
 4. 重新双击 `start.bat`。
 
-DeepSeek 官方 API 推荐本机配置：
+示例：
 
 ```env
 AI_DEBATE_ENABLED=true
-AI_API_KEY=sk-替换成你的DeepSeekKey
+AI_API_KEY=sk-替换成你的模型Key
 AI_BASE_URL=https://api.deepseek.com
 AI_MODEL=deepseek/deepseek-v4-pro
 AI_DEBATE_MAX_SYMBOLS=3

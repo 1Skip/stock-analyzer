@@ -86,7 +86,6 @@ CACHE_TTL_WATCHLIST_SUMMARY = 300  # 自选股摘要（5分钟）
 
 # 每日报告配置
 DAILY_REPORT_ENABLED = os.getenv("DAILY_REPORT_ENABLED", "true").lower() == "true"
-DAILY_REPORT_PUSH_ENABLED = os.getenv("DAILY_REPORT_PUSH_ENABLED", "true").lower() == "true"
 DAILY_REPORT_INCLUDE_RECOMMENDATIONS = os.getenv("DAILY_REPORT_INCLUDE_RECOMMENDATIONS", "false").lower() == "true"
 DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
 
@@ -230,36 +229,9 @@ T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS = int(os.getenv("T1_PLAN_PREHEAT_EXTEN
 T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS", "20"))
 T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP = os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP", "false").lower() == "true"
 T1_PLAN_STRATEGY_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_STRATEGY_TIMEOUT_SECONDS", "300"))
-T1_PLAN_PUSH_ENABLED = os.getenv("T1_PLAN_PUSH_ENABLED", "true").lower() == "true"
-
-# ============================================================
-# 通知推送配置
-# ============================================================
-NOTIFY_CHANNELS = [c.strip() for c in os.getenv("NOTIFY_CHANNELS", "").split(",") if c.strip()]
-NOTIFY_ENABLED = len(NOTIFY_CHANNELS) > 0
-
-# 企业微信
-WECHAT_WEBHOOK_URL = os.getenv("WECHAT_WEBHOOK_URL", "")
-
-# 飞书
-FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
-
-# 飞书机器人（对话式，控制命令）
-FEISHU_BOT_ENABLED = os.getenv("FEISHU_BOT_ENABLED", "false").lower() == "true"
-FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
-FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
-FEISHU_VERIFY_TOKEN = os.getenv("FEISHU_VERIFY_TOKEN", "")  # 事件订阅验证 Token
 
 # API 服务
-GITHUB_WATCHLIST_SYNC_ENABLED = os.getenv("GITHUB_WATCHLIST_SYNC_ENABLED", "false").lower() == "true"
-GITHUB_WATCHLIST_SYNC_REPO = os.getenv("GITHUB_WATCHLIST_SYNC_REPO", os.getenv("GITHUB_REPO", ""))
-GITHUB_WATCHLIST_SYNC_SECRET = os.getenv("GITHUB_WATCHLIST_SYNC_SECRET", "WATCHLIST_JSON")
-GITHUB_WATCHLIST_SYNC_TIMEOUT = float(os.getenv("GITHUB_WATCHLIST_SYNC_TIMEOUT", "15"))
 
-API_SERVER_PORT = int(os.getenv("API_SERVER_PORT", "8900"))
-API_SERVER_HOST = os.getenv("API_SERVER_HOST", "127.0.0.1")  # 默认仅本地访问
-API_AUTH_KEY = os.getenv("API_AUTH_KEY", "")  # API 鉴权密钥（为空则跳过验证）
-API_CORS_ORIGINS = os.getenv("API_CORS_ORIGINS", "")  # 允许的跨域来源，逗号分隔
 
 # ============================================================
 # 回测配置

@@ -126,63 +126,36 @@ class TestT1PlanSchedule:
 class TestRunScheduledAnalysis:
 
     def test_no_watchlist_and_no_daily_report_sends_nothing(self):
-        with patch("scheduler.send_push") as mock_push:
-            from scheduler import run_scheduled_analysis
+        from scheduler import run_scheduled_analysis
 
-            run_scheduled_analysis()
+        run_scheduled_analysis()
 
-            mock_push.assert_not_called()
-
-    def test_daily_report_generated_and_pushed_when_enabled(self):
-        with patch("scheduler.NOTIFY_ENABLED", True), \
-             patch("scheduler.DAILY_REPORT_ENABLED", True), \
-             patch("scheduler.DAILY_REPORT_PUSH_ENABLED", True), \
+    def test_daily_report_generated_locally(self):
+        with patch("scheduler.DAILY_REPORT_ENABLED", True), \
              patch("scheduler.DAILY_REPORT_DIR", "tmp_reports"), \
-             patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
              patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
-             patch("scheduler.save_markdown_report", return_value={"dated": "tmp_reports/2026-05-20.md", "latest": "tmp_reports/latest.md"}):
-            mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
-
-            from scheduler import run_scheduled_analysis
-
-            run_scheduled_analysis()
-
-            mock_push.assert_called_once()
-            assert mock_push.call_args.args[0].startswith("📄 每日完整分析报告")
-            assert "报告文件" in mock_push.call_args.args[1]
-
-    def test_daily_report_generate_only_when_push_disabled(self):
-        with patch("scheduler.NOTIFY_ENABLED", True), \
-             patch("scheduler.DAILY_REPORT_ENABLED", True), \
-             patch("scheduler.DAILY_REPORT_PUSH_ENABLED", False), \
-             patch("scheduler.send_push", return_value={"wechat": True}) as mock_push, \
-             patch("reports.daily_report_service.DailyReportService") as mock_report_service, \
-             patch("scheduler.save_markdown_report", return_value={"dated": "tmp.md", "latest": "latest.md"}) as mock_save:
-            mock_report_service.return_value.generate_markdown.return_value = "# 每日股票分析报告"
+             patch("scheduler.save_markdown_report", return_value={"dated": "tmp_reports/2026-05-20.md", "latest": "tmp_reports/latest.md"}) as mock_save:
+            mock_report_service.return_value.generate_markdown.return_value = "# ????????"
 
             from scheduler import run_scheduled_analysis
 
             run_scheduled_analysis()
 
             mock_save.assert_called_once()
-            mock_push.assert_not_called()
 
-    def test_watchlist_push_does_not_append_old_four_sector_report(self, monkeypatch):
-        watchlist_data = [{"symbol": "000001", "name": "平安银行", "market": "CN"}]
+    def test_watchlist_summary_builds_without_online_push(self, monkeypatch):
+        watchlist_data = [{"symbol": "000001", "name": "????", "market": "CN"}]
         monkeypatch.setattr("scheduler._load_watchlist_from_file", lambda: watchlist_data)
-        monkeypatch.setattr("scheduler.NOTIFY_ENABLED", True)
         monkeypatch.setattr("scheduler.DAILY_REPORT_ENABLED", False)
-        mock_push = MagicMock(return_value={"feishu": True})
-        monkeypatch.setattr("scheduler.send_push", mock_push)
         monkeypatch.setattr(
             "watchlist.get_watchlist_summary",
             lambda watchlist: [{
                 "symbol": "000001",
-                "name": "平安银行",
+                "name": "????",
                 "price": 12.5,
                 "change_pct": 1.2,
-                "signal_summary": "偏多",
-                "entry_hint": "回踩关注",
+                "signal_summary": "??",
+                "entry_hint": "????",
                 "indicators": {},
             }],
         )
@@ -196,14 +169,7 @@ class TestRunScheduledAnalysis:
 
         run_scheduled_analysis()
 
-        mock_push.assert_called_once()
-        body = mock_push.call_args.args[1]
-        assert "平安银行" in body
-        assert "板块策略推荐" not in body
-        assert "算力租赁" not in body
-
-
-class TestStartScheduler:
+        fake_info_service.get_stock_extended_info.assert_called_once()
 
     def test_immediate_run(self):
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", True), \

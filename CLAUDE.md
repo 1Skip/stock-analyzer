@@ -49,7 +49,6 @@
 | `ui/charts.py` | 图表函数 | K线/RSI/KDJ/BOLL/分时图，Plotly 实现 |
 | `ui/ai_analysis_ui.py` | AI 辅助解读 UI | 默认折叠，可选启用；API 配置表单 + 单Agent/多Agent 解释补充 |
 | `ui/sidebar.py` | 侧边栏组件 | 大盘温度、自选股列表、mini 分析面板、数据源选择 |
-| `ui/committee_status.py` | 决策委员会状态卡片 | 侧边栏展示阶段 1-5、飞书、Actions、LLM 辩论开关 |
 | `ui/analyze_page.py` | 个股分析页面 | 输入表单 + 股票名称搜索 + Enter键搜索 + 信号/指标卡片 + 图表渲染 |
 | `ui/hot_stocks_page.py` | 热门板块页面 | 行业/概念排行 + 涨跌幅榜 |
 | `ui/recommend_page.py` | 智能推荐页面 | 短线/长线/激进突破型/多因子稳健型 |
@@ -65,17 +64,15 @@
 | `chart_plotter.py` | Matplotlib 图表 | CLI 用，K线图 + 多指标子图 |
 | `chart_utils.py` | 共享图表工具 | 配色解析、成交量/MACD着色、MA配置，供 Web 和 CLI 共用 |
 | `stock_recommendation.py` | 热门股票 + 评分推荐 | 含板块定义，多因子评分(0-100)，支持 CN/US/HK |
-| `notification.py` | 通知推送 | 企业微信 webhook，`build_analysis_report()` 格式化报告 |
+| `notification.py` | ???????? | `build_analysis_report()` ????? |
 | `config.py` | 集中配置 | 所有参数 + 三种配色 + 评分权重 + 信号阈值 + 调度/通知，环境变量覆盖 |
 | `watchlist.py` | 自选股管理 | 持久化到 watchlist.json，session_state 做缓存，含侧边栏 mini 分析面板 |
 | `scheduler.py` | 定时调度 | 收盘后自动分析+通知，通过 `SCHEDULE_ENABLED` 开启 |
 | `backtest_engine.py` | 回测引擎 | 信号→交易模拟，含止损/止盈/中性区间 |
 | `backtest_adapter.py` | 回测适配 | 连接信号体系与回测引擎 |
 | `backtest_ui.py` | 回测 UI | Streamlit 回测页面 |
-| `api_server.py` | FastAPI 服务 | 飞书机器人回调 + 股票查询 API（可选，`FEISHU_BOT_ENABLED` 控制） |
 | `tests/` | 测试（当前完整回归 776 项） | conftest.py 含完整 Streamlit mock（含 plotly_chart），pytest.ini 含 slow/network 标记 |
 | `pytest.ini` | pytest 配置 | testpaths=tests, 注册 slow/network 标记, --tb=short |
-| `requirements.txt` | 依赖 | streamlit / plotly / yfinance / pandas / numpy / requests / akshare / fastapi / uvicorn（飞书机器人可选） |
 | `.devcontainer/devcontainer.json` | Dev Container | Python 3.11，自动安装依赖并启动 Streamlit |
 | `.gitignore` | Git 忽略规则 | 缓存、虚拟环境、.env、token 文件、base64 文件 |
 
@@ -86,7 +83,7 @@
 - **Web 指标图** → Plotly（RSI/KDJ/BOLL 子图），交互式可缩放
 - **CLI 图表** → Matplotlib（在 `chart_plotter.py` 中），静态图片
 - **超时保护**：所有数据获取调用通过 `concurrent.futures.ThreadPoolExecutor` 包装超时（stock_info 5s / K线数据 20s / 实时行情 3s / 全市场快照 8s），超时后降级到已获取数据继续渲染
-- **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；同时提交 `data/static/stock_name_index.json` 作为 GitHub Actions/离线兜底，不再靠“报一个补一个”
+- **A股名称搜索**：优先使用 AKShare `stock_info_a_code_name()` 构建全量 A 股名称索引（5515+ 只），持久化到 `.cache/stock_name_index.json`，24h 内复用；同时提交 `data/static/stock_name_index.json` 作为 GitHub/离线兜底，不再靠“报一个补一个”
 - **A股基础资料兜底**：`FundamentalDataService` 会构建并缓存全量基础资料索引，组合东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表；当个股基础接口只返回 `-`、`----` 或北交所“已切换”旧代码时，按代码/股票名称补齐行业、上市日期、股本、市值和 PB
 - **缓存策略**：Streamlit `@st.cache_data`，ttl 10-600 秒，从 `config.py` 常量读取
 - **数据源优先级**：A股 AKShare > 新浪 > yfinance；港股 yfinance K线 + 新浪实时；美股 新浪 K线 > yfinance
@@ -97,14 +94,11 @@
 - **每日报告**：`reports/DailyReportService` 复用分层服务生成 Markdown 决策仪表盘，CLI 通过 `python main.py --daily-report` 触发，默认输出 `reports/history/YYYY-MM-DD.md` 和 `latest.md`；推荐股扫描可用 `--no-report-recommendations` 关闭以便快速验证
 - **研报/风险/板块扩展**：`AkShareInfoProvider` 已扩展东财研报/PDF、同花顺一致预期 EPS、龙虎榜、限售解禁、个股公告、行业/概念归因、财新数据通市场资讯；全部作为非关键数据源，失败返回空结构，不阻塞 K 线、Web 页面或日报生成
 - **A股决策委员会**：`decision_committee.py` 作为 TradingAgents Lite 阶段 1 最终版，使用六 Agent 产出评分、置信度、仓位、买卖点、风险警报和催化因素；技术层加入 MA/BOLL 关键位，资金层加入主力/5日/超大单/换手/龙虎榜，基本面层加入利润/现金流/EPS/PE/PB/市值，题材层加入行业与概念强度，风险层加入 ST/退市标识、解禁、风险公告和偏空信号，执行风控层给出硬阻断、仓位纪律和操作检查；个股页 `ui/decision_dashboard.py` 已完成阶段 2 最终版产品化展示；日报 `DailyReportService` 已完成阶段 3 最终版决策仪表盘输出；`ai_analysis.py` 已完成阶段 4 最终版可选 LLM 多空辩论/风控经理层，未配置 `AI_API_KEY` 时自动跳过
-- **网页端状态可见性**：`ui/committee_status.py` 在侧边栏固定展示阶段 1-5 接入状态、飞书 Webhook、GitHub Actions 和 LLM 辩论开关，不依赖行情请求，避免拖慢切页。
-- **日报定时推送**：`scheduler.py` 默认 15:30 执行自选股摘要 + 每日完整 Markdown 日报；固定四板块聚合推荐推送已废弃并从调度链路移除，`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` 默认 `false` 以避免收盘后日报重复扫描全市场推荐。
-- **GitHub Actions 飞书定时推送**：`.github/workflows/daily_analysis.yml` 工作日北京时间 15:30 运行 `python main.py --notify` 推送自选股摘要 + 完整日报，15:45 运行 `python main.py --t1-plan-preheat` 推送统一 T+1 推荐计划；默认 `NOTIFY_CHANNELS=feishu`，配置 `FEISHU_WEBHOOK_URL` Secret 后可云端自动推送，配置 `STOCK_LIST` 或 `WATCHLIST_JSON` Secret 后云端日报会包含自选股；阶段 5 最终版支持通过 Variables `AI_DEBATE_ENABLED=true` + Secret `AI_API_KEY` 在云端启用 LLM 多空辩论。
+- **??????**?`scheduler.py` ?? 15:30 ??????? + ???? Markdown ????????????????????????`DAILY_REPORT_INCLUDE_RECOMMENDATIONS` ?? `false` ??????????????????
 - **数据源健康检查**：连续失败 3 次标记为不健康，`HEALTH_SKIP_PROBABILITY` 控制随机跳过
 - **离线模式**：所有在线源失败时，使用 `.cache/stock_cache.json` 24 小时内缓存，并兼容读取旧根目录 `.stock_cache.json`
-- **通知推送**：默认关闭，通过 `NOTIFY_CHANNELS` 环境变量开启（企业微信 webhook）
+- **????**?`notification.py` ??????????????????????????????????
 - **定时调度**：默认关闭，通过 `SCHEDULE_ENABLED=true` 开启，`SCHEDULE_TIME` 设定执行时间
-- **飞书机器人**：默认关闭，通过 `FEISHU_BOT_ENABLED=true` 开启 FastAPI 回调服务；命令解析支持 `/analysis 600519`、`/analysis 贵州茅台`、`分析贵州茅台`、`查 招商银行` 等代码/中文名称输入
 
 ## 4. 技术指标细节
 
@@ -235,7 +229,7 @@ python main.py --daily-report
 # 快速验证日报结构（跳过推荐股扫描）
 python main.py --daily-report --no-report-recommendations --report-dir reports/history
 
-# 启动定时分析 + 摘要推送 + 每日 Markdown 日报推送
+# ?????? + ????? + ?? Markdown ????
 python main.py --schedule
 
 # 启动 Web
@@ -275,7 +269,7 @@ pip-audit
 - **所有对用户的汇报必须基于验证后的结论**：对用户说"X 是原因"之前，必须用代码/数据/测试实际验证过。不确定时就说不确定，然后去验证。禁止未经证实的猜测当作结论汇报
 - **先确认再回答是硬规则**：用户问“是否已经开启/是否已经生效/为什么没推送/为什么结果异常”时，必须先查当前事实再回答。至少确认配置文件、运行进程、缓存/日志、真实接口返回、相关测试或命令输出；不能只按代码设计、默认值或记忆回答。
 - **反常结果必须先按故障排查处理**：例如“4000 多只股票选不出 5 只”“命中数突然为 0”“推送到点没发”等明显不符合常识或历史表现的现象，默认是异常，必须先查数据链路、缓存、接口失败、调度进程、UI 状态混淆和最近改动影响面；禁止先解释成“策略严格/正常现象”。
-- **自动任务必须验证整条链路**：涉及收盘自动预热、飞书/企业微信推送、GitHub Actions、scheduler 等功能时，必须确认 `SCHEDULE_ENABLED` / `NOTIFY_CHANNELS` / webhook 等配置、调度进程是否常驻、计划缓存是否更新、日志是否有异常、推送通道是否实测成功。网页启动不等于调度器已运行，必须单独验证。
+- **????????????**??????????scheduler ????????? `SCHEDULE_ENABLED` ???????????????????????????????????????????????????
 - **UI/功能修复必须扫同类影响面**：修一个页面按钮、文案、命中数、进度条或状态展示时，必须 `rg` 搜同类按钮/文案/状态字段/进度逻辑，确认是否还有其它页面或推送端需要同步；不能只改用户截图里的一处就结束。若同类位置不改，必须说明为什么不改。
 - **配置类结论必须拆清楚**：涉及 `.env`、环境变量、默认配置、开关状态时，必须明确区分“代码默认值是什么”“当前配置文件是否已经写入”“需要新增还是修改”“是否需要重启生效”“影响什么、不影响什么”。禁止把“代码默认会生效”说成“配置文件里已经有”，也禁止用“去开启/去修改”这类模糊说法替代具体操作。
 - **禁止假设性回答**：用户验证后发现不对才说"没解决"，说明之前的结论是猜的。提交修复前必须自己做完整数据流验证（用真实数据调核心函数），确认所有路径都通，再汇报。宁可说"我还没找到根因，正在排查"也不要说"应该修复了"
@@ -303,7 +297,6 @@ pip-audit
 - **P5**（大盘温度）：✅ 完成 — 沪深300+北证50+上证+深证
 - **P6**（回测中文国际化）：✅ 完成
 - **P7**（测试补齐第二轮）：✅ 完成 — 445→478 tests
-- **P8**（自选股增强+飞书机器人）：✅ 完成 — watchlist mini面板 + api_server.py
 - **P9**（自选股状态分离+mini面板+锚点滚动）：✅ 完成
 - **P11**（K线图迁移Plotly）：✅ 完成 — lightweight-charts → Plotly
 
@@ -340,9 +333,9 @@ pip-audit
 本仓库同时随附 Codex Skill：
 
 - 路径：`.codex/skills/stock-analyzer/SKILL.md`
-- 作用：把本项目红线、真实链路验证规范、推荐/T+1 边界、飞书/GitHub Actions/调度/缓存检查和“更新推送”流程固化为 Codex 执行 SOP。
+- ?????????????????????/T+1 ?????/?????????????? Codex ?? SOP?
 - 分工：`CLAUDE.md` 仍是项目红线、架构约定和长期协作规则的正式来源；Codex Skill 不替代 `CLAUDE.md`，只负责在 Codex 工作时强化执行这些规则。
-- 使用：处理本仓库任务时可明确要求“使用 stock-analyzer skill”，尤其是涉及推荐策略、T+1、推送、缓存、调度、真实链路验证和更新推送时。
+- ??????????????????? stock-analyzer skill????????????T+1????????????????????
 
 ## 12. 安全注意事项
 
@@ -368,7 +361,7 @@ pip-audit
 - `start.bat` 必须使用 `%~dp0` 相对项目目录，不允许硬编码本机路径
 - 一键启动脚本会自动创建 `.venv` 并安装 `requirements.txt`，供别人下载后直接双击使用
 - `install_startup.bat` 只创建 Windows 启动文件夹快捷方式；`uninstall_startup.bat` 只删除该快捷方式
-- 如需推送脚本，确认 token 从安全的途径获取，不要硬编码
+- ??????????? token ??????????????
 - 用户间共享这些脚本时，告知不要包含私有信息
 
 ## 13. 2026-05-16 当日协作记录
@@ -381,7 +374,7 @@ pip-audit
 - **涨停定义修正**：稳健型“既往 15 日内有涨停”按盘中触及涨停计算，不要求收盘涨停，不能额外添加用户未要求的“收盘”条件。
 - **推荐速度优化**：历史 K 线使用本地交易日缓存，当日价格/成交量运行时实时拉取并合并；市值、行业、上市日期走本地慢变缓存；资金流短时缓存；页面提供“刷新数据”用于全量刷新策略缓存。
 - **真实阶段进度**：智能推荐进度展示拆为股票池、市值过滤、当日实时价量、K 线轻筛、深度检查、完成等真实阶段，避免一直显示无意义的运行状态。
-- **推送同步**：飞书/企业微信推荐股推送同步支持激进突破型和多因子稳健型，并输出买入观察点、卖出纪律、风险提示、交易计划卡片和风控防御看板。
+- **??????**?T+1 ????????????????????????????????????????????????????
 
 ### 13.2 今日 Bug 修复
 
@@ -409,11 +402,11 @@ pip-audit
 ### 13.1 今日需求落地
 
 - **A 股决策委员会**：借鉴 TradingAgents，但按 A 股重构为技术分析、资金情绪、基本面、题材板块、风险事件、执行风控六 Agent；个股页、日报和状态卡片均已接入。
-- **日报与推送闭环**：GitHub Actions 工作日 15:30 自动推送自选股摘要 + 完整 Markdown 日报，15:45 自动推送统一 T+1 推荐计划；飞书/企业微信 Webhook 支持。
-- **推送卡片口径**：自选股摘要、T+1 推荐计划和完整 Markdown 日报都输出“交易计划卡片 + 风控防御看板”；配置页“一键测试推送”只测 Webhook 连通性，不代表正式推送内容。
+- **?????????**?????? 15:30 ??????? + ?? Markdown ???15:45 ???? T+1 ???????????????
+- **??????**???????T+1 ??????? Markdown ???????????? + ????????
 - **推荐边界**：热门板块保留全市场；短线/长线推荐保留沪深主板口径；激进突破型/多因子稳健型扫描沪深主板 + 创业板；15:45 T+1 计划中短线/长线覆盖苹果概念、特斯拉概念、电力、算力租赁四板块，激进突破型/多因子稳健型只生成全市场 `全部`。
-- **自选股闭环**：网页端自选股持久化到 `watchlist.json`；侧栏常驻；点击自选股直接打开主页个股分析；云端 Actions 通过 `STOCK_LIST` / `WATCHLIST_JSON` 配置自选股。
-- **中文名称识别**：A 股名称搜索使用全量索引 + 静态兜底 + 模糊/错序匹配；个股分析、股票对比、回测、飞书命令尽量保持同一解析逻辑。
+- **?????**??????????? `watchlist.json`??????????????????????
+- **??????**?A ??????????? + ???? + ??/????????????????????????????
 - **个股扩展信息**：基础资料/估值、财务、资金、新闻、市场快讯以非阻塞方式加载；新闻层补充东方财富个股新闻和财新数据通市场资讯。
 - **股票对比增强**：价格走势对比升级为走势仪表盘，增加收益、回撤、波动、上涨天数占比、MA 状态、趋势斜率、相对强弱。
 - **Windows 使用体验**：保留 `start.bat`、`创建桌面快捷方式.vbs`、`install_startup.bat`、`uninstall_startup.bat` 作为清晰启动/自启路径；`.env` 不提交。
@@ -422,11 +415,10 @@ pip-audit
 
 - 修复搜索后输入框状态报错、自选股点击错位、自选股侧栏隐藏/加载慢/只显示一个、自选详情重复、已自选仍显示加入自选等问题。
 - 修复首次搜索不显示财务/资金/新闻折叠栏、新闻全部暂无、基础资料/估值折叠栏被误删、行业/上市日期缺失的问题。
-- 修复“顺捷科技”等错序中文名无法识别、股票对比不能输入中文名、回测 Enter 键无效、推送测试通道显示英文的问题。
-- 修复配置推送页缺少企业微信教程、从智能推荐切到股票对比时旧页面残留、热门板块请求拖慢其他页面的问题。
+- ????????????????????????????????? Enter ???????
 - 修复大盘温度显示慢：侧栏先渲染大盘温度，并发获取指数，优先走新浪快速行情源，超时不拖主页面。
 - 修复深色主题下黄色按钮白字不清晰、Tab 选中态文字不清晰、Tab 选中态额外胶囊背景突兀的问题。
-- 修复推荐股/四板块推送缺少交易计划卡片和风控防御看板的问题。
+- ?????/????????????????????????
 
 ### 13.3 最新验证
 
@@ -436,6 +428,6 @@ pip-audit
 
 ### 13.4 后续注意
 
-- 不提交 `.env`、`watchlist.json`、token、Webhook、API Key。
-- 本机网页自选股不会自动同步到 GitHub Actions；云端推送需要 `STOCK_LIST` 或 `WATCHLIST_JSON`。
-- 飞书 Webhook 是主动推送；如果要实时对话 Agent，需要 FastAPI 回调、公网地址和飞书事件订阅。
+- 不提交 `.env`、`watchlist.json`、token、、API Key。
+- ?????????????? GitHub??????????????
+- ???????????????????? Web?CLI???? T+1 ?????

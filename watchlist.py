@@ -197,29 +197,14 @@ def _load_from_file():
 
 
 def _save_to_file(watchlist):
-    """保存自选股到 JSON 文件"""
+    """?????? JSON ??"""
     with _save_lock:
         try:
             with open(_WATCHLIST_FILE, 'w', encoding='utf-8') as f:
                 json.dump(watchlist, f, ensure_ascii=False, indent=2)
             st.session_state.watchlist_file_mtime = os.path.getmtime(_WATCHLIST_FILE)
-            _sync_github_actions_watchlist(watchlist)
         except Exception:
             pass
-
-
-def _sync_github_actions_watchlist(watchlist):
-    """Best-effort sync to GitHub Actions; local saves must still succeed."""
-    try:
-        from github_watchlist_sync import sync_watchlist_secret
-
-        result = sync_watchlist_secret(watchlist)
-    except Exception as exc:
-        result = {"status": "failed", "message": str(exc)[:200]}
-    try:
-        st.session_state.watchlist_github_sync = result
-    except Exception:
-        pass
 
 
 def init_watchlist():

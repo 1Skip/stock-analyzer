@@ -16,18 +16,23 @@ from pathlib import Path
 import schedule
 
 from config import (
-    SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY, NOTIFY_ENABLED,
-    DAILY_REPORT_ENABLED, DAILY_REPORT_PUSH_ENABLED,
+    SCHEDULE_TIME, SCHEDULE_RUN_IMMEDIATELY,
+    DAILY_REPORT_ENABLED,
     DAILY_REPORT_INCLUDE_RECOMMENDATIONS, DAILY_REPORT_DIR,
     T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGIES,
     T1_PLAN_SECTOR, T1_PLAN_SECTORS, T1_PLAN_NUM_STOCKS, T1_PLAN_PREHEAT_KLINE,
     T1_PLAN_PREHEAT_EXTENDED_INFO, T1_PLAN_STRATEGY_TIMEOUT_SECONDS,
-    T1_PLAN_PUSH_ENABLED,
 )
-from notification import send_push, build_analysis_report, build_t1_plan_report
+from notification import build_analysis_report, build_t1_plan_report
 from reports.exporter import save_markdown_report
 
 logger = logging.getLogger(__name__)
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
 
 LOCK_DIR = Path(os.getenv("SCHEDULER_LOCK_DIR", ".cache"))
 SCHEDULER_INSTANCE_LOCK_PATH = LOCK_DIR / "scheduler.instance.lock"
@@ -133,7 +138,7 @@ def _generate_daily_report():
         logger.info(f"每日报告已生成: {paths['dated']}")
         return content, paths
     except Exception as e:
-        logger.warning(f"每日报告生成失败，跳过日报推送: {e}", exc_info=True)
+        logger.warning(f"每日报告生成失败，跳过日报后续处理: {e}", exc_info=True)
         return None
 
 
@@ -178,19 +183,17 @@ def run_t1_plan_preheat():
         return None
 
 
-@_skip_if_locked(SCHEDULED_ANALYSIS_LOCK_PATH, "定时分析")
+@_skip_if_locked(SCHEDULED_ANALYSIS_LOCK_PATH, "????")
 def run_scheduled_analysis():
-    """执行 15:30 定时分析：自选股摘要 → 每日完整报告。"""
-    logger.info(f"定时分析开始 — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    """?? 15:30 ?????????????? + ???????"""
+    logger.info("?????? ? %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
     try:
         reports = []
-
-        # 优先分析自选股
         watchlist = _load_watchlist_from_file()
 
         if watchlist:
-            logger.info(f"自选股模式：{len(watchlist)} 只")
+            logger.info("??????%s ?", len(watchlist))
             from watchlist import get_watchlist_summary
             from decision_committee import build_watchlist_decision
             from data.services.info_service import StockInfoService
@@ -198,82 +201,52 @@ def run_scheduled_analysis():
             summaries = get_watchlist_summary(watchlist)
             info_service = StockInfoService()
             for item in summaries:
-                if item.get('error'):
-                    logger.warning(f"自选股 {item['symbol']} 分析失败: {item['error']}")
+                if item.get("error"):
+                    logger.warning("??? %s ????: %s", item.get("symbol"), item.get("error"))
                     continue
-                symbol = item['symbol']
-                name = item['name']
-                price = item['price'] or 0
-                change_pct = item.get('change_pct', 0) or 0
+                symbol = item["symbol"]
+                name = item["name"]
+                price = item["price"] or 0
+                change_pct = item.get("change_pct", 0) or 0
                 extended_info = {}
                 try:
-                    source = next(
-                        (stock for stock in watchlist if stock.get("symbol") == symbol),
-                        {},
-                    )
+                    source = next((stock for stock in watchlist if stock.get("symbol") == symbol), {})
                     extended_info = info_service.get_stock_extended_info(
                         symbol,
                         source.get("market", item.get("market", "CN")),
                     ) or {}
                 except Exception as exc:
-                    logger.info(f"自选股 {symbol} 扩展信息获取失败，推送使用基础交易计划: {exc}")
+                    logger.info("??? %s ???????????????????: %s", symbol, exc)
                 decision = build_watchlist_decision(item, extended_info)
-
                 title, body = build_analysis_report(
-                    symbol, name, price, change_pct,
-                    {'recommendation': item['signal_summary'],
-                     'entry_hint': item.get('entry_hint', '')},
+                    symbol,
+                    name,
+                    price,
+                    change_pct,
+                    {"recommendation": item["signal_summary"], "entry_hint": item.get("entry_hint", "")},
                     decision=decision,
                     extended_info=extended_info,
                     indicators=item.get("indicators") or {},
                 )
                 reports.append((title, body))
 
-        if not reports and not DAILY_REPORT_ENABLED:
-            logger.warning("无有效分析结果，跳过推送")
+        if reports:
+            logger.info("???????? %s ?????????", len(reports))
+        elif not DAILY_REPORT_ENABLED:
+            logger.warning("????????????????")
             return
 
-        if reports:
-            summary_title = f"📊 每日选股报告 — {datetime.now().strftime('%m-%d')}"
-            summary_body = ""
-            for title, body in reports:
-                summary_body += f"**{title}**\n{body}\n\n---\n\n"
-
-            if NOTIFY_ENABLED:
-                results = send_push(summary_title, summary_body.strip())
-                success = [ch for ch, ok in results.items() if ok]
-                if success:
-                    logger.info(f"推送成功: {', '.join(success)}")
-                else:
-                    logger.warning("所有渠道推送失败")
-            else:
-                logger.info("通知未开启，分析结果仅记录日志")
-        else:
-            logger.warning("无有效选股摘要，继续处理每日报告")
-
         daily_report = _generate_daily_report() if DAILY_REPORT_ENABLED else None
-        if daily_report and NOTIFY_ENABLED and DAILY_REPORT_PUSH_ENABLED:
-            report_body, report_paths = daily_report
-            report_title = f"📄 每日完整分析报告 — {datetime.now().strftime('%m-%d')}"
-            report_body = f"{report_body}\n\n---\n\n报告文件：`{report_paths['dated']}`"
-            results = send_push(report_title, report_body.strip())
-            success = [ch for ch, ok in results.items() if ok]
-            if success:
-                logger.info(f"每日报告推送成功: {', '.join(success)}")
-            else:
-                logger.warning("每日报告所有渠道推送失败")
-        elif daily_report:
-            logger.info("每日报告已生成，未开启日报推送")
+        if daily_report:
+            _, report_paths = daily_report
+            logger.info("??????????: %s", report_paths.get("dated"))
 
-        logger.info(f"定时分析完成 — {len(reports)} 条（含{len(watchlist)}只自选股）")
-
+        logger.info("?????? ? %s ??? %s ?????", len(reports), len(watchlist))
     except Exception as e:
-        logger.error(f"定时分析失败: {e}", exc_info=True)
+        logger.error("??????: %s", e, exc_info=True)
 
 
 def _push_t1_plan_preheat_results(plans: dict) -> None:
-    if not T1_PLAN_PUSH_ENABLED or not NOTIFY_ENABLED:
-        return
     valid_plans = {
         strategy: plan
         for strategy, plan in (plans or {}).items()
@@ -283,14 +256,9 @@ def _push_t1_plan_preheat_results(plans: dict) -> None:
         return
     try:
         title, body = build_t1_plan_report(valid_plans)
-        results = send_push(title, body)
-        success = [channel for channel, ok in results.items() if ok]
-        if success:
-            logger.info("T+1 plan push succeeded: %s", ", ".join(success))
-        else:
-            logger.warning("T+1 plan push failed on all channels")
+        logger.info("%s ?????????? %s ??????????", title, len(body))
     except Exception as exc:
-        logger.warning("T+1 plan push failed: %s", exc, exc_info=True)
+        logger.warning("T+1 plan summary build failed: %s", exc, exc_info=True)
 
 
 def _iter_t1_plan_targets() -> list[tuple[str, str]]:
@@ -441,7 +409,7 @@ def start_scheduler():
     """启动定时调度循环，处理 SIGINT/SIGTERM 优雅退出"""
     instance_lock_fd = _acquire_pid_lock(SCHEDULER_INSTANCE_LOCK_PATH)
     if instance_lock_fd is None:
-        logger.warning("调度器已经在运行，本次启动已跳过，避免重复生成和重复推送")
+        logger.warning("调度器已经在运行，本次启动已跳过，避免重复生成")
         return
 
     logger.info(f"定时调度已启动 — 每日 {SCHEDULE_TIME} 执行")
