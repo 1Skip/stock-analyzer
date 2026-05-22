@@ -273,11 +273,37 @@ streamlit run app.py
 - **端口被占用**：关闭旧的命令行窗口，或在任务管理器结束旧的 Python/Streamlit 进程后重新双击 `start.bat`。
 - **输入中文股票名查不到**：优先尝试 6 位股票代码；若仍失败，可以删除 `.cache/stock_name_index.json` 后重启，让项目重新构建名称索引。
 
-### 8. 股票输入方式
+### 8. 开启 AI 解读（可选）
+
+普通行情、技术指标、推荐计划和回测不需要模型 API。只有使用 **个股分析 -> AI 辅助解读**，或开启日报里的外部 LLM 多空辩论时，才需要配置模型 Key。
+
+配置步骤：
+
+1. 到你选择的模型服务商控制台创建 API Key，例如 DeepSeek、OpenAI、通义千问、Claude、Gemini 等。
+2. 在项目根目录复制 `.env.example`，重命名为 `.env`。
+3. 打开 `.env`，填写下面几项：
+
+```text
+AI_ENABLED=true
+AI_API_KEY=你的模型API_KEY
+AI_BASE_URL=https://api.deepseek.com
+AI_MODEL=deepseek-chat
+```
+
+如果使用其他模型服务商，请把 `AI_BASE_URL` 和 `AI_MODEL` 改成该服务商文档里的地址和模型名。常见例子：
+
+| 服务商 | `AI_BASE_URL` 示例 | `AI_MODEL` 示例 |
+|--------|--------------------|-----------------|
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| OpenAI 兼容服务 | 服务商提供的 OpenAI-compatible Base URL | 服务商提供的模型名 |
+
+`.env` 是本机私密文件，已经加入 `.gitignore`，不要发给别人，也不要提交到 GitHub。未配置 API Key 时，AI 解读会不可用或自动跳过，但不影响普通股票分析。
+
+### 9. 股票输入方式
 
 个股分析页支持**股票代码/中文名称搜索**（如 `平安银行`、`报喜鸟`、`茅台`、`捷顺科技`），输入后按 **Enter 键**直接分析。A股名称索引优先使用 24h 本地缓存 `.cache/stock_name_index.json`，并内置一份全量兜底索引，GitHub/离线环境也能识别常见 A 股中文名称。
 
-### 9. 智能推荐策略
+### 10. 智能推荐策略
 
 智能推荐页支持四类策略：
 
