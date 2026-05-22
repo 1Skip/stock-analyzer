@@ -11,7 +11,7 @@ echo ======================================
 echo.
 
 if not exist ".env" if exist ".env.example" (
-    echo [INFO] Local .env not found. Copy .env.example to .env and fill API keys if you want local LLM/Feishu enabled.
+    echo [INFO] Local .env not found. Copy .env.example to .env and fill API keys if you want local LLM enabled.
     echo.
 )
 

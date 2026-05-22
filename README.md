@@ -158,16 +158,22 @@
 
 ## 从零开始部署运行
 
-本项目优先面向 Windows 新人用户设计，最简单的方式是下载项目后双击 `start.bat`。首次启动会自动创建虚拟环境、安装依赖并打开 Web 页面。
+本项目支持 Windows、macOS 和 Linux 本地运行。Windows 用户可以直接双击 `start.bat`；macOS / Linux 用户可以运行 `start.sh`。首次启动会自动创建虚拟环境、安装依赖并打开 Web 页面。
 
 ### 1. 安装 Python
 
 1. 打开 [Python 官网](https://www.python.org/downloads/) 下载 Python 3.10 或更高版本。
-2. 安装第一页务必勾选 **Add Python to PATH**。
-3. 安装完成后，打开 PowerShell 或命令提示符，输入：
+2. Windows 安装第一页务必勾选 **Add Python to PATH**；macOS 安装官方包或 Homebrew 版本均可。
+3. 安装完成后，打开 PowerShell、命令提示符或终端，输入：
 
 ```powershell
 python --version
+```
+
+macOS / Linux 如果 `python` 不可用，使用：
+
+```bash
+python3 --version
 ```
 
 如果能看到类似 `Python 3.10.x` / `Python 3.11.x` / `Python 3.12.x`，说明 Python 已安装成功。
@@ -180,7 +186,7 @@ python --version
 2. 点击绿色 **Code** 按钮。
 3. 点击 **Download ZIP**。
 4. 下载完成后解压，例如解压到桌面或 `D:\stock_analyzer`。
-5. 进入解压后的项目文件夹，确认能看到 `start.bat`、`README.md`、`app.py`。
+5. 进入解压后的项目文件夹，确认能看到 `start.bat`、`start.sh`、`README.md`、`app.py`。
 
 如果你熟悉 Git，也可以用：
 
@@ -197,6 +203,13 @@ Windows 下直接双击项目根目录的：
 start.bat
 ```
 
+macOS / Linux 下打开终端进入项目目录，首次运行先给脚本执行权限：
+
+```bash
+chmod +x start.sh
+./start.sh
+```
+
 首次运行会自动完成：
 
 1. 检查 Python。
@@ -205,7 +218,7 @@ start.bat
 4. 启动 Streamlit Web 服务。
 5. 自动打开浏览器访问 `http://localhost:8501`。
 
-以后再次使用，仍然双击 `start.bat` 即可。
+以后再次使用，Windows 仍然双击 `start.bat`；macOS / Linux 在项目目录运行 `./start.sh` 即可。
 
 ### 4. 开始使用
 
@@ -222,8 +235,9 @@ start.bat
 
 | 脚本 | 用途 |
 |------|------|
-| `start.bat` | 一键启动 Web 系统 |
-| `创建桌面快捷方式.vbs` | 在桌面创建“股票分析系统”快捷方式 |
+| `start.bat` | Windows 一键启动 Web 系统 |
+| `start.sh` | macOS / Linux 一键启动 Web 系统 |
+| `创建桌面快捷方式.vbs` | Windows 桌面创建“股票分析系统”快捷方式 |
 | `install_startup.bat` | 设置 Windows 登录后自动启动 |
 | `uninstall_startup.bat` | 取消 Windows 开机自动启动 |
 
@@ -241,7 +255,7 @@ streamlit run app.py
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
-macOS / Linux 用户：
+macOS / Linux 用户可用：
 
 ```bash
 python3 -m venv .venv
@@ -253,6 +267,7 @@ streamlit run app.py
 ### 7. 常见问题
 
 - **双击后窗口一闪而过**：通常是 Python 没装好，重新安装 Python 并勾选 **Add Python to PATH**。
+- **macOS 提示没有权限运行 `start.sh`**：在项目目录执行 `chmod +x start.sh` 后再运行 `./start.sh`。
 - **依赖安装很慢**：使用上面的清华镜像命令重新安装依赖。
 - **浏览器没有自动打开**：手动打开 `http://localhost:8501`。
 - **端口被占用**：关闭旧的命令行窗口，或在任务管理器结束旧的 Python/Streamlit 进程后重新双击 `start.bat`。

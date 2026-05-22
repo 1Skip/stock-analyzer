@@ -1,5 +1,7 @@
 # Windows 快速使用指南
 
+如果你使用 macOS 或 Linux，请看根目录 `README.md` 中的 macOS / Linux 启动方式，使用 `start.sh` 运行。
+
 ## 自己电脑：双击启动
 
 1. 安装 Python 3.10 或以上版本，安装时勾选 `Add Python to PATH`。
