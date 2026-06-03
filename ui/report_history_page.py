@@ -1,4 +1,4 @@
-"""History report workspace page."""
+﻿"""History report workspace page."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -32,13 +32,13 @@ def report_history_page() -> None:
     reports = _list_reports()
     col_generate, col_refresh, _ = st.columns([1.1, 1, 4])
     with col_generate:
-        if st.button("生成今日日报", type="primary", use_container_width=True):
+        if st.button("生成今日日报", type="primary", width="stretch"):
             with status_loading("\u6b63\u5728\u751f\u6210\u65e5\u62a5...", 20):
                 paths = _generate_today_report_task()
             st.success(f"已生成：{paths.get('dated')}")
             st.rerun()
     with col_refresh:
-        if st.button("刷新列表", use_container_width=True):
+        if st.button("刷新列表", width="stretch"):
             st.rerun()
 
     reports = _list_reports()
@@ -56,7 +56,7 @@ def report_history_page() -> None:
         data=content,
         file_name=selected.name,
         mime="text/markdown",
-        use_container_width=True,
+        width="stretch",
     )
 
     tab_preview, tab_source = st.tabs(["预览", "Markdown 源码"])

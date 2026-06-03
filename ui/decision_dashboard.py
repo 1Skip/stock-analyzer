@@ -157,6 +157,18 @@ def _list_items(items: list[Any] | tuple[Any, ...] | None, *, icon: str, empty: 
     return f"<ul class='decision-list'>{rows}</ul>"
 
 
+def _parse_metric_number(value: Any) -> float | None:
+    text = str(value or "").strip()
+    if not text or text in {"暂无", "--"}:
+        return None
+    text = text.replace("%", "").replace(",", "").replace("+", "")
+    return _num(text)
+
+
+def _has_display_value(value: Any) -> bool:
+    return str(value or "").strip() not in {"", "--", "暂无"}
+
+
 def _key_level_row(label: str, value: Any, hint: str = "") -> str:
     hint_html = f"<span>{html.escape(hint)}</span>" if hint else ""
     return (
@@ -667,7 +679,17 @@ def _build_core_metrics(
     drawdown = _max_drawdown(data)
     beta = _calculate_beta(data, benchmark_data)
     beta_status = _beta_status(data, benchmark_data, beta)
-    main_ratio = _num((extended_info.get("fund_flow") or {}).get("main_net_inflow_ratio"))
+    fund_flow = extended_info.get("fund_flow") if isinstance(extended_info.get("fund_flow"), dict) else {}
+    main_ratio = _num(fund_flow.get("main_net_inflow_ratio"))
+    if main_ratio is not None:
+        fund_status = _metric_status("derived", "主力净占比，真实资金流；态度为模型推断")
+    elif fund_flow.get("status") in {"source_failed", "source_empty"}:
+        status = str(fund_flow.get("status"))
+        source = fund_flow.get("source") or "资金流数据源"
+        reason = fund_flow.get("reason") or "本次未返回可用主力净占比"
+        fund_status = _metric_status(status, f"{source}：{reason}")
+    else:
+        fund_status = _metric_status("source_empty", "资金流本次未返回可用主力净占比")
     capital_cost = _volume_weighted_cost(data, 20)
 
     metrics = [
@@ -709,9 +731,9 @@ def _build_core_metrics(
         {
             "name": "资金态度",
             "value": _fmt_percent(main_ratio, signed=True),
-            "note": "主力净占比，真实资金流；态度为模型推断" if main_ratio is not None else "资金流暂无",
-            "status": "derived" if main_ratio is not None else "source_empty",
-            "status_label": _status_label("derived" if main_ratio is not None else "source_empty"),
+            "note": fund_status["note"],
+            "status": fund_status["status"],
+            "status_label": fund_status["status_label"],
         },
         {
             "name": "60日收益",
@@ -731,6 +753,197 @@ def _build_core_metrics(
     return metrics
 
 
+def _split_visible_metrics(metrics: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    always_show = {"相对强弱", "主力成本", "60日收益", "最大回撤"}
+    visible = []
+    gaps = []
+    for item in metrics:
+        name = str(item.get("name") or "")
+        value = item.get("value")
+        if name in always_show or _has_display_value(value):
+            visible.append(item)
+        else:
+            gaps.append({
+                "name": name,
+                "status_label": str(item.get("status_label") or "缺失"),
+                "note": str(item.get("note") or "当前数据源未返回可用字段"),
+            })
+    return visible, gaps
+
+
+_DEFENSE_METRIC_GUIDES: dict[str, tuple[str, str]] = {
+    "PEG": (
+        "衡量估值和增长是否匹配。",
+        "越低通常代表估值相对增长更便宜，缺失或异常时不能单独判断。",
+    ),
+    "相对强弱": (
+        "观察个股近20日真实K线表现。",
+        "为正说明阶段收益为正，为负说明短线表现偏弱；这里不是全市场RPS。",
+    ),
+    "Beta": (
+        "衡量个股相对沪深300的波动敏感度。",
+        "大于1波动更强，小于1更偏防御。",
+    ),
+    "股息率": (
+        "观察分红对持有收益的补充。",
+        "股息率越高越偏防御，但仍需结合盈利稳定性。",
+    ),
+    "主力成本": (
+        "用近20日收盘价和成交量推导资金平均成本。",
+        "价格接近或高于成本区更容易形成支撑，低于成本区说明承接仍需确认。",
+    ),
+    "资金态度": (
+        "观察公开资金流中主力净占比。",
+        "为正代表资金净买占优，为负代表净卖占优，暂无则资金确认不足。",
+    ),
+    "60日收益": (
+        "判断中期走势强弱。",
+        "为正说明中期走强，为负说明中期趋势承压。",
+    ),
+    "最大回撤": (
+        "衡量样本区间内最大下跌幅度。",
+        "回撤越深，持有压力和风险暴露越高。",
+    ),
+}
+
+
+def _metric_guide_text(metric: dict[str, Any]) -> str:
+    name = str(metric.get("name") or "")
+    role, reading = _DEFENSE_METRIC_GUIDES.get(name, ("说明该指标在防御判断中的作用。", "结合当前数值和数据状态一起看。"))
+    current = str(metric.get("note") or "暂无当前解读")
+    return f"作用：{role}\n怎么看：{reading}\n当前解读：{current}"
+
+
+def _risk_label_from_snapshot(snapshot: dict[str, Any], overall: int) -> str:
+    level = str(snapshot.get("risk_level") or "").strip()
+    if level == "低":
+        return "低风险"
+    if level == "中":
+        return "中等风险"
+    if level == "高":
+        return "高风险"
+    if overall >= 75:
+        return "低风险"
+    if overall >= 45:
+        return "中等风险"
+    return "高风险"
+
+
+def _build_defense_summary(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    overall: int,
+    conclusion: str,
+) -> dict[str, str]:
+    risk_control = snapshot.get("risk_control") or {}
+    key_levels = snapshot.get("key_levels") or {}
+    confirm_level = (
+        risk_control.get("confirm_level")
+        or key_levels.get("ma20")
+        or key_levels.get("resistance")
+    )
+    risk_label = _risk_label_from_snapshot(snapshot, overall)
+    position = risk_control.get("max_position") or snapshot.get("position") or "--"
+    state_name = state.get("name") or "防御观望"
+    reason = state.get("reason") or conclusion
+    return {
+        "state": str(state_name),
+        "risk_label": risk_label,
+        "position": str(position),
+        "confirm_level": _fmt_level(confirm_level),
+        "headline": f"当前风险分 {overall}，属于{risk_label}。{reason}；{conclusion}。",
+    }
+
+
+def _build_defense_reason_groups(
+    dimensions: list[dict[str, Any]],
+    metrics: list[dict[str, Any]],
+    state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    metric_map = {str(item.get("name")): item for item in metrics}
+    groups = {
+        "risk": {"title": "主要风险", "tone": "bearish", "icon": "险", "items": []},
+        "watch": {"title": "观察项", "tone": "watch", "icon": "观", "items": []},
+        "support": {"title": "支撑项", "tone": "bullish", "icon": "撑", "items": []},
+    }
+
+    def add(group: str, text: str) -> None:
+        if text and text not in groups[group]["items"]:
+            groups[group]["items"].append(text)
+
+    for item in dimensions:
+        score = int(item.get("score") or 0)
+        text = f"{item.get('name')}维度 {score} 分：{item.get('note')}"
+        if score <= 45:
+            add("risk", text)
+        elif score < 60:
+            add("watch", text)
+        elif score >= 70:
+            add("support", text)
+
+    relative = metric_map.get("相对强弱")
+    relative_value = _parse_metric_number(relative.get("value") if relative else None)
+    if relative_value is not None:
+        if relative_value < 0:
+            add("risk", f"相对强弱 {relative.get('value')}，近20日表现偏弱")
+        else:
+            add("support", f"相对强弱 {relative.get('value')}，近20日表现为正")
+
+    return_60d = metric_map.get("60日收益")
+    return_60d_value = _parse_metric_number(return_60d.get("value") if return_60d else None)
+    if return_60d_value is not None:
+        if return_60d_value < 0:
+            add("risk", f"60日收益 {return_60d.get('value')}，中期趋势承压")
+        else:
+            add("support", f"60日收益 {return_60d.get('value')}，中期趋势有支撑")
+
+    drawdown = metric_map.get("最大回撤")
+    drawdown_value = _parse_metric_number(drawdown.get("value") if drawdown else None)
+    if drawdown_value is not None:
+        if drawdown_value <= -25:
+            add("risk", f"最大回撤 {drawdown.get('value')}，持有压力较高")
+        elif drawdown_value > -12:
+            add("support", f"最大回撤 {drawdown.get('value')}，回撤相对可控")
+
+    beta = metric_map.get("Beta")
+    beta_value = _parse_metric_number(beta.get("value") if beta else None)
+    if beta_value is not None:
+        if beta_value <= 1:
+            add("support", f"Beta {beta.get('value')}，波动低于沪深300")
+        elif beta_value >= 1.2:
+            add("watch", f"Beta {beta.get('value')}，波动高于沪深300")
+
+    fund = metric_map.get("资金态度")
+    fund_value = _parse_metric_number(fund.get("value") if fund else None)
+    if fund_value is not None and fund_value < 0:
+        add("risk", f"资金态度 {fund.get('value')}，主力净卖占优")
+    elif fund_value is not None:
+        add("support", f"资金态度 {fund.get('value')}，主力净买占优")
+
+    peg = metric_map.get("PEG")
+    peg_value = _parse_metric_number(peg.get("value") if peg else None)
+    if peg_value is not None and peg_value <= 1.2:
+        add("support", f"PEG {peg.get('value')}，估值相对增长较友好")
+    elif peg_value is not None and peg_value >= 2:
+        add("watch", f"PEG {peg.get('value')}，估值消化需要增长兑现")
+
+    for trigger in (state.get("triggers") or [])[:2]:
+        add("watch", f"触发条件：{trigger}")
+
+    if not groups["risk"]["items"]:
+        add("risk", "暂无硬性风险信号，继续观察价格与资金确认")
+    if not groups["watch"]["items"]:
+        add("watch", "等待关键位、量能或资金流给出下一步确认")
+    if not groups["support"]["items"]:
+        add("support", "暂无明确支撑项，先按防御纪律处理")
+
+    return [
+        {**groups["risk"], "items": groups["risk"]["items"][:4]},
+        {**groups["watch"], "items": groups["watch"]["items"][:4]},
+        {**groups["support"], "items": groups["support"]["items"][:4]},
+    ]
+
+
 def _build_capital_trace(
     extended_info: dict[str, Any] | None = None,
     data: Any = None,
@@ -741,8 +954,19 @@ def _build_capital_trace(
     fund_flow = extended_info.get("fund_flow") or {}
     rows = []
 
-    def add_row(label: str, value: str, impact: str, basis: str) -> None:
+    def add_row(label: str, raw_value: Any, value: str, impact: str, basis: str) -> None:
+        if raw_value is None:
+            return
         rows.append({"label": label, "value": value, "impact": impact, "basis": basis})
+
+    def signed_impact(raw_value: float | None, positive: str, negative: str, flat: str = "平衡") -> str:
+        if raw_value is None:
+            return ""
+        if raw_value > 0:
+            return positive
+        if raw_value < 0:
+            return negative
+        return flat
 
     main_flow = _num(fund_flow.get("main_net_inflow"))
     five_day_flow = _num(fund_flow.get("five_day_main_net_inflow"))
@@ -754,37 +978,44 @@ def _build_capital_trace(
 
     add_row(
         "当日主力净流入",
+        main_flow,
         _fmt_money(main_flow),
-        "偏多" if main_flow and main_flow > 0 else "偏空" if main_flow and main_flow < 0 else "暂无",
+        signed_impact(main_flow, "偏多", "偏空"),
         "公开资金流",
     )
     add_row(
         "近5日主力净流入",
+        five_day_flow,
         _fmt_money(five_day_flow),
-        "连续流入" if five_day_flow and five_day_flow > 0 else "连续流出" if five_day_flow and five_day_flow < 0 else "暂无",
+        signed_impact(five_day_flow, "连续流入", "连续流出"),
         "公开资金流",
     )
+    big_order_total = (super_flow or 0) + (large_flow or 0) if super_flow is not None or large_flow is not None else None
     add_row(
         "超大/大单合计",
-        _fmt_money((super_flow or 0) + (large_flow or 0)) if super_flow is not None or large_flow is not None else "暂无",
-        "大单承接" if (super_flow or 0) + (large_flow or 0) > 0 else "大单分歧" if super_flow is not None or large_flow is not None else "暂无",
+        big_order_total,
+        _fmt_money(big_order_total),
+        "大单承接" if big_order_total and big_order_total > 0 else "大单分歧" if big_order_total and big_order_total < 0 else "平衡",
         "公开资金流",
     )
     add_row(
         "主力净占比",
+        main_ratio,
         _fmt_percent(main_ratio, signed=True),
-        "净买占优" if main_ratio and main_ratio > 0 else "净卖占优" if main_ratio and main_ratio < 0 else "暂无",
+        signed_impact(main_ratio, "净买占优", "净卖占优"),
         "公开资金流",
     )
     add_row(
         "换手率",
+        turnover,
         _fmt_percent(turnover),
-        "活跃" if turnover and turnover >= 5 else "温和" if turnover is not None else "暂无",
+        "活跃" if turnover is not None and turnover >= 5 else "温和",
         "公开行情/基础资料",
     )
     add_row(
         "20日量价成本",
-        _fmt_level(capital_cost) if capital_cost is not None else "暂无",
+        capital_cost,
+        _fmt_level(capital_cost),
         "模型推断",
         "真实收盘价×成交量推导",
     )
@@ -924,6 +1155,9 @@ def build_defense_dashboard(
         conclusion = "防御一般，轻仓或等待更稳妥"
     else:
         conclusion = "防御偏弱，优先回避或降仓"
+    signal_state = _build_signal_state(snapshot, data)
+    core_metrics = _build_core_metrics(snapshot, data, benchmark_data, extended_info, profile)
+    visible_core_metrics, data_gaps = _split_visible_metrics(core_metrics)
     return {
         "overall": average,
         "conclusion": conclusion,
@@ -931,8 +1165,16 @@ def build_defense_dashboard(
             {"name": name, "score": score, "note": note}
             for name, score, note in dimensions
         ],
-        "signal_state": _build_signal_state(snapshot, data),
-        "core_metrics": _build_core_metrics(snapshot, data, benchmark_data, extended_info, profile),
+        "signal_state": signal_state,
+        "summary": _build_defense_summary(snapshot, signal_state, average, conclusion),
+        "reason_groups": _build_defense_reason_groups(
+            [{"name": name, "score": score, "note": note} for name, score, note in dimensions],
+            core_metrics,
+            signal_state,
+        ),
+        "core_metrics": core_metrics,
+        "visible_core_metrics": visible_core_metrics,
+        "data_gaps": data_gaps,
         "capital_trace": _build_capital_trace(extended_info, data, profile),
         "data_basis": "公开真实数据源 + 技术指标推导；不可直接确认字段仅做模型推断",
     }
@@ -1008,27 +1250,54 @@ def _render_risk_control(risk_control: dict[str, Any], tone: str) -> None:
 def _render_defense_dashboard(defense: dict[str, Any]) -> None:
     overall = int(defense.get("overall") or 0)
     tone = _tone_from_score(overall)
-    state = defense.get("signal_state") or {}
-    state_tone = state.get("tone") or "neutral"
-    triggers = "".join(f"<li>{_escape(item)}</li>" for item in (state.get("triggers") or [])[:4])
-    state_html = (
-        f'<div class="signal-state-card {state_tone}">'
-        f'<div><span>当前状态</span><strong>{_escape(state.get("name"))}</strong></div>'
-        f'<p>{_escape(state.get("reason"))}</p>'
-        f"<ul>{triggers}</ul>"
+    summary = defense.get("summary") or {}
+    summary_items = [
+        ("风控分", str(overall)),
+        ("风险等级", summary.get("risk_label") or "--"),
+        ("仓位建议", summary.get("position") or "--"),
+        ("确认位", summary.get("confirm_level") or "--"),
+    ]
+    summary_cards = "".join(
+        '<div class="defense-summary-stat">'
+        f"<span>{_escape(label)}</span><strong>{_escape(value)}</strong>"
         "</div>"
+        for label, value in summary_items
     )
+    summary_html = (
+        f'<div class="defense-summary-card {tone}">'
+        '<div class="defense-summary-main">'
+        f'<span>一屏主结论</span><strong>{_escape(summary.get("state"))}</strong>'
+        f'<p>{_escape(summary.get("headline") or defense.get("conclusion"))}</p>'
+        '</div>'
+        f'<div class="defense-summary-stats">{summary_cards}</div>'
+        '</div>'
+    )
+    reason_groups = "".join(
+        f'<div class="defense-reason-card {html.escape(str(group.get("tone") or "neutral"))}">'
+        f'<div class="defense-reason-title"><span>{_escape(group.get("icon"))}</span><strong>{_escape(group.get("title"))}</strong></div>'
+        + _list_items(group.get("items"), icon=str(group.get("icon") or "项"), empty="暂无", tone=str(group.get("tone") or "neutral"))
+        + "</div>"
+        for group in defense.get("reason_groups", [])
+    )
+    visible_metrics = defense.get("visible_core_metrics") or defense.get("core_metrics") or []
     metrics = "".join(
         f'<div class="defense-metric {html.escape(str(item.get("status") or "missing"))}">'
         '<div class="defense-metric-head">'
+        '<div class="defense-metric-title">'
         f'<span>{_escape(item.get("name"))}</span>'
+        '<details class="defense-info">'
+        f'<summary aria-label="{_escape(item.get("name"))}说明">i</summary>'
+        f'<div>{_escape(_metric_guide_text(item))}</div>'
+        '</details>'
+        '</div>'
         f'<i>{_escape(item.get("status_label"))}</i>'
         '</div>'
         f'<strong>{_escape(item.get("value"))}</strong>'
         f'<em>{_escape(item.get("note"))}</em>'
         "</div>"
-        for item in defense.get("core_metrics", [])
+        for item in visible_metrics
     )
+    capital_trace = defense.get("capital_trace", [])
     trace_rows = "".join(
         "<tr>"
         f"<td>{_escape(item.get('label'))}</td>"
@@ -1036,8 +1305,15 @@ def _render_defense_dashboard(defense: dict[str, Any]) -> None:
         f"<td>{_escape(item.get('impact'))}</td>"
         f"<td>{_escape(item.get('basis'))}</td>"
         "</tr>"
-        for item in defense.get("capital_trace", [])
+        for item in capital_trace
     )
+    trace_html = (
+        '<table class="capital-trace-table"><thead><tr><th>项目</th><th>数值</th><th>解读</th><th>依据</th></tr></thead>'
+        f"<tbody>{trace_rows}</tbody></table>"
+        if capital_trace else
+        '<div class="capital-trace-empty">资金流接口本次未返回可用数值，已从主表隐藏。</div>'
+    )
+    metric_grid_html = f'<div class="defense-metric-grid">{metrics}</div>' if metrics else ''
     bars = "".join(
         '<div class="defense-dimension">'
         f'<div><b>{_escape(item.get("name"))}</b><span>{_escape(item.get("note"))}</span></div>'
@@ -1047,19 +1323,16 @@ def _render_defense_dashboard(defense: dict[str, Any]) -> None:
     )
     body = (
         '<div class="defense-dashboard-layout">'
-        '<div class="defense-top-row">'
-        f'<div class="defense-overall {tone}"><strong><em>风控分</em>{overall}</strong><span>{_escape(defense.get("conclusion"))}</span></div>'
-        f"{state_html}"
-        '</div>'
-        f'<div class="defense-metric-grid">{metrics}</div>'
+        f"{summary_html}"
+        f'<div class="defense-reason-grid">{reason_groups}</div>'
         '<div class="defense-bottom-grid">'
         f'<div class="defense-dimension-list">{bars}</div>'
         '<div class="capital-trace-block">'
         '<div class="capital-trace-title">资金博弈溯源</div>'
-        '<table class="capital-trace-table"><thead><tr><th>项目</th><th>数值</th><th>解读</th><th>依据</th></tr></thead>'
-        f"<tbody>{trace_rows}</tbody></table>"
+        f"{trace_html}"
         '</div>'
         '</div>'
+        f"{metric_grid_html}"
         '</div>'
         f'<div class="decision-mini-note">{_escape(defense.get("data_basis"))}</div>'
     )

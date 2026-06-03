@@ -19,6 +19,27 @@ def test_stock_data_quality_flags_missing_extended_info():
     assert any("历史K线仅" in item for item in summary["warnings"])
 
 
+def test_stock_data_quality_explains_failed_fund_flow_source():
+    data = pd.DataFrame({"close": list(range(80))})
+    extended_info = {
+        "financial": {"metrics": {"归母净利润": 1}},
+        "fund_flow": {
+            "status": "source_failed",
+            "source": "东方财富资金流",
+            "reason": "远端连接中断",
+        },
+    }
+
+    summary = build_stock_data_quality_summary(
+        data,
+        quote={"price": 10},
+        profile={"market_cap": 1, "pe_ttm": 10, "pb": 1},
+        extended_info=extended_info,
+    )
+
+    assert "资金流接口失败：远端连接中断" in summary["warnings"]
+
+
 def test_compare_scorecard_sorts_without_changing_source_metrics():
     metrics = [
         {"symbol": "A", "name": "弱", "return_20d": -5, "return_60d": -3, "max_drawdown": -30, "volatility": 80},

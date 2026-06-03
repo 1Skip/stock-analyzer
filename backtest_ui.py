@@ -1,4 +1,4 @@
-"""
+﻿"""
 回测验证 Streamlit 页面
 """
 import html
@@ -176,7 +176,7 @@ def _render_backtest_result(result):
                     }
                     for item in worst_cases
                 ]),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -193,7 +193,7 @@ def _render_backtest_result(result):
                 "平": stats["neutral"],
                 "胜率(%)": stats["win_rate_pct"],
             })
-        st.dataframe(pd.DataFrame(bd_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(bd_rows), width="stretch", hide_index=True)
 
     st.subheader("回测明细")
     detail_rows = []
@@ -210,7 +210,7 @@ def _render_backtest_result(result):
             "触发": r.get("first_hit", ""),
             "出场原因": r.get("simulated_exit_reason", ""),
         })
-    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
 
     if st.button("保存结果"):
         from backtest_adapter import BacktestAdapter
@@ -268,7 +268,7 @@ def backtest_page():
                 neutral_band = st.number_input("中性区间（%）", min_value=0.5, max_value=10.0,
                                                value=BACKTEST_NEUTRAL_BAND, step=0.5)
 
-        submitted = st.form_submit_button("开始回测", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("开始回测", type="primary", width="stretch")
 
     if submitted:
         _clear_backtest_result()

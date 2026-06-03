@@ -1,4 +1,4 @@
-"""智能推荐页面 — 多策略智能选股推荐"""
+﻿"""智能推荐页面 — 多策略智能选股推荐"""
 import html
 import streamlit as st
 from recommendation_service import RecommendationService
@@ -156,7 +156,7 @@ def _render_entry_check(entry_check):
             "涨跌幅": f"{item.get('change_pct'):+.2f}%" if item.get("change_pct") is not None else "--",
         })
     if rows:
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _render_outcome_review(outcome_review):
@@ -189,7 +189,7 @@ def _render_outcome_review(outcome_review):
             "说明": item.get("reason", ""),
         })
     if rows:
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+        st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _render_history_review(history_review):
@@ -218,7 +218,7 @@ def _render_history_review(history_review):
                     }
                     for item in by_strategy
                 ],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         history = history_review.get("history") or []

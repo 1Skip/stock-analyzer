@@ -1,4 +1,4 @@
-"""UI workspace enhancement tests."""
+﻿"""UI workspace enhancement tests."""
 
 import pandas as pd
 
@@ -555,7 +555,7 @@ def test_report_history_page_groups_action_buttons():
 
     assert "col_generate, col_refresh, _ = st.columns([1.1, 1, 4])" in source
     refresh_block = source.split('st.button("刷新列表"', 1)[-1]
-    assert "use_container_width=True" in refresh_block.split("):", 1)[0]
+    assert 'width="stretch"' in refresh_block.split("):", 1)[0]
 
 
 def test_stock_search_tolerates_common_near_match():
@@ -854,6 +854,10 @@ def test_defense_dashboard_uses_five_real_data_dimensions():
     assert [item["name"] for item in defense["dimensions"]] == ["估值", "成长", "趋势", "安全", "资金"]
     assert all(0 <= item["score"] <= 100 for item in defense["dimensions"])
     assert "公开真实数据源" in defense["data_basis"]
+    assert defense["summary"]["state"] in {"趋势持有", "试探建仓", "压力减仓", "底部观察", "防御观望", "风险回避"}
+    assert defense["summary"]["risk_label"] in {"低风险", "中等风险", "高风险"}
+    assert [group["title"] for group in defense["reason_groups"]] == ["主要风险", "观察项", "支撑项"]
+    assert all(group["items"] for group in defense["reason_groups"])
     assert defense["signal_state"]["name"] in {"趋势持有", "试探建仓", "压力减仓", "底部观察", "防御观望", "风险回避"}
     assert defense["signal_state"]["triggers"]
     assert set(metrics) >= {"PEG", "相对强弱", "Beta", "股息率", "主力成本"}
@@ -879,6 +883,8 @@ def test_defense_dashboard_missing_data_uses_empty_labels_not_fake_values():
 
     defense = build_defense_dashboard(snapshot, data=None, benchmark_data=None, extended_info={}, profile={})
     metrics = {item["name"]: item for item in defense["core_metrics"]}
+    visible_names = [item["name"] for item in defense["visible_core_metrics"]]
+    gaps = {item["name"]: item for item in defense["data_gaps"]}
 
     assert metrics["PEG"]["value"] == "暂无"
     assert "不编造" in metrics["PEG"]["note"]
@@ -888,8 +894,61 @@ def test_defense_dashboard_missing_data_uses_empty_labels_not_fake_values():
     assert metrics["股息率"]["value"] == "暂无"
     assert metrics["股息率"]["status"] == "missing"
     assert metrics["主力成本"]["value"] == "暂无"
+    assert "PEG" not in visible_names
+    assert "股息率" not in visible_names
+    assert "资金态度" not in visible_names
+    assert "PEG" in gaps
+    assert "股息率" in gaps
     assert all("模拟" not in str(item) for item in defense["core_metrics"])
     assert all("随机" not in str(item) for item in defense["core_metrics"])
+
+
+def test_defense_dashboard_keeps_fund_attitude_when_real_flow_exists():
+    snapshot = {
+        "score": 62,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {},
+        "risk_alerts": [],
+    }
+    extended_info = {"fund_flow": {"main_net_inflow_ratio": 0.71, "main_net_inflow": 987179}}
+
+    defense = build_defense_dashboard(snapshot, data=None, benchmark_data=None, extended_info=extended_info, profile={})
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+    visible_names = [item["name"] for item in defense["visible_core_metrics"]]
+
+    assert metrics["资金态度"]["value"] == "+0.71%"
+    assert metrics["资金态度"]["status"] == "derived"
+    assert "资金态度" in visible_names
+
+
+def test_defense_dashboard_hides_failed_fund_attitude_but_keeps_gap_reason():
+    snapshot = {
+        "score": 62,
+        "risk_level": "中",
+        "recommendation": "观察",
+        "confidence": 60,
+        "key_levels": {},
+        "risk_alerts": [],
+    }
+    extended_info = {
+        "fund_flow": {
+            "status": "source_failed",
+            "source": "东方财富资金流",
+            "reason": "远端连接中断",
+        }
+    }
+
+    defense = build_defense_dashboard(snapshot, data=None, benchmark_data=None, extended_info=extended_info, profile={})
+    metrics = {item["name"]: item for item in defense["core_metrics"]}
+    visible_names = [item["name"] for item in defense["visible_core_metrics"]]
+    gaps = {item["name"]: item for item in defense["data_gaps"]}
+
+    assert metrics["资金态度"]["status"] == "source_failed"
+    assert "远端连接中断" in metrics["资金态度"]["note"]
+    assert "资金态度" not in visible_names
+    assert "资金态度" in gaps
 
 
 def test_defense_dashboard_distinguishes_source_failure_from_empty_data():
@@ -1061,6 +1120,12 @@ def test_decision_dashboard_trade_plan_css_classes_exist():
         "trade-plan-row",
         "risk-control-split",
         "defense-dashboard-layout",
+        "defense-summary-card",
+        "defense-summary-stats",
+        "defense-reason-grid",
+        "defense-reason-card",
+        "defense-info",
+        "capital-trace-empty",
         "defense-top-row",
         "defense-overall",
         "defense-dimension",
@@ -1172,7 +1237,16 @@ def test_analyze_page_renders_extended_info_placeholder():
 
     assert 'extended_info = extended_info or {"loading": True}' in source
     assert "扩展信息仍在加载或当前请求未及时返回" in source
-    assert 'extended_info = futures[\'extended_info\'].result(timeout=2.5)' in source
+    assert 'extended_info = futures[\'extended_info\'].result(timeout=8.5)' in source
+
+
+def test_cached_extended_info_fetches_deep_layers_for_metric_cards():
+    from pathlib import Path
+
+    source = Path("ui/cached_data.py").read_text(encoding="utf-8")
+
+    assert "include_deep_layers=True" in source
+    assert "timeout_seconds=8" in source
 
 
 def test_analyze_page_uses_code_name_title_card():

@@ -230,8 +230,13 @@ def build_stock_data_quality_summary(
     else:
         if not extended_info.get("financial"):
             warnings.append("财务摘要缺失")
-        if not extended_info.get("fund_flow"):
+        fund_flow = extended_info.get("fund_flow")
+        if not fund_flow:
             warnings.append("资金流缺失")
+        elif isinstance(fund_flow, dict) and fund_flow.get("status") in {"source_failed", "source_empty"}:
+            label = "资金流接口失败" if fund_flow.get("status") == "source_failed" else "资金流源无数据"
+            reason = fund_flow.get("reason")
+            warnings.append(f"{label}：{reason}" if reason else label)
         risk_events = extended_info.get("risk_events") if isinstance(extended_info.get("risk_events"), dict) else {}
         announcements = risk_events.get("announcements") or []
         risky = _risky_announcements(announcements)

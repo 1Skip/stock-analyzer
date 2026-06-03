@@ -1,4 +1,4 @@
-"""侧边栏组件 — 大盘温度、自选股列表、数据源选择"""
+﻿"""侧边栏组件 — 大盘温度、自选股列表、数据源选择"""
 from concurrent.futures import ThreadPoolExecutor, wait
 import html
 import streamlit as st
@@ -104,11 +104,11 @@ def display_watchlist_sidebar():
             row = st.columns([4.6, 0.9], gap="small")
             with row[0]:
                 label = f"{symbol} · {name[:6]}" if name and name != symbol else symbol
-                if st.button(label, key=f"wl_pick_{symbol}_{market}_{index}", use_container_width=True):
+                if st.button(label, key=f"wl_pick_{symbol}_{market}_{index}", width="stretch"):
                     _open_watchlist_stock_in_main(symbol, market, name)
                     st.rerun()
             with row[1]:
-                if st.button("×", key=f"wl_remove_{symbol}_{market}_{index}", help="移除自选", use_container_width=True):
+                if st.button("×", key=f"wl_remove_{symbol}_{market}_{index}", help="移除自选", width="stretch"):
                     remove_from_watchlist(symbol, market)
                     st.rerun()
 

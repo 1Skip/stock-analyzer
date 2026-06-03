@@ -1,4 +1,4 @@
-"""股票对比页面 — 多股票指标对比 + 走势决策仪表盘"""
+﻿"""股票对比页面 — 多股票指标对比 + 走势决策仪表盘"""
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -257,7 +257,7 @@ def _render_compare_scorecard(metrics):
             }
             for item in scorecard
         ]),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
@@ -417,7 +417,7 @@ def _render_compare_result(result):
     if comparison_data:
         df = pd.DataFrame(comparison_data)
         st.subheader("关键指标对比")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width="stretch")
 
         st.subheader("价格走势对比")
         if trend_metrics:
@@ -426,9 +426,9 @@ def _render_compare_result(result):
             st.markdown(
                 _u(r"\u4e0b\u8868\u628a\u300c\u6da8\u5f97\u591a\u300d\u300c\u56de\u64a4\u5c0f\u300d\u300c\u6ce2\u52a8\u4f4e\u300d\u300c\u8d8b\u52bf\u5f3a\u300d\u62c6\u5f00\u770b\uff0c\u907f\u514d\u53ea\u770b\u4e00\u6761\u4ef7\u683c\u7ebf\u5c31\u4e0b\u7ed3\u8bba\u3002")
             )
-            st.dataframe(_trend_metrics_dataframe(trend_metrics), use_container_width=True)
+            st.dataframe(_trend_metrics_dataframe(trend_metrics), width="stretch")
             fig = build_trend_dashboard_figure(history_by_symbol, names_by_symbol)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning(_u(r"\u6682\u65e0\u8db3\u591f\u5386\u53f2\u6570\u636e\u751f\u6210\u8d70\u52bf\u5bf9\u6bd4\u4eea\u8868\u76d8"))
     else:

@@ -1,4 +1,4 @@
-"""热门板块页面 — 行业/概念排行 + 涨跌幅榜"""
+﻿"""热门板块页面 — 行业/概念排行 + 涨跌幅榜"""
 import html
 import concurrent.futures
 import streamlit as st
@@ -203,7 +203,7 @@ def hot_stocks_page():
                     return 'color: #34c759'
                 return ''
             df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
-            st.dataframe(df_styled, use_container_width=True, hide_index=True)
+            st.dataframe(df_styled, width="stretch", hide_index=True)
         else:
             st.info("暂无行业板块排行数据：当前行业板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
 
@@ -211,7 +211,7 @@ def hot_stocks_page():
         if concepts:
             df_concepts = pd.DataFrame(concepts)
             df_c_styled = df_concepts.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
-            st.dataframe(df_c_styled, use_container_width=True, hide_index=True)
+            st.dataframe(df_c_styled, width="stretch", hide_index=True)
         else:
             st.info("暂无概念板块排行数据：当前概念板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
 
@@ -222,7 +222,7 @@ def hot_stocks_page():
                 '代码': 'Symbol', '名称': 'Name', '最新价': 'Price',
                 '涨跌幅': 'Change%', '换手率': 'Turnover%', '所属板块': 'Sector',
             })
-            st.dataframe(df_gainers, use_container_width=True)
+            st.dataframe(df_gainers, width="stretch")
         else:
             st.info("暂无涨幅榜数据")
 
@@ -233,7 +233,7 @@ def hot_stocks_page():
                 '代码': 'Symbol', '名称': 'Name', '最新价': 'Price',
                 '涨跌幅': 'Change%', '换手率': 'Turnover%', '所属板块': 'Sector',
             })
-            st.dataframe(df_losers, use_container_width=True)
+            st.dataframe(df_losers, width="stretch")
         else:
             st.info("暂无跌幅榜数据")
 
@@ -254,21 +254,21 @@ def hot_stocks_page():
                 '涨跌幅': 'Change%', '换手率': 'Turnover%',
                 '成交量': 'Volume', '成交额': 'Amount', '热度分数': 'Score'
             })
-            st.dataframe(df_hot, use_container_width=True)
+            st.dataframe(df_hot, width="stretch")
         else:
             st.info("暂无热门股票数据")
 
         st.subheader("涨幅榜")
         df_gainers = pd.DataFrame(gainers)
         if not df_gainers.empty:
-            st.dataframe(df_gainers, use_container_width=True)
+            st.dataframe(df_gainers, width="stretch")
         else:
             st.info("暂无涨幅榜数据")
 
         st.subheader("跌幅榜")
         df_losers = pd.DataFrame(losers)
         if not df_losers.empty:
-            st.dataframe(df_losers, use_container_width=True)
+            st.dataframe(df_losers, width="stretch")
         else:
             st.info("暂无跌幅榜数据")
 
@@ -284,20 +284,20 @@ def hot_stocks_page():
         st.subheader("美股热门")
         df_hot = pd.DataFrame(hot)
         if not df_hot.empty:
-            st.dataframe(df_hot, use_container_width=True)
+            st.dataframe(df_hot, width="stretch")
         else:
             st.info("暂无热门股票数据")
 
         st.subheader("涨幅榜")
         df_gainers = pd.DataFrame(gainers)
         if not df_gainers.empty:
-            st.dataframe(df_gainers, use_container_width=True)
+            st.dataframe(df_gainers, width="stretch")
         else:
             st.info("暂无涨幅榜数据")
 
         st.subheader("跌幅榜")
         df_losers = pd.DataFrame(losers)
         if not df_losers.empty:
-            st.dataframe(df_losers, use_container_width=True)
+            st.dataframe(df_losers, width="stretch")
         else:
             st.info("暂无跌幅榜数据")

@@ -810,6 +810,125 @@ CUSTOM_CSS = """
         flex-direction: column;
         gap: 12px;
     }
+    .defense-summary-card {
+        display: grid;
+        grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.9fr);
+        gap: 14px;
+        align-items: stretch;
+        padding: 16px;
+        border-radius: 16px;
+        border: 1px solid rgba(85,199,255,0.20);
+        background: linear-gradient(135deg, rgba(12, 32, 50, 0.90), rgba(5, 13, 24, 0.78));
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+    }
+    .defense-summary-card.bullish {
+        border-color: rgba(255,90,82,0.24);
+        background: linear-gradient(135deg, rgba(57, 22, 27, 0.76), rgba(5, 13, 24, 0.78));
+    }
+    .defense-summary-card.bearish {
+        border-color: rgba(53,228,111,0.24);
+        background: linear-gradient(135deg, rgba(15, 47, 33, 0.76), rgba(5, 13, 24, 0.78));
+    }
+    .defense-summary-card.watch {
+        border-color: rgba(1,86,151,0.44);
+        background: linear-gradient(135deg, rgba(1,86,151,0.24), rgba(5, 13, 24, 0.78));
+    }
+    .defense-summary-main span {
+        display: block;
+        font-size: 0.70rem;
+        opacity: 0.58;
+        font-weight: 900;
+        margin-bottom: 4px;
+    }
+    .defense-summary-main strong {
+        display: block;
+        font-size: 1.56rem;
+        line-height: 1.18;
+        font-weight: 950;
+        letter-spacing: 0;
+        margin-bottom: 7px;
+    }
+    .defense-summary-main p {
+        margin: 0;
+        max-width: 980px;
+        color: rgba(238,245,255,0.78);
+        font-size: 0.88rem;
+        line-height: 1.55;
+    }
+    .defense-summary-stats {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+    .defense-summary-stat {
+        min-width: 0;
+        padding: 10px 11px;
+        border-radius: 12px;
+        background: rgba(3, 10, 19, 0.48);
+        border: 1px solid rgba(85,199,255,0.11);
+    }
+    .defense-summary-stat span {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--text-muted);
+        font-size: 0.66rem;
+        font-weight: 850;
+    }
+    .defense-summary-stat strong {
+        display: block;
+        font-size: 0.98rem;
+        line-height: 1.22;
+        font-weight: 950;
+        font-feature-settings: "tnum";
+        font-variant-numeric: tabular-nums;
+        word-break: break-word;
+    }
+    .defense-reason-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+    }
+    .defense-reason-card {
+        min-width: 0;
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(7, 18, 31, 0.62);
+        border: 1px solid rgba(85,199,255,0.10);
+    }
+    .defense-reason-card.bearish {
+        border-color: rgba(53,228,111,0.24);
+        background: linear-gradient(145deg, rgba(15, 47, 33, 0.46), rgba(7,18,31,0.62));
+    }
+    .defense-reason-card.watch {
+        border-color: rgba(1,86,151,0.40);
+        background: linear-gradient(145deg, rgba(1,86,151,0.17), rgba(7,18,31,0.62));
+    }
+    .defense-reason-card.bullish {
+        border-color: rgba(255,90,82,0.22);
+        background: linear-gradient(145deg, rgba(57, 22, 27, 0.46), rgba(7,18,31,0.62));
+    }
+    .defense-reason-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 9px;
+    }
+    .defense-reason-title span {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 22px;
+        border-radius: 999px;
+        background: rgba(85,199,255,0.12);
+        color: var(--color-primary);
+        font-size: 0.68rem;
+        font-weight: 900;
+    }
+    .defense-reason-title strong {
+        font-size: 0.86rem;
+        font-weight: 950;
+    }
     .defense-top-row {
         display: grid;
         grid-template-columns: 0.9fr 1.6fr;
@@ -937,10 +1056,53 @@ CUSTOM_CSS = """
         gap: 8px;
         align-items: center;
     }
+    .defense-metric-title {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        min-width: 0;
+    }
     .defense-metric span {
         font-size: 0.68rem;
         opacity: 0.58;
         font-weight: 800;
+    }
+    .defense-info {
+        display: inline-block;
+        margin: 0;
+    }
+    .defense-info summary {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0;
+        border-radius: 999px;
+        border: 1px solid rgba(85,199,255,0.28);
+        background: rgba(85,199,255,0.10);
+        color: var(--color-primary);
+        font-size: 0.58rem;
+        font-weight: 950;
+        line-height: 1;
+        cursor: pointer;
+        list-style: none;
+    }
+    .defense-info summary::-webkit-details-marker {
+        display: none;
+    }
+    .defense-info div {
+        margin: 8px 0 2px;
+        padding: 8px 9px;
+        border-radius: 10px;
+        background: rgba(3, 10, 19, 0.56);
+        border: 1px solid rgba(85,199,255,0.12);
+        color: var(--text-muted);
+        font-size: 0.64rem;
+        font-weight: 700;
+        line-height: 1.45;
+        white-space: pre-line;
     }
     .defense-metric i {
         display: inline-flex;
@@ -1027,6 +1189,15 @@ CUSTOM_CSS = """
         font-size: 0.78rem;
         font-weight: 900;
         opacity: 0.70;
+    }
+    .capital-trace-empty {
+        padding: 12px;
+        border-radius: 14px;
+        background: rgba(7, 18, 31, 0.56);
+        border: 1px solid rgba(85,199,255,0.10);
+        color: var(--text-muted);
+        font-size: 0.74rem;
+        font-weight: 750;
     }
     .capital-trace-table {
         width: 100%;
@@ -1297,9 +1468,14 @@ CUSTOM_CSS = """
             grid-template-columns: 1fr;
             gap: 8px;
         }
+        .defense-summary-card,
+        .defense-reason-grid,
         .defense-top-row,
         .defense-bottom-grid {
             grid-template-columns: 1fr;
+        }
+        .defense-summary-stats {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
         }
         .trade-plan-row {
             grid-template-columns: 1fr;

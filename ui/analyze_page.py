@@ -1,4 +1,4 @@
-"""个股分析页面 — 输入表单 + 数据获取 + 结果渲染"""
+﻿"""个股分析页面 — 输入表单 + 数据获取 + 结果渲染"""
 import html
 import concurrent.futures
 import streamlit as st
@@ -633,7 +633,7 @@ def _render_watchlist_quick_action(symbol: str, market: str) -> None:
     in_watchlist = is_in_watchlist(watch_symbol, market)
     label = "移除自选" if in_watchlist else "加入自选"
     button_type = "secondary" if in_watchlist else "primary"
-    if st.button(label, key=f"quick_watchlist_{market}_{watch_symbol}", type=button_type, use_container_width=True):
+    if st.button(label, key=f"quick_watchlist_{market}_{watch_symbol}", type=button_type, width="stretch"):
         if in_watchlist:
             success, msg = remove_from_watchlist(watch_symbol, market)
         else:
@@ -914,7 +914,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         if intraday_data is not None and not intraday_data.empty:
             intraday_fig = plot_intraday_chart(intraday_data, quote)
             if intraday_fig:
-                st.plotly_chart(intraday_fig, use_container_width=True,
+                st.plotly_chart(intraday_fig, width="stretch",
                                 config={'displayModeBar': False})
         else:
             now = pd.Timestamp.now()
@@ -941,19 +941,19 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     with st.expander("日K", expanded=True):
         _render_chart_header("日K", latest_ma_values(data))
         fig = plot_candlestick_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑦ 成交量
     with st.expander("成交量", expanded=True):
         _render_chart_header("成交量", _latest_volume_values(data, profile, quote))
         fig = plot_volume_chart(data, quote)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑧ MACD
     with st.expander("MACD 指标", expanded=False):
         _render_chart_header("MACD", latest_indicator_values(data, "macd"))
         fig = plot_macd_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑨ RSI + KDJ 并排
     with st.expander("RSI & KDJ 指标", expanded=False):
@@ -961,23 +961,23 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
         with col_rsi:
             _render_chart_header("RSI", latest_indicator_values(data, "rsi"))
             fig = plot_rsi_chart(data)
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
         with col_kdj:
             _render_chart_header("KDJ", latest_indicator_values(data, "kdj"))
             fig = plot_kdj_chart(data)
-            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑩ 布林带
     with st.expander("布林带", expanded=False):
         _render_chart_header("BOLL", latest_indicator_values(data, "boll"))
         fig = plot_boll_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑪ 主力吸货
     with st.expander("主力吸货 指标", expanded=False):
         _render_chart_header("主力吸货", latest_indicator_values(data, "main_accumulation"))
         fig = plot_main_accumulation_chart(data)
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑫ 原始数据
     with st.expander("查看原始数据"):
@@ -1128,7 +1128,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
         try:
             if 'extended_info' in futures:
-                extended_info = futures['extended_info'].result(timeout=2.5)
+                extended_info = futures['extended_info'].result(timeout=8.5)
         except Exception:
             extended_info = {"loading": True, "source": "AKShare"}
         if 'extended_info' in futures:
@@ -1266,7 +1266,7 @@ def analyze_stock_page():
         st.button(
             "开始分析",
             type="primary",
-            use_container_width=True,
+            width="stretch",
             on_click=_queue_analysis_for_current_input,
         )
     analyzed_target = _get_analyzed_target() if _is_current_input_analyzed() else None
@@ -1304,7 +1304,7 @@ def analyze_stock_page():
         columns = st.columns(min(4, len(suggestions)))
         for index, item in enumerate(suggestions):
             with columns[index % len(columns)]:
-                if st.button(item["label"], key=f"quick_match_{item['symbol']}", use_container_width=True):
+                if st.button(item["label"], key=f"quick_match_{item['symbol']}", width="stretch"):
                     st.session_state.pending_quick_match = {
                         "symbol": item["symbol"],
                         "name": item["name"],
@@ -1318,11 +1318,12 @@ def analyze_stock_page():
     col_mkt, col_period, col_pref, col_watch_quick, col_refresh = st.columns([2, 2, 1, 1, 1])
 
     with col_mkt:
-        market_index = ["CN", "US", "HK"].index(st.session_state.analyze_market)
+        market_options = ["CN", "US", "HK"]
+        if st.session_state.get("analyze_market_select") not in market_options:
+            st.session_state.analyze_market_select = st.session_state.analyze_market
         market = st.selectbox(
             "市场",
-            options=["CN", "US", "HK"],
-            index=market_index,
+            options=market_options,
             format_func=lambda x: {"CN": "A股", "US": "美股", "HK": "港股"}[x],
             key="analyze_market_select",
             on_change=on_market_change,
@@ -1338,11 +1339,11 @@ def analyze_stock_page():
             "1y": "1年 · 长线布局",
             "2y": "2年 · 历史锚点",
         }
-        period_index = period_options.index(st.session_state.analyze_period)
+        if st.session_state.get("analyze_period_select") not in period_options:
+            st.session_state.analyze_period_select = st.session_state.analyze_period
         period = st.selectbox(
             "周期",
             options=period_options,
-            index=period_index,
             format_func=lambda x: period_labels[x],
             key="analyze_period_select",
             on_change=on_period_change,
@@ -1359,11 +1360,11 @@ def analyze_stock_page():
 
         scheme_options = list(COLOR_SCHEMES.keys())
         scheme_labels = {k: v["label"] for k, v in COLOR_SCHEMES.items()}
-        scheme_index = scheme_options.index(st.session_state.color_scheme)
+        if st.session_state.get("color_scheme_select") not in scheme_options:
+            st.session_state.color_scheme_select = st.session_state.color_scheme
         st.selectbox(
             "配色",
             options=scheme_options,
-            index=scheme_index,
             format_func=lambda x: scheme_labels[x],
             key="color_scheme_select",
             on_change=on_color_scheme_change,
@@ -1379,7 +1380,7 @@ def analyze_stock_page():
     with col_refresh:
         # 占位高度 = selectbox 标签高度，让按钮与下拉框对齐
         st.markdown('<div class="select-row-button-spacer"></div>', unsafe_allow_html=True)
-        if st.button("刷新缓存", type="secondary", use_container_width=True):
+        if st.button("刷新缓存", type="secondary", width="stretch"):
             get_cached_stock_data.clear()
             get_cached_realtime_quote.clear()
             get_cached_stock_info.clear()

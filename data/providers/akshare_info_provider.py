@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -107,23 +107,22 @@ class AkShareInfoProvider:
                 "sector_attribution": lambda: self.get_sector_attribution(symbol, timeout_seconds=timeout_seconds),
             })
         executor = ThreadPoolExecutor(max_workers=len(tasks))
-        futures = {key: executor.submit(task) for key, task in tasks.items()}
-        deadline = time.monotonic() + max(timeout_seconds, 1)
+        futures = {executor.submit(task): key for key, task in tasks.items()}
+        deadline = max(timeout_seconds, 1)
         try:
-            for key, future in futures.items():
-                remaining = max(deadline - time.monotonic(), 0)
-                if remaining <= 0:
-                    break
+            for future in as_completed(futures, timeout=deadline):
+                key = futures[future]
                 try:
-                    result = future.result(timeout=remaining)
+                    result = future.result()
                     if result:
                         payload[key] = result
-                except TimeoutError:
-                    logger.info("获取扩展信息部分超时 symbol=%s field=%s", symbol, key)
                 except Exception as exc:
                     logger.info("获取扩展信息部分失败 symbol=%s field=%s error=%s", symbol, key, _brief_error(exc))
+        except TimeoutError:
+            pending = [key for future, key in futures.items() if not future.done()]
+            logger.info("获取扩展信息部分超时 symbol=%s fields=%s", symbol, ",".join(pending))
         finally:
-            for future in futures.values():
+            for future in futures:
                 if not future.done():
                     future.cancel()
             executor.shutdown(wait=False, cancel_futures=True)
@@ -525,7 +524,7 @@ class AkShareInfoProvider:
 
         latest = df.iloc[-1]
         recent = df.tail(5)
-        return {
+        result = {
             "date": str(latest.get("日期", "")),
             "main_net_inflow": _safe_float(latest.get("主力净流入-净额")),
             "main_net_inflow_ratio": _safe_float(latest.get("主力净流入-净占比")),
@@ -534,6 +533,7 @@ class AkShareInfoProvider:
             "five_day_main_net_inflow": _safe_float(recent["主力净流入-净额"].sum())
             if "主力净流入-净额" in recent.columns else None,
         }
+        return result if self._has_fund_flow_value(result) else {}
 
     def _normalize_main_fund_flow(self, symbol: str, df: pd.DataFrame) -> dict[str, Any]:
         if df is None or df.empty:
@@ -545,7 +545,7 @@ class AkShareInfoProvider:
         if rows.empty:
             return {}
         row = rows.iloc[0]
-        return {
+        result = {
             "date": str(self._first_value(row, ["日期", "最新"]) or ""),
             "main_net_inflow": _safe_float(self._first_value(row, ["主力净流入-净额", "今日主力净流入", "主力净流入"])),
             "main_net_inflow_ratio": _safe_float(self._first_value(row, ["主力净流入-净占比", "今日主力净占比", "主力净占比"])),
@@ -553,6 +553,7 @@ class AkShareInfoProvider:
             "large_net_inflow": _safe_float(self._first_value(row, ["大单净流入", "大单净额"])),
             "source_note": "主力资金全市场快照；近5日字段可能不可用",
         }
+        return result if self._has_fund_flow_value(result) else {}
 
     def _normalize_fund_flow_snapshot(self, symbol: str, df: pd.DataFrame) -> dict[str, Any]:
         if df is None or df.empty:
@@ -564,12 +565,26 @@ class AkShareInfoProvider:
         if rows.empty:
             return {}
         row = rows.iloc[0]
-        return {
+        result = {
             "date": str(self._first_value(row, ["日期", "更新时间"]) or ""),
             "main_net_inflow": _safe_float(self._first_value(row, ["主力净流入", "净额", "资金净流入"])),
             "main_net_inflow_ratio": _safe_float(self._first_value(row, ["主力净占比", "净占比", "资金净占比"])),
             "source_note": "即时资金流快照；口径不同于历史资金流",
         }
+        return result if self._has_fund_flow_value(result) else {}
+
+    @staticmethod
+    def _has_fund_flow_value(payload: dict[str, Any]) -> bool:
+        return any(
+            payload.get(key) is not None
+            for key in (
+                "main_net_inflow",
+                "main_net_inflow_ratio",
+                "super_large_net_inflow",
+                "large_net_inflow",
+                "five_day_main_net_inflow",
+            )
+        )
 
     def _normalize_news(self, df: pd.DataFrame, limit: int = 5, source: str = "") -> list[dict[str, Any]]:
         if df is None or df.empty:

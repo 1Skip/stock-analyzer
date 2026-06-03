@@ -17,7 +17,7 @@ from data.providers.akshare_info_provider import AkShareInfoProvider
 class StockInfoService:
     """财务摘要、资金流、新闻等扩展信息服务。"""
 
-    cache_schema_version = "v5"
+    cache_schema_version = "v6"
 
     def __init__(self, provider: AkShareInfoProvider | None = None, cache: JsonFileCache | None = None):
         self.provider = provider or AkShareInfoProvider()
@@ -34,6 +34,7 @@ class StockInfoService:
         symbol: str,
         market: str = "CN",
         include_deep_layers: bool = True,
+        timeout_seconds: float = 4,
     ) -> dict | None:
         symbol = str(symbol or "").strip()
         if market != "CN" or not re.fullmatch(r"\d{6}", symbol):
@@ -50,7 +51,16 @@ class StockInfoService:
             self.cache.set(cache_key, layered)
             return layered
 
-        payload = self.provider.get_stock_extended_info(symbol, include_deep_layers=include_deep_layers)
+        try:
+            payload = self.provider.get_stock_extended_info(
+                symbol,
+                timeout_seconds=timeout_seconds,
+                include_deep_layers=include_deep_layers,
+            )
+        except TypeError as exc:
+            if "timeout_seconds" not in str(exc):
+                raise
+            payload = self.provider.get_stock_extended_info(symbol, include_deep_layers=include_deep_layers)
         self._set_layered_cached_info(symbol, market, payload, include_deep_layers)
         if self._has_required_core_layers(payload):
             self.cache.set(cache_key, payload)
@@ -108,11 +118,11 @@ class StockInfoService:
             risk_events = self.risk_cache.get(f"{base_key}:risk_events:v1")
             if not isinstance(risk_events, dict):
                 return None
-            if isinstance(research, dict):
+            if self._is_usable_optional_layer("research", research):
                 payload["research"] = research
-            if isinstance(dividend, dict):
+            if self._is_usable_optional_layer("dividend", dividend):
                 payload["dividend"] = dividend
-            if isinstance(sector_attribution, dict):
+            if self._is_usable_optional_layer("sector_attribution", sector_attribution):
                 payload["sector_attribution"] = sector_attribution
             payload["risk_events"] = risk_events
         return payload
@@ -132,7 +142,7 @@ class StockInfoService:
         if not include_deep_layers:
             return
         for field in ("research", "dividend", "sector_attribution"):
-            if isinstance(payload.get(field), dict):
+            if self._is_usable_optional_layer(field, payload.get(field)):
                 self.research_cache.set(f"{base_key}:{field}:v1", payload.get(field))
         if isinstance(payload.get("risk_events"), dict):
             self.risk_cache.set(f"{base_key}:risk_events:v1", payload.get("risk_events"))
@@ -143,6 +153,18 @@ class StockInfoService:
             return False
         if value.get("status") in {"source_failed", "source_empty"}:
             return False
+        return True
+
+    @classmethod
+    def _is_usable_optional_layer(cls, field: str, value: object) -> bool:
+        if not cls._is_usable_layer(value):
+            return False
+        if field == "research":
+            reports = value.get("reports") or []
+            eps_consensus = value.get("eps_consensus") or {}
+            return bool(reports) or cls._is_usable_layer(eps_consensus)
+        if field == "sector_attribution":
+            return bool(value.get("industry")) or bool(value.get("concepts"))
         return True
 
     def _has_required_core_layers(self, payload: dict | None) -> bool:
