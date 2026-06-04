@@ -280,7 +280,12 @@ class StockDataFetcher:
                 time.sleep(delay)
         return None
 
-    def _save_offline_cache(self, symbol, data):
+    @staticmethod
+    def _offline_cache_key(symbol, adjust=""):
+        adjust_key = str(adjust or "").strip()
+        return f"{symbol}__{adjust_key}" if adjust_key else str(symbol)
+
+    def _save_offline_cache(self, symbol, data, adjust=""):
         """保存离线缓存数据（线程安全 + 原子写入）"""
         with self._cache_lock:
             try:
@@ -305,7 +310,8 @@ class StockDataFetcher:
                     oldest_key = min(cache_data.keys(), key=lambda k: cache_data[k].get('timestamp', 0))
                     del cache_data[oldest_key]
 
-                cache_data[symbol] = {
+                cache_key = self._offline_cache_key(symbol, adjust)
+                cache_data[cache_key] = {
                     'timestamp': datetime.now().isoformat(),
                     'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data
                 }
@@ -325,7 +331,7 @@ class StockDataFetcher:
                 except Exception:
                     logger.debug("清理离线缓存临时文件失败", exc_info=True)
 
-    def _load_offline_cache(self, symbol, max_age_hours=24):
+    def _load_offline_cache(self, symbol, max_age_hours=24, adjust=""):
         """加载离线缓存数据（线程安全）"""
         try:
             legacy_filename = None
@@ -349,10 +355,11 @@ class StockDataFetcher:
                         logger.warning("旧离线缓存文件已损坏，请删除后重建: %s", _legacy_cache_path(legacy_filename))
                     return None
 
-            if symbol not in cache_data:
+            cache_key = self._offline_cache_key(symbol, adjust)
+            if cache_key not in cache_data:
                 return None
 
-            cached = cache_data[symbol]
+            cached = cache_data[cache_key]
             cached_time = datetime.fromisoformat(cached['timestamp'])
             age = datetime.now() - cached_time
 
@@ -373,6 +380,8 @@ class StockDataFetcher:
                 df.index = pd.to_datetime(df.index)
 
             df.attrs['data_source'] = f"离线缓存 ({age.days}天{age.seconds//3600}小时前)"
+            if adjust:
+                df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else adjust
             return df
         except Exception:
             logger.warning("加载离线缓存失败: %s", self._offline_cache_file, exc_info=True)
@@ -436,6 +445,8 @@ class StockDataFetcher:
                             sources_to_try.append((src_name, src_func))
 
                 # 尝试所有数据源
+                stale_result = None
+                stale_source_name = None
                 for source_name, source_func in sources_to_try:
                     try:
                         if adjust:
@@ -453,6 +464,9 @@ class StockDataFetcher:
                             result = self._retry_with_backoff(source_func, source_name, symbol, period)
                         if result is not None and len(result) >= 10:
                             if not self._is_cn_daily_kline_fresh(result):
+                                if stale_result is None:
+                                    stale_result = result
+                                    stale_source_name = source_name
                                 logger.info(
                                     "%s A股日K滞后，继续尝试下一个真实日K源: symbol=%s last=%s",
                                     source_name,
@@ -471,10 +485,24 @@ class StockDataFetcher:
                             break
                     except Exception as e:
                         print(f"{source_name} 获取失败: {str(e)}")
+                else:
+                    result = None
+
+                if result is None and stale_result is not None:
+                    result = stale_result
+                    data_source = {
+                        'ths': '同花顺',
+                        'akshare_em': '东方财富',
+                        'akshare': '腾讯财经',
+                        'sina': '新浪财经',
+                        'yfinance': 'Yahoo Finance'
+                    }.get(stale_source_name, stale_source_name)
+                    result_source_name = stale_source_name
+                    result.attrs['source_note'] = "当前数据源未返回最新交易日日K，暂显示最后可用真实日K"
 
                 # 所有在线源失败，尝试离线缓存
-                if result is None and not adjust:
-                    result = self._load_offline_cache(symbol)
+                if result is None:
+                    result = self._load_offline_cache(symbol, adjust=adjust)
                     if result is not None:
                         data_source = result.attrs.get('data_source', '离线缓存')
                         offline_mode = True
@@ -521,13 +549,13 @@ class StockDataFetcher:
                 result.attrs['data_source'] = data_source or "未知"
                 if data_source and not result.attrs.get('data_provider'):
                     result.attrs['data_provider'] = data_source
-                if result_source_name and result_source_name != 'ths':
+                if result_source_name and result_source_name != 'ths' and not result.attrs.get('source_note'):
                     result.attrs['source_note'] = "同花顺日K滞后时自动切换到可用真实日K源"
                 result.attrs['offline_mode'] = offline_mode
 
                 # 保存到离线缓存
-                if not offline_mode and not adjust:
-                    self._save_offline_cache(symbol, result)
+                if not offline_mode:
+                    self._save_offline_cache(symbol, result, adjust=adjust)
 
             self.cache[cache_key] = (datetime.now(), result, data_source)
             return result

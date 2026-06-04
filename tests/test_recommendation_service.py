@@ -425,6 +425,55 @@ def test_latest_t1_plan_marks_cache_source():
     assert latest["data_status"]["cache_read_metrics"]["scan_scope_changed"] is False
 
 
+def test_latest_t1_plan_fills_missing_display_profile_from_cache_without_repick():
+    recommender = FakeRecommender()
+    fundamentals = FakeFundamentalService()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        fundamental_service=fundamentals,
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_cache.set(
+        "CN:多因子稳健型:全部:5:T1",
+        {
+            "mode": "T+1_PLAN",
+            "strategy": "多因子稳健型",
+            "sector": "全部",
+            "num_stocks": 5,
+            "data_status": {},
+            "recommended": [_stock("002001", "多因子稳健型")],
+        },
+    )
+
+    latest = service.latest_t1_plan("多因子稳健型", "全部", 5)
+
+    assert recommender.called == []
+    assert fundamentals.called == [("002001", "CN")]
+    assert latest["recommended"][0]["profile"]["industry"] == "电子 — 消费电子"
+    assert latest["data_status"]["source"] == "t1_plan_cache"
+
+
+def test_ensure_t1_plan_display_profiles_fills_existing_session_result_without_repick():
+    recommender = FakeRecommender()
+    fundamentals = FakeFundamentalService()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        fundamental_service=fundamentals,
+        result_cache=FakeCache(),
+    )
+    plan = {"recommended": [_stock("002001", "短线")]}
+
+    result = service.ensure_t1_plan_display_profiles(plan)
+
+    assert result is plan
+    assert recommender.called == []
+    assert fundamentals.called == [("002001", "CN")]
+    assert plan["recommended"][0]["profile"]["industry"] == "电子 — 消费电子"
+
+
 def test_entry_check_uses_eastmoney_quotes_without_re_picking(monkeypatch):
     recommender = FakeRecommender()
     service = RecommendationService(

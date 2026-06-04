@@ -142,6 +142,8 @@ def build_trade_plan_from_levels(
         buffer = fallback_buffer
     confirm_level = max([value for value in (mid, ma20, ma60) if value is not None], default=None)
     stop_anchor = support if support is not None else ma60
+    if stop_anchor is None and price is not None:
+        stop_anchor = price
     stop_loss = stop_anchor - buffer if stop_anchor is not None else None
     take_profit_1 = resistance
     take_profit_2 = None

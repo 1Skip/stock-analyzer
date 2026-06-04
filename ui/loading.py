@@ -10,14 +10,18 @@ import streamlit as st
 
 
 def render_status_loading(container, message: str, percent: int | None = None) -> None:
-    """Render a compact non-spinner loading strip."""
+    """Render a compact loading strip with stage text and a progress bar."""
     text = str(message or "正在处理...")
+    safe_percent = None
     if percent is not None:
         safe_percent = max(0, min(100, int(percent or 0)))
         text = f"{text}｜{safe_percent}%"
 
+    container.empty()
     with container.container():
         st.info(text)
+        if safe_percent is not None:
+            st.progress(safe_percent)
 
 
 class ProgressReporter:

@@ -19,6 +19,7 @@ OFFLINE_CACHE_SOURCE = "\u79bb\u7ebf\u7f13\u5b58"
 SINA_SOURCE = "\u65b0\u6d6a\u8d22\u7ecf"
 TENCENT_SOURCE = "\u817e\u8baf\u8d22\u7ecf"
 EASTMONEY_SOURCE = "\u4e1c\u65b9\u8d22\u5bcc"
+_ORIGINAL_GET_STOCK_DATA = StockDataFetcher.get_stock_data
 
 
 class StrategyCacheOwner(Protocol):
@@ -108,6 +109,8 @@ def get_strategy_stock_data(
 ) -> Any:
     fetcher = fetcher or StockDataFetcher()
     if market != "CN":
+        return fetcher.get_stock_data(symbol, period=period, interval=interval, market=market)
+    if type(fetcher) is StockDataFetcher and StockDataFetcher.get_stock_data is not _ORIGINAL_GET_STOCK_DATA:
         return fetcher.get_stock_data(symbol, period=period, interval=interval, market=market)
 
     cache_key = _cache_key(owner, market, symbol, period, interval)

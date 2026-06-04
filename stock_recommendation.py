@@ -1036,7 +1036,7 @@ class StockRecommender:
         """
         fetcher = StockDataFetcher()
         try:
-            data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
+            data = self._get_strategy_stock_data(symbol, period='1y', interval='1d', market=market, fetcher=fetcher)
         except Exception as e:
             print(f"获取股票 {symbol} 数据失败: {str(e)}")
             return None
@@ -1964,7 +1964,7 @@ class StockRecommender:
         """
         fetcher = StockDataFetcher()
         try:
-            data = fetcher.get_stock_data(symbol, period='1y', interval='1d', market=market)
+            data = self._get_strategy_stock_data(symbol, period='1y', interval='1d', market=market, fetcher=fetcher)
         except Exception as e:
             print(f"获取股票 {symbol} 长线数据失败: {str(e)}")
             return None

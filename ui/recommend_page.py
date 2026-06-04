@@ -3,7 +3,7 @@ import html
 import streamlit as st
 from recommendation_service import RecommendationService
 from ui.scheduler_status import render_scheduler_status
-from ui.loading import status_loading
+from ui.loading import render_status_loading, status_loading
 
 
 def _format_progress_message(strategy, sector, stage, metrics):
@@ -31,7 +31,7 @@ def _format_progress_message(strategy, sector, stage, metrics):
 
 def _render_progress_html(progress_placeholder, message, percent):
     percent = max(0, min(100, int(percent or 0)))
-    progress_placeholder.info(f"{message or '正在生成 T+1 推荐计划'}｜{percent}%")
+    render_status_loading(progress_placeholder, message or "正在生成 T+1 推荐计划", percent)
 
 
 def _save_progress_snapshot(request_key, strategy, sector, stage, percent, metrics, message):
@@ -743,6 +743,7 @@ def recommended_stocks_page():
         st.info("选择策略和板块后，点击“生成 T+1 推荐计划”开始收盘后/盘后计划分析。")
 
     if st.session_state.rec_results and _result_matches_request(st.session_state.rec_results, current_request_key):
+        st.session_state.rec_results = service.ensure_t1_plan_display_profiles(st.session_state.rec_results)
         _render_t1_plan_meta(st.session_state.rec_results)
         st.caption("已读取 T+1 推荐计划缓存；未重新扫描股票池。只有点击“生成 T+1 推荐计划”才会重新运行策略。")
         _render_entry_check(st.session_state.rec_entry_check)

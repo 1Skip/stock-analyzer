@@ -231,25 +231,6 @@ class DailyReportService:
         else:
             lines.append("- 暂无自选股")
 
-        lines.extend(["", "## 推荐池"])
-        if recommendations:
-            for index, item in enumerate(recommendations, 1):
-                lines.append(
-                    f"{index}. `{item.get('symbol')}` {item.get('name', '')}：评分 {item.get('score', '--')}，"
-                    f"建议 {item.get('rating', '--')}，现价 {self._fmt_number(item.get('latest_price'))}"
-                )
-                if item.get("alpha_score") is not None:
-                    reasons = "；".join(str(reason) for reason in (item.get("rank_reason") or [])[:2])
-                    penalties = "；".join(str(reason) for reason in (item.get("rank_penalty") or [])[:1])
-                    alpha_line = f"   - Alpha {item.get('alpha_score')}/100（{item.get('alpha_grade', '--')}）"
-                    if reasons:
-                        alpha_line += f"：{reasons}"
-                    if penalties:
-                        alpha_line += f"；扣分 {penalties}"
-                    lines.append(alpha_line)
-        else:
-            lines.append("- 暂无推荐结果")
-
         lines.extend(self._render_t1_history_lines(t1_history))
 
         lines.extend(["", "## 研报 / 风险 / 板块归因"])

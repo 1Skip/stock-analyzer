@@ -1350,6 +1350,7 @@ def test_recommend_page_displays_profile_fields():
     assert "PE" in source
     assert "PB" in source
     assert "换手率" in source
+    assert "service.ensure_t1_plan_display_profiles(st.session_state.rec_results)" in source
 
 
 def test_recommend_page_hides_internal_not_requested_status():
@@ -1401,6 +1402,79 @@ def test_analyze_page_consumes_watchlist_analysis_once():
     assert 'st.session_state.scroll_to_results = True' in source
     assert 'st.session_state.analyze_market_select = st.session_state.analyze_market' in source
     assert '_clear_analyzed_result()' in source.split('pending_watchlist_analysis = st.session_state.pop("pending_watchlist_analysis", None)', 1)[1].split('pending_quick_match =', 1)[0]
+
+
+def test_analyze_page_quick_match_has_button_expand_and_direct_selection():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "def _queue_quick_match_search" in source
+    assert "def _queue_quick_match_selection" in source
+    assert "def _select_quick_match_target" in source
+    assert '"匹配"' in source
+    assert "quick_match_show_all" in source
+    assert "展开候选" in source
+    assert "收起候选" in source
+    assert "on_click=_select_quick_match_target" in source
+    assert 'args=(item["symbol"], item["name"])' in source
+    quick_button_block = source.split('key=f"quick_match_{item[\'symbol\']}"', 1)[1].split("elif quick_query:", 1)[0]
+    assert "_select_quick_match_target(item[\"symbol\"], item[\"name\"])" not in quick_button_block
+    selection_body = source.split("def _queue_quick_match_selection", 1)[1].split("def _select_quick_match_target", 1)[0]
+    assert "st.session_state.pending_quick_match" in selection_body
+    assert "st.session_state.analyze_symbol_input = symbol" not in selection_body
+    pending_body = source.split('pending_quick_match = st.session_state.pop("pending_quick_match", None)', 1)[1].split("if not pending_watchlist_analysis and not pending_quick_match:", 1)[0]
+    assert 'st.session_state.analyze_symbol = pending_quick_match["symbol"]' in pending_body
+    assert 'st.session_state.analyze_symbol_input = pending_quick_match["symbol"]' in pending_body
+    assert "st.session_state.trigger_analysis = True" in source
+
+
+def test_analyze_page_quick_match_selection_callback_submits_before_widgets():
+    import streamlit as st
+    from ui.analyze_page import _select_quick_match_target, _tag_analysis_data
+
+    st.session_state.clear()
+    st.session_state.analyze_symbol = "000001"
+    st.session_state.analyze_symbol_input = "国发"
+    st.session_state.analyze_market = "CN"
+    st.session_state.analyze_market_select = "CN"
+    st.session_state.quick_stock_query = "国发"
+    st.session_state.quick_match_show_all = True
+    st.session_state.analyzed_symbol = "000001"
+    st.session_state.analyzed_market = "CN"
+    st.session_state.analyzed_period = "1y"
+    st.session_state.analyzed_target_key = ("000001", "CN", "1y")
+    st.session_state.analyzed_data = _tag_analysis_data(pd.DataFrame({"close": [7.1, 7.2]}), "000001", "CN", "1y")
+
+    _select_quick_match_target("600538", "国发股份")
+
+    assert st.session_state.analyze_symbol == "600538"
+    assert st.session_state.analyze_symbol_input == "600538"
+    assert st.session_state.analyze_market_select == "CN"
+    assert st.session_state.quick_stock_query == ""
+    assert st.session_state.quick_match_show_all is False
+    assert st.session_state.trigger_analysis is True
+    assert st.session_state.scroll_to_results is True
+    assert st.session_state.quick_match_caption == "已选择：国发股份 (600538)"
+    assert "analyzed_data" not in st.session_state
+
+
+def test_analyze_page_allows_daily_kline_fallback_chain_to_finish():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    task_body = source.split("def _run_stock_analysis_task", 1)[1].split("if data is None or data.empty:", 1)[0]
+
+    assert "futures['data'].result(timeout=20)" in task_body
+    assert "futures['data'].result(timeout=8)" not in task_body
+
+
+def test_stock_search_can_return_full_shanghai_match_list():
+    result = suggest_stock_inputs("上海", "CN", limit=50)
+
+    assert len(result) > 8
+    assert any(item["symbol"] == "002252" for item in result)
+    assert any(item["symbol"] == "600009" for item in result)
 
 
 def test_sidebar_watchlist_click_does_not_keep_mini_panel_state():

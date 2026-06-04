@@ -1,6 +1,7 @@
 """每日分析报告测试。"""
 from reports.daily_report_service import DailyReportService
 from reports.exporter import save_markdown_report
+from ui.report_history_page import _strip_recommendation_pool
 
 
 class TestDailyReportService:
@@ -93,7 +94,7 @@ class TestDailyReportService:
         assert "## 核心结论" in content
         assert "## 大盘温度" in content
         assert "## 自选股决策仪表盘" in content
-        assert "## 推荐池" in content
+        assert "## 推荐池" not in content
         assert "## T+1 计划回看" in content
         assert "历史计划：2 份" in content
         assert "多因子稳健型 / 全部" in content
@@ -122,6 +123,27 @@ class TestDailyReportService:
         assert (tmp_path / "latest.md").read_text(encoding="utf-8") == "# 测试"
         assert paths["dated"].endswith("2026-05-13.md")
         assert paths["latest"].endswith("latest.md")
+
+    def test_report_history_strips_recommendation_pool_section(self):
+        content = "\n".join([
+            "# Daily",
+            "",
+            "## 核心结论",
+            "- A",
+            "",
+            "## 推荐池",
+            "1. `600519` 测试",
+            "",
+            "## T+1 计划回看",
+            "- B",
+        ])
+
+        stripped = _strip_recommendation_pool(content)
+
+        assert "## 推荐池" not in stripped
+        assert "600519" not in stripped
+        assert "## 核心结论" in stripped
+        assert "## T+1 计划回看" in stripped
 
     def test_build_report_data_uses_injected_services(self, monkeypatch):
         class FakeQuoteService:

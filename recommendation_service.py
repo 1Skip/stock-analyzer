@@ -41,6 +41,16 @@ from trade_plan import enrich_recommendations_with_trade_plan
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
 logger = logging.getLogger(__name__)
+DISPLAY_ENRICHMENT_TIMEOUT_SECONDS = 6
+
+
+def _emit_progress(progress_callback: ProgressCallback | None, stage: str, percent: int, metrics: dict[str, Any] | None = None) -> None:
+    if not callable(progress_callback):
+        return
+    try:
+        progress_callback(stage, percent, metrics or {})
+    except Exception:
+        logger.debug("推荐进度回调失败: stage=%s", stage, exc_info=True)
 
 
 def _safe_float(value: Any) -> float | None:
@@ -206,6 +216,9 @@ class RecommendationService:
         if not isinstance(cached, dict):
             return None
         cached = dict(cached)
+        recommended = cached.get("recommended")
+        if isinstance(recommended, list):
+            self._refresh_display_profiles(recommended)
         data_status = dict(cached.get("data_status") or {})
         data_status["source"] = "t1_plan_cache"
         data_status["cache_read_metrics"] = {
@@ -260,6 +273,15 @@ class RecommendationService:
         """Read-only T+1 outcome review; never changes future recommendations."""
         return evaluate_plan_outcomes(plan, quote_service=self.quote_service)
 
+    def ensure_t1_plan_display_profiles(self, plan: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Fill display-only profile fields for an already loaded T+1 plan."""
+        if not isinstance(plan, dict):
+            return plan
+        recommended = plan.get("recommended")
+        if isinstance(recommended, list):
+            self._refresh_display_profiles(recommended)
+        return plan
+
     def list_t1_plan_history(
         self,
         *,
@@ -303,6 +325,7 @@ class RecommendationService:
         progress_callback: ProgressCallback | None,
     ) -> dict[str, Any]:
         diagnostics: dict[str, Any] = {}
+        _emit_progress(progress_callback, "执行策略", 15, {"strategy": strategy, "sector": sector})
         if strategy == "短线":
             if sector == "全部":
                 recommended = self.recommender.get_short_term_recommendations(num_stocks)
@@ -351,7 +374,10 @@ class RecommendationService:
             recommended = self.recommender.get_long_term_recommendations(num_stocks)
             title = "长线推荐"
 
-        self._refresh_final_quotes(recommended)
+        _emit_progress(progress_callback, "策略结果生成", 82, {"result_count": len(recommended or [])})
+        _emit_progress(progress_callback, "刷新展示行情", 88, {"result_count": len(recommended or [])})
+        self._refresh_final_quotes(recommended, enrich_display=False)
+        _emit_progress(progress_callback, "生成解释与买卖点", 94, {"result_count": len(recommended or [])})
         if RECOMMEND_RANKER_ENABLED:
             recommended = enrich_recommendations_with_alpha(
                 recommended,
@@ -377,13 +403,14 @@ class RecommendationService:
         )
         diagnostics = dict(diagnostics or {})
         diagnostics["quality"] = summarize_recommendation_quality(recommended)
+        _emit_progress(progress_callback, "完成", 100, {"result_count": len(recommended or [])})
         return {
             "recommended": recommended,
             "title": title,
             "diagnostics": diagnostics,
         }
 
-    def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None) -> None:
+    def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None, *, enrich_display: bool = True) -> None:
         if not recommended:
             return
         try:
@@ -402,17 +429,20 @@ class RecommendationService:
                     item["_display_quote"] = quote
         except Exception:
             quotes = {}
-        self._refresh_display_profiles(recommended)
-        self._refresh_display_indicators(recommended)
+        if enrich_display:
+            self._refresh_display_profiles(recommended)
+            self._refresh_display_indicators(recommended)
 
     def _refresh_display_profiles(self, recommended: list[dict[str, Any]] | None) -> None:
         """Fill display profile fields for recommendation cards without changing strategy results."""
         if not recommended:
             return
-        for item in recommended:
+        items = list(recommended)
+
+        def fetch_profile(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any] | None]:
             symbol = str(item.get("symbol") or "").strip()
             if not symbol:
-                continue
+                return item, None
             current = item.get("profile") if isinstance(item.get("profile"), dict) else {}
             needs_profile = any(
                 current.get(key) in (None, "", {})
@@ -429,18 +459,34 @@ class RecommendationService:
                         if merged.get(key) in (None, "", {}) and value not in (None, "", {}):
                             merged[key] = value
                     current = merged
-            if current:
-                item["profile"] = current
+            return item, current if current else None
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(items)))
+        futures = [executor.submit(fetch_profile, item) for item in items]
+        try:
+            for future in concurrent.futures.as_completed(futures, timeout=DISPLAY_ENRICHMENT_TIMEOUT_SECONDS):
+                try:
+                    item, profile = future.result()
+                except Exception:
+                    continue
+                if profile:
+                    item["profile"] = profile
+        except concurrent.futures.TimeoutError:
+            logger.info("推荐展示基础资料补充超时，保留已完成结果")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _refresh_display_indicators(self, recommended: list[dict[str, Any]] | None) -> None:
         """Recompute displayed indicators with the same context as the stock analysis page."""
         if not recommended:
             return
-        for item in recommended:
+        items = list(recommended)
+
+        def fetch_snapshot(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
             symbol = str(item.get("symbol") or "").strip()
             if not symbol:
-                continue
-            quote = item.pop("_display_quote", None)
+                return item, {}
+            item.pop("_display_quote", None)
             try:
                 data = self.quote_service.get_stock_data(
                     symbol,
@@ -452,14 +498,29 @@ class RecommendationService:
                 snapshot = build_indicator_snapshot(indicator_frame)
             except Exception:
                 snapshot = {}
-            if snapshot:
-                item["indicators"] = snapshot
-                item["display_indicator_context"] = {
-                    "period": DISPLAY_INDICATOR_PERIOD,
-                    "adjust": "qfq",
-                    "formula": "TechnicalIndicators on forward-adjusted daily K-line",
-                    "realtime_merged": False,
-                }
+            return item, snapshot
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=min(5, len(items)))
+        futures = [executor.submit(fetch_snapshot, item) for item in items]
+        try:
+            completed = concurrent.futures.as_completed(futures, timeout=DISPLAY_ENRICHMENT_TIMEOUT_SECONDS)
+            for future in completed:
+                try:
+                    item, snapshot = future.result()
+                except Exception:
+                    continue
+                if snapshot:
+                    item["indicators"] = snapshot
+                    item["display_indicator_context"] = {
+                        "period": DISPLAY_INDICATOR_PERIOD,
+                        "adjust": "qfq",
+                        "formula": "TechnicalIndicators on forward-adjusted daily K-line",
+                        "realtime_merged": False,
+                    }
+        except concurrent.futures.TimeoutError:
+            logger.info("推荐展示指标补充超时，保留已完成结果")
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     def _preheat_kline_cache(self) -> dict[str, Any]:
         try:

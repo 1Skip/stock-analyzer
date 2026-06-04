@@ -1,6 +1,8 @@
 ﻿"""个股分析页面 — 输入表单 + 数据获取 + 结果渲染"""
 import html
 import concurrent.futures
+import io
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -16,7 +18,7 @@ from ui.cached_data import (
     get_cached_realtime_quote, get_cached_intraday_data,
     get_cached_stock_profile, get_cached_stock_extended_info,
     resolve_cached_stock_input, get_cached_benchmark_data,
-    stock_data_cache_version,
+    stock_data_cache_version, fetcher,
 )
 from ui.charts import (
     latest_indicator_values,
@@ -29,6 +31,7 @@ from ui.decision_dashboard import render_decision_dashboard
 from ui.loading import make_progress_reporter
 from ui.stock_search import suggest_stock_inputs
 from quality_monitor import build_stock_data_quality_summary
+from data_fetcher import StockDataFetcher
 
 
 def _validate_symbol(sym, mkt):
@@ -348,6 +351,9 @@ def _render_data_quality_summary(data, quote, profile, extended_info):
     summary = build_stock_data_quality_summary(data, quote, profile, extended_info)
     issues = summary.get("issues") or []
     warnings = summary.get("warnings") or []
+    source_note = getattr(data, "attrs", {}).get("source_note") if data is not None else None
+    if source_note:
+        warnings = [str(source_note), *warnings]
     if not issues and not warnings:
         st.caption(f"数据完整性：主要行情、指标和扩展信息已就绪（K线 {summary.get('data_rows', 0)} 条）。")
         return
@@ -601,6 +607,7 @@ def _clear_analyzed_result():
         "analyzed_extended_info",
         "analyzed_intraday_data",
         "pending_analyze_input_sync",
+        "analyze_stale_refresh_attempted_key",
     ]:
         st.session_state.pop(key, None)
 
@@ -633,12 +640,13 @@ def _has_valid_analyzed_result():
     expected = _analysis_target_key(symbol, market, period)
     if not _data_matches_target(st.session_state.get("analyzed_data"), symbol, market, period):
         return False
-    if not _analysis_data_is_fresh_for_display(st.session_state.get("analyzed_data"), market):
-        return False
     stored = st.session_state.get("analyzed_target_key")
     if stored is None:
         st.session_state.analyzed_target_key = expected
-        return True
+        stored = expected
+    if not _analysis_data_is_fresh_for_display(st.session_state.get("analyzed_data"), market):
+        return st.session_state.get("analyze_stale_refresh_attempted_key") == stored
+    st.session_state.pop("analyze_stale_refresh_attempted_key", None)
     return stored == expected
 
 
@@ -668,11 +676,15 @@ def _has_stale_analyzed_result_for_current_input():
         st.session_state.get("analyze_market", "CN"),
     )
     input_symbol = target[0] if target else st.session_state.get("analyze_symbol")
-    return _analysis_target_key(
+    target_key = _analysis_target_key(
         input_symbol,
         st.session_state.get("analyze_market"),
         st.session_state.get("analyze_period"),
-    ) == _analysis_target_key(symbol, market, period)
+    )
+    stored_key = _analysis_target_key(symbol, market, period)
+    if target_key != stored_key:
+        return False
+    return st.session_state.get("analyze_stale_refresh_attempted_key") != stored_key
 
 
 def _sync_analyze_input_to_cached_result():
@@ -718,6 +730,33 @@ def _queue_analysis_for_current_input(*, sync_input=True):
         st.session_state.analyze_symbol_input = submitted_symbol
     st.session_state.trigger_analysis = True
     _clear_analyzed_result()
+
+
+def _queue_quick_match_search():
+    """显式提交快速匹配输入，方便不按 Enter 的用户触发候选刷新。"""
+    st.session_state.quick_match_show_all = False
+
+
+def _queue_quick_match_selection(symbol, name):
+    """选中快速匹配候选后，排队到下一轮同步输入框并触发分析。"""
+    st.session_state.pending_quick_match = {
+        "symbol": symbol,
+        "name": name,
+    }
+    st.session_state.quick_match_show_all = False
+
+
+def _select_quick_match_target(symbol, name):
+    """快速匹配候选直接提交为分析目标，避免首轮点击拿到旧输入。"""
+    _clear_analyzed_result()
+    st.session_state.analyze_symbol = symbol
+    st.session_state.analyze_symbol_input = symbol
+    st.session_state.analyze_market_select = st.session_state.get("analyze_market", "CN")
+    st.session_state.quick_stock_query = ""
+    st.session_state.quick_match_show_all = False
+    st.session_state.trigger_analysis = True
+    st.session_state.scroll_to_results = True
+    st.session_state.quick_match_caption = f"已选择：{name} ({symbol})"
 
 
 def _render_analysis_target_header(symbol, stock_name, market, period, *, show_watchlist=True):
@@ -918,6 +957,39 @@ def _emit_progress(progress_callback, stage, percent, **metrics):
         pass
 
 
+def _load_cached_daily_kline_fallback(symbol, market):
+    """读取本地真实日K缓存兜底；只用于在线源失败时避免页面空白。"""
+    if market != "CN":
+        return None
+    try:
+        cache_file = StockDataFetcher._offline_cache_file
+        with open(cache_file, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+        key = StockDataFetcher._offline_cache_key(symbol, "qfq")
+        cached = payload.get(key)
+        if not isinstance(cached, dict):
+            return None
+        raw = cached.get("data")
+        if isinstance(raw, str):
+            data = pd.read_json(io.StringIO(raw), orient="split")
+        else:
+            data = pd.DataFrame.from_dict(raw)
+            if "date" in data.columns:
+                data["date"] = pd.to_datetime(data["date"], errors="coerce")
+                data = data.dropna(subset=["date"]).set_index("date")
+        if not isinstance(data.index, pd.DatetimeIndex):
+            data.index = pd.to_datetime(data.index, errors="coerce")
+        data = data[data.index.notna()]
+        if data.empty:
+            return None
+        data.attrs["data_source"] = "本地真实K线缓存"
+        data.attrs["adjust_method"] = "前复权"
+        data.attrs["source_note"] = "在线日K源暂不可用，当前显示本地最近一次真实前复权日K缓存"
+        return data
+    except Exception:
+        return None
+
+
 def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
     """后台执行个股分析，避免切页中断并确保代码/名称成对写回。"""
     original_query = str(symbol or "").strip()
@@ -953,89 +1025,106 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
     info = {'shortName': symbol, 'symbol': symbol}
     data = None
+    cached_daily_seed = _load_cached_daily_kline_fallback(symbol, market)
     quote = None
     intraday_data = None
     profile = None
     extended_info = None
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
-    futures = {}
-    try:
-        _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
-        futures = {
-            'info': executor.submit(get_cached_stock_info, symbol, market),
-            'data': executor.submit(
-                get_cached_stock_data,
-                symbol,
-                '1y',
-                market,
-                'qfq' if market == "CN" else "",
-                stock_data_cache_version(market),
-            ),
-            'quote': executor.submit(get_cached_realtime_quote, symbol, market),
-        }
+    if cached_daily_seed is not None:
+        _emit_progress(progress_callback, "读取本地真实K线缓存", 22, symbol=symbol)
+        data = cached_daily_seed
+        total = 6 if market == "CN" else 3
+        _emit_progress(progress_callback, "历史K线完成", 45, done=1, total=total)
+        _emit_progress(progress_callback, "基础信息完成", 52, done=2, total=total)
+        _emit_progress(progress_callback, "实时行情完成", 60, done=3, total=total)
         if market == "CN":
-            futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
-            futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
-            futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
-
-        completed = 0
-        total = len(futures)
-
-        try:
-            data = futures['data'].result(timeout=20)
-        except Exception:
-            data = None
-        completed += 1
-        _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
-
-        try:
-            info_result = futures['info'].result(timeout=0.2)
-            if info_result:
-                info = info_result
-        except Exception:
-            info = {'shortName': symbol, 'symbol': symbol}
-        completed += 1
-        _emit_progress(progress_callback, "基础信息完成", 52, done=completed, total=total)
-
-        try:
-            quote = futures['quote'].result(timeout=0.2)
-        except Exception:
-            quote = None
-        completed += 1
-        _emit_progress(progress_callback, "实时行情完成", 60, done=completed, total=total)
-
-        try:
-            if 'intraday' in futures:
-                intraday_data = futures['intraday'].result(timeout=0.2)
-        except Exception:
-            intraday_data = None
-        if 'intraday' in futures:
-            completed += 1
-            _emit_progress(progress_callback, "分时数据完成", 68, done=completed, total=total)
-
-        try:
-            if 'profile' in futures:
-                profile = futures['profile'].result(timeout=2.5)
-        except Exception:
             profile = {"loading": True, "source": "基础资料服务"}
-        if 'profile' in futures:
-            completed += 1
-            _emit_progress(progress_callback, "基础资料完成", 76, done=completed, total=total)
-
-        try:
-            if 'extended_info' in futures:
-                extended_info = futures['extended_info'].result(timeout=8.5)
-        except Exception:
             extended_info = {"loading": True, "source": "AKShare"}
-        if 'extended_info' in futures:
+            _emit_progress(progress_callback, "分时数据完成", 68, done=4, total=total)
+            _emit_progress(progress_callback, "基础资料完成", 76, done=5, total=total)
+            _emit_progress(progress_callback, "扩展资料完成", 82, done=6, total=total)
+    else:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+        futures = {}
+        try:
+            _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
+            futures = {
+                'info': executor.submit(get_cached_stock_info, symbol, market),
+                'data': executor.submit(
+                    get_cached_stock_data,
+                    symbol,
+                    '1y',
+                    market,
+                    'qfq' if market == "CN" else "",
+                    stock_data_cache_version(market),
+                ),
+                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
+            }
+            if market == "CN":
+                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
+                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+
+            completed = 0
+            total = len(futures)
+
+            try:
+                data = futures['data'].result(timeout=20)
+            except Exception:
+                data = _load_cached_daily_kline_fallback(symbol, market)
+            if data is None or getattr(data, "empty", True):
+                data = _load_cached_daily_kline_fallback(symbol, market)
             completed += 1
-            _emit_progress(progress_callback, "扩展资料完成", 82, done=completed, total=total)
-    finally:
-        for future in futures.values():
-            if not future.done():
-                future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
+            _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
+
+            try:
+                info_result = futures['info'].result(timeout=0.2)
+                if info_result:
+                    info = info_result
+            except Exception:
+                info = {'shortName': symbol, 'symbol': symbol}
+            completed += 1
+            _emit_progress(progress_callback, "基础信息完成", 52, done=completed, total=total)
+
+            try:
+                quote = futures['quote'].result(timeout=0.2)
+            except Exception:
+                quote = None
+            completed += 1
+            _emit_progress(progress_callback, "实时行情完成", 60, done=completed, total=total)
+
+            try:
+                if 'intraday' in futures:
+                    intraday_data = futures['intraday'].result(timeout=0.2)
+            except Exception:
+                intraday_data = None
+            if 'intraday' in futures:
+                completed += 1
+                _emit_progress(progress_callback, "分时数据完成", 68, done=completed, total=total)
+
+            try:
+                if 'profile' in futures:
+                    profile = futures['profile'].result(timeout=2.5)
+            except Exception:
+                profile = {"loading": True, "source": "基础资料服务"}
+            if 'profile' in futures:
+                completed += 1
+                _emit_progress(progress_callback, "基础资料完成", 76, done=completed, total=total)
+
+            try:
+                if 'extended_info' in futures:
+                    extended_info = futures['extended_info'].result(timeout=8.5)
+            except Exception:
+                extended_info = {"loading": True, "source": "AKShare"}
+            if 'extended_info' in futures:
+                completed += 1
+                _emit_progress(progress_callback, "扩展资料完成", 82, done=completed, total=total)
+        finally:
+            for future in futures.values():
+                if not future.done():
+                    future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
 
     if data is None or data.empty:
         return {
@@ -1126,10 +1215,13 @@ def analyze_stock_page():
         _clear_analyzed_result()
     pending_quick_match = st.session_state.pop("pending_quick_match", None)
     if pending_quick_match:
+        _clear_analyzed_result()
         st.session_state.analyze_symbol = pending_quick_match["symbol"]
         st.session_state.analyze_symbol_input = pending_quick_match["symbol"]
         st.session_state.quick_stock_query = ""
+        st.session_state.quick_match_show_all = False
         st.session_state.trigger_analysis = True
+        st.session_state.scroll_to_results = True
         st.session_state.quick_match_caption = (
             f"已选择：{pending_quick_match['name']} ({pending_quick_match['symbol']})"
         )
@@ -1186,26 +1278,51 @@ def analyze_stock_page():
     if quick_match_caption:
         st.caption(quick_match_caption)
 
-    st.text_input(
-        "快速匹配",
-        placeholder="输入股票名称、简称或代码，例如：瑞鹄、茅台、002997",
-        key="quick_stock_query",
-    )
+    quick_input_col, quick_action_col = st.columns([5, 1])
+    with quick_input_col:
+        st.text_input(
+            "快速匹配",
+            placeholder="输入股票名称、简称或代码，例如：瑞鹄、茅台、002997",
+            key="quick_stock_query",
+            on_change=_queue_quick_match_search,
+        )
+    with quick_action_col:
+        st.write("")
+        st.button(
+            "匹配",
+            type="primary",
+            width="stretch",
+            on_click=_queue_quick_match_search,
+        )
     quick_query = st.session_state.get("quick_stock_query", "").strip()
+    quick_match_limit = 50 if st.session_state.get("quick_match_show_all") else 8
     suggestions = suggest_stock_inputs(
         quick_query or st.session_state.get("analyze_symbol_input", ""),
         st.session_state.get("analyze_market", "CN"),
+        limit=quick_match_limit,
     )
     if quick_query and suggestions:
+        total_suggestions = len(suggest_stock_inputs(
+            quick_query,
+            st.session_state.get("analyze_market", "CN"),
+            limit=50,
+        ))
+        show_all = bool(st.session_state.get("quick_match_show_all"))
+        if total_suggestions > 8:
+            arrow_label = "收起候选" if show_all else "展开候选"
+            if st.button(arrow_label, key="quick_match_toggle_all", type="secondary"):
+                st.session_state.quick_match_show_all = not show_all
+                st.rerun()
         columns = st.columns(min(4, len(suggestions)))
         for index, item in enumerate(suggestions):
             with columns[index % len(columns)]:
-                if st.button(item["label"], key=f"quick_match_{item['symbol']}", width="stretch"):
-                    st.session_state.pending_quick_match = {
-                        "symbol": item["symbol"],
-                        "name": item["name"],
-                    }
-                    st.rerun()
+                st.button(
+                    item["label"],
+                    key=f"quick_match_{item['symbol']}",
+                    width="stretch",
+                    on_click=_select_quick_match_target,
+                    args=(item["symbol"], item["name"]),
+                )
     elif quick_query:
         st.caption("没有找到本地候选；可以直接点「开始分析」，系统会尝试联网解析。")
 
@@ -1288,10 +1405,15 @@ def analyze_stock_page():
     period = st.session_state.analyze_period
 
     stale_cached_result = _has_stale_analyzed_result_for_current_input()
-    analyze_clicked = st.session_state.pop('trigger_analysis', False) or stale_cached_result
+    manual_analyze_clicked = st.session_state.pop('trigger_analysis', False)
+    analyze_clicked = manual_analyze_clicked or stale_cached_result
 
     if analyze_clicked:
-        _clear_analyzed_result()
+        if manual_analyze_clicked:
+            _clear_analyzed_result()
+        stale_target_key = st.session_state.get("analyzed_target_key") if stale_cached_result else None
+        if stale_cached_result and stale_target_key:
+            st.session_state.analyze_stale_refresh_attempted_key = stale_target_key
         loading_panel = st.empty()
         market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
         progress = make_progress_reporter(
@@ -1308,7 +1430,10 @@ def analyze_stock_page():
         )
         loading_panel.empty()
         if task_result.get("error"):
-            st.error(task_result["error"])
+            if stale_cached_result and _has_valid_analyzed_result():
+                st.warning(f"{task_result['error']}；已保留上次可用的真实日K结果。")
+            else:
+                st.error(task_result["error"])
         else:
             symbol = task_result["symbol"]
             market = task_result["market"]
@@ -1319,6 +1444,7 @@ def analyze_stock_page():
             st.session_state.analyzed_market = market
             st.session_state.analyzed_period = period
             st.session_state.analyzed_target_key = _analysis_target_key(symbol, market, period)
+            target_key = st.session_state.analyzed_target_key
             st.session_state.analyzed_data = data
             st.session_state.analyzed_signals = task_result["signals"]
             st.session_state.analyzed_quote = task_result["quote"]
@@ -1331,6 +1457,10 @@ def analyze_stock_page():
                 "market": market,
                 "period": period,
             }
+            if _analysis_data_is_fresh_for_display(data, market):
+                st.session_state.pop("analyze_stale_refresh_attempted_key", None)
+            else:
+                st.session_state.analyze_stale_refresh_attempted_key = target_key
             st.rerun()
 
     # rerun 恢复

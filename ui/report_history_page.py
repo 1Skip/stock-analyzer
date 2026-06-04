@@ -25,6 +25,23 @@ def _generate_today_report_task():
     return DailyReportService().save_markdown(include_recommendations=False)
 
 
+def _strip_recommendation_pool(content: str) -> str:
+    lines = content.splitlines()
+    filtered: list[str] = []
+    skipping = False
+
+    for line in lines:
+        if line.startswith("## ") and "推荐池" in line:
+            skipping = True
+            continue
+        if skipping and line.startswith("## "):
+            skipping = False
+        if not skipping:
+            filtered.append(line)
+
+    return "\n".join(filtered).rstrip() + ("\n" if content.endswith("\n") else "")
+
+
 def report_history_page() -> None:
     st.markdown("# 历史日报")
     st.caption("查看每日 Markdown 决策仪表盘，支持预览和下载。")
@@ -49,7 +66,7 @@ def report_history_page() -> None:
     labels = [path.name for path in reports]
     selected_label = st.selectbox("选择报告", labels, index=0)
     selected = reports[labels.index(selected_label)]
-    content = selected.read_text(encoding="utf-8")
+    content = _strip_recommendation_pool(selected.read_text(encoding="utf-8"))
 
     st.download_button(
         "下载 Markdown",
