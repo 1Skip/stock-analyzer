@@ -26,7 +26,7 @@ def _generate_today_report_task():
 
 
 def report_history_page() -> None:
-    st.markdown('<h1 class="main-header">历史日报</h1>', unsafe_allow_html=True)
+    st.markdown("# 历史日报")
     st.caption("查看每日 Markdown 决策仪表盘，支持预览和下载。")
 
     reports = _list_reports()

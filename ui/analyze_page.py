@@ -302,13 +302,14 @@ def _render_extended_info(extended_info):
         if news:
             st.caption("相关新闻：")
             for item in news[:5]:
-                title = html.escape(str(item.get("title", "")))
-                date = html.escape(str(item.get("date", "")))
+                title = str(item.get("title", ""))
+                date = str(item.get("date", ""))
                 url = str(item.get("url", ""))
+                suffix = f" ({date})" if date else ""
                 if url.startswith("http"):
-                    st.markdown(f"- [{title}]({url}) <span style='opacity:0.6'>{date}</span>", unsafe_allow_html=True)
+                    st.markdown(f"- [{title}]({url}){suffix}")
                 else:
-                    st.markdown(f"- {title} <span style='opacity:0.6'>{date}</span>", unsafe_allow_html=True)
+                    st.markdown(f"- {title}{suffix}")
 
         if extended_info.get("source") or extended_info.get("updated_at"):
             st.caption(f"来源：{extended_info.get('source') or '未知'} · 更新：{extended_info.get('updated_at') or '--'}")
@@ -326,24 +327,21 @@ def _render_market_news(extended_info):
     with st.expander("市场快讯 / 催化消息", expanded=False):
         st.caption("用于辅助判断市场情绪、政策/海外/宏观催化；不直接替代个股新闻。")
         for item in market_news[:8]:
-            title = html.escape(str(item.get("title") or item.get("summary") or ""))
-            tag = html.escape(str(item.get("tag") or item.get("source") or "市场动态"))
-            date = html.escape(str(item.get("date") or ""))
+            title = str(item.get("title") or item.get("summary") or "")
+            tag = str(item.get("tag") or item.get("source") or "市场动态")
+            date = str(item.get("date") or "")
             url = str(item.get("url") or "")
             meta = " · ".join(part for part in [tag, date] if part)
-            suffix = f" <span style='opacity:0.6'>{meta}</span>" if meta else ""
+            suffix = f" ({meta})" if meta else ""
             if url.startswith("http"):
-                st.markdown(f"- [{title}]({url}){suffix}", unsafe_allow_html=True)
+                st.markdown(f"- [{title}]({url}){suffix}")
             else:
-                st.markdown(f"- {title}{suffix}", unsafe_allow_html=True)
+                st.markdown(f"- {title}{suffix}")
 
 
 def _render_inline_note(message):
     """渲染与上方仪表盘保持距离的轻提示。"""
-    st.markdown(
-        f'<div class="analysis-inline-note">{html.escape(message)}</div>',
-        unsafe_allow_html=True,
-    )
+    st.info(message)
 
 
 def _render_data_quality_summary(data, quote, profile, extended_info):
@@ -367,19 +365,9 @@ def _render_data_quality_summary(data, quote, profile, extended_info):
 
 def _render_chart_header(title, values=None):
     """渲染统一的图表标题与右侧实时值标签。"""
-    chips = "".join(
-        f'<span class="chart-value-chip"><b>{html.escape(str(label))}</b> {html.escape(str(value))}</span>'
-        for label, value in (values or [])
-    )
-    st.markdown(
-        f'''
-        <div class="chart-header-row">
-          <p class="chart-section-title">{html.escape(str(title))}</p>
-          <div class="chart-value-row">{chips}</div>
-        </div>
-        ''',
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"### {title}")
+    if values:
+        st.caption("｜".join(f"{label} {value}" for label, value in values))
 
 
 def _format_ths_volume(value):
@@ -475,17 +463,16 @@ def display_signals(signals):
         st.warning(f"{signals['error']}")
         return
 
-    badges_html = ""
-    for key, label in [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]:
+    signal_items = [("MACD", "macd"), ("RSI", "rsi"), ("KDJ", "kdj"), ("布林带", "boll")]
+    for key, label in signal_items:
         text = signals.get(label, '--')
         cls = classify_signal(text)
-        badges_html += f'<span class="signal-badge {cls}" style="font-size:1rem">{key} · {html.escape(text)}</span>'
-
-    st.markdown(f'<div style="margin:12px 0;font-size:1.05rem">{badges_html}</div>', unsafe_allow_html=True)
+        prefix = {"buy": "+", "sell": "-", "neutral": "="}.get(cls, "=")
+        st.markdown(f"**{key}**：{prefix} {text}")
 
     recommendation = signals.get('recommendation', '')
     if recommendation:
-        st.markdown(f'<p style="font-size:1.35rem;font-weight:700;margin-top:8px">综合: {html.escape(recommendation)}</p>', unsafe_allow_html=True)
+        st.markdown(f"### 综合: {recommendation}")
 
 
 def _display_indicator_values(data):
@@ -499,61 +486,16 @@ def _display_indicator_values(data):
     kdj_ob = KDJ_OVERBOUGHT
     kdj_os = KDJ_OVERSOLD
 
-    card = (
-        "background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));border-radius:12px;"
-        "padding:9px 14px;margin-bottom:7px;"
-        "border:1px solid rgba(85,199,255,0.14);box-shadow:0 10px 24px rgba(0,0,0,0.18);"
-        "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px 12px;"
-    )
-
-    st.markdown('<p class="chart-section-title">技术指标数值</p>', unsafe_allow_html=True)
-
-    # RSI — 红色左边条
+    st.markdown("### 技术指标数值")
     rsi6 = _format_val(latest, 'rsi_6', 2)
     rsi12 = _format_val(latest, 'rsi_12', 2)
     rsi24 = _format_val(latest, 'rsi_24', 2)
-    st.markdown(
-        f'<div style="{card}border-left:3px solid #ff3b30;">'
-        f'<span><b style="margin-right:10px;">RSI</b>'
-        f'<span style="color:#ff3b30">6日 {rsi6}</span>  '
-        f'<span style="color:#fb8c00">12日 {rsi12}</span>  '
-        f'<span style="color:#7b1fa2">24日 {rsi24}</span></span>'
-        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">超买&gt;{rsi_ob} 超卖&lt;{rsi_os}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # KDJ — 蓝色左边条
     k = _format_val(latest, 'kdj_k', 2)
     d = _format_val(latest, 'kdj_d', 2)
     j = _format_val(latest, 'kdj_j', 2)
-    st.markdown(
-        f'<div style="{card}border-left:3px solid #1e88e5;">'
-        f'<span><b style="margin-right:10px;">KDJ</b>'
-        f'<span style="color:#1e88e5">K {k}</span>  '
-        f'<span style="color:#fb8c00">D {d}</span>  '
-        f'<span style="color:#7b1fa2">J {j}</span></span>'
-        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">超买&gt;{kdj_ob} 超卖&lt;{kdj_os}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # MACD — 紫色左边条
     dif = _format_val(latest, 'macd', 2)
     dea = _format_val(latest, 'macd_signal', 2)
     hist = _format_val(latest, 'macd_hist', 2)
-    hist_color = '#ff3b30' if (latest.get('macd_hist') or 0) >= 0 else '#34c759'
-    st.markdown(
-        f'<div style="{card}border-left:3px solid #7b1fa2;">'
-        f'<span><b style="margin-right:10px;">MACD</b>'
-        f'<span style="color:#42a5f5">DIF {dif}</span>  '
-        f'<span style="color:#ff7043">DEA {dea}</span>  '
-        f'<span style="color:{hist_color}">柱 {hist}</span></span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # BOLL — 绿色左边条
     upper = _format_val(latest, 'boll_upper', 2)
     mid = _format_val(latest, 'boll_mid', 2)
     lower = _format_val(latest, 'boll_lower', 2)
@@ -563,48 +505,27 @@ def _display_indicator_values(data):
         pct_str = f'%B {pct_b:.0f}%'
     else:
         pct_str = ''
-    st.markdown(
-        f'<div style="{card}border-left:3px solid #34c759;">'
-        f'<span><b style="margin-right:10px;">BOLL</b>'
-        f'<span style="color:#ff3b30">上轨 {upper}</span>  '
-        f'<span style="color:#1e88e5">中轨 {mid}</span>  '
-        f'<span style="color:#34c759">下轨 {lower}</span></span>'
-        f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">{pct_str}</span>'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-    # MA 均线 — 灰色左边条
     ma5 = _format_val(latest, 'ma5', 2)
     ma10 = _format_val(latest, 'ma10', 2)
     ma20 = _format_val(latest, 'ma20', 2)
     ma30 = _format_val(latest, 'ma30', 2)
-    if ma5 != '--':
-        st.markdown(
-            f'<div style="{card}border-left:3px solid #8e8e93;">'
-            f'<span><b style="margin-right:10px;">均线</b>'
-            f'<span>MA5 {ma5}</span>  '
-            f'<span>MA10 {ma10}</span>  '
-            f'<span>MA20 {ma20}</span>  '
-            f'<span>MA30 {ma30}</span></span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
+    rows = [
+        {"指标": "RSI", "数值": f"6日 {rsi6}｜12日 {rsi12}｜24日 {rsi24}", "备注": f"超买>{rsi_ob} 超卖<{rsi_os}"},
+        {"指标": "KDJ", "数值": f"K {k}｜D {d}｜J {j}", "备注": f"超买>{kdj_ob} 超卖<{kdj_os}"},
+        {"指标": "MACD", "数值": f"DIF {dif}｜DEA {dea}｜柱 {hist}", "备注": "--"},
+        {"指标": "BOLL", "数值": f"上轨 {upper}｜中轨 {mid}｜下轨 {lower}", "备注": pct_str or "--"},
+        {"指标": "均线", "数值": f"MA5 {ma5}｜MA10 {ma10}｜MA20 {ma20}｜MA30 {ma30}", "备注": "--"},
+    ]
     if 'main_accumulation' in data.columns:
         accumulation = _format_val(latest, 'main_accumulation', 2)
         risk = _format_val(latest, 'accumulation_risk', 2)
         trend = _format_val(latest, 'accumulation_trend', 2)
-        st.markdown(
-            f'<div style="{card}border-left:3px solid #ff33ff;">'
-            f'<span><b style="margin-right:10px;">主力吸货</b>'
-            f'<span style="color:#ff33ff">吸货 {accumulation}</span>  '
-            f'<span style="color:#34c759">风险 {risk}</span>  '
-            f'<span style="color:#ff3b30">涨跌 {trend}</span></span>'
-            f'<span style="font-size:0.75rem;color:#9fb0c4;white-space:nowrap;">同花顺公式，由真实日K推导</span>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
+        rows.append({
+            "指标": "主力吸货",
+            "数值": f"吸货 {accumulation}｜风险 {risk}｜涨跌 {trend}",
+            "备注": "同花顺公式，由真实日K推导",
+        })
+    st.dataframe(rows, width="stretch", hide_index=True)
 
 
 def _resolve_watchlist_target(symbol: str, market: str) -> tuple[str, str] | None:
@@ -649,21 +570,9 @@ def _render_current_stock_header(symbol: str, market: str, period: str, stock_na
     """在搜索区下方展示当前待分析标的，避免首屏标题空白。"""
     display_name = stock_name if stock_name and stock_name != symbol else ""
     market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
-    st.markdown(
-        f"""
-        <div style="margin:8px 0 14px;padding:12px 14px;border-radius:12px;
-                    border:1px solid rgba(85,199,255,0.16);
-                    background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));
-                    box-shadow:0 10px 24px rgba(0,0,0,0.16);">
-          <div style="font-size:0.78rem;opacity:0.62;margin-bottom:3px;">当前标的</div>
-          <div style="font-size:1.05rem;font-weight:700;line-height:1.35;">
-            {html.escape(str(symbol or "--"))}{f" · {html.escape(str(display_name))}" if display_name else ""}
-          </div>
-          <div style="font-size:0.82rem;opacity:0.62;margin-top:3px;">{html.escape(market_label)} · {html.escape(str(period))}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption("当前标的")
+    st.markdown(f"**{symbol or '--'}{f' · {display_name}' if display_name else ''}**")
+    st.caption(f"{market_label} · {period}")
 
 
 def _get_analyzed_target():
@@ -817,21 +726,9 @@ def _render_analysis_target_header(symbol, stock_name, market, period, *, show_w
     market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
     col_title, col_watchlist = st.columns([3, 1]) if show_watchlist else (st.container(), None)
     with col_title:
-        st.markdown(
-            f"""
-            <div style="margin:0 0 12px;padding:14px 16px;border-radius:14px;
-                        border:1px solid rgba(85,199,255,0.18);
-                        background:linear-gradient(135deg,rgba(85,199,255,0.13),rgba(5,13,24,0.78));
-                        box-shadow:0 12px 30px rgba(0,0,0,0.20);">
-              <div style="font-size:0.82rem;opacity:0.65;margin-bottom:4px;">当前分析标的</div>
-              <div style="font-size:1.32rem;font-weight:700;line-height:1.3;">
-                {html.escape(str(symbol or "--"))}{f" · {html.escape(str(display_name))}" if display_name else ""}
-              </div>
-              <div style="font-size:0.85rem;opacity:0.65;margin-top:4px;">{html.escape(market_label)} · {html.escape(str(period))}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.caption("当前分析标的")
+        st.markdown(f"**{symbol or '--'}{f' · {display_name}' if display_name else ''}**")
+        st.caption(f"{market_label} · {period}")
 
     if show_watchlist and col_watchlist is not None:
         with col_watchlist:
@@ -849,6 +746,34 @@ def _render_analysis_target_header(symbol, stock_name, market, period, *, show_w
                         st.rerun()
                     else:
                         st.warning(msg)
+
+
+def _render_intraday_chart_body(symbol, market, quote, intraday_data=None):
+    if intraday_data is None:
+        intraday_data = get_cached_intraday_data(symbol, market)
+        st.session_state.analyzed_intraday_data = intraday_data
+    if intraday_data is not None and not intraday_data.empty:
+        intraday_fig = plot_intraday_chart(intraday_data, quote)
+        if intraday_fig:
+            st.plotly_chart(intraday_fig, width="stretch", config={'displayModeBar': False})
+        return
+
+    now = pd.Timestamp.now()
+    weekday = now.dayofweek
+    if weekday >= 5:
+        _render_inline_note("📌 今日非交易日，暂无分时数据")
+    else:
+        _render_inline_note("📌 分时数据暂不可用，请稍后刷新")
+
+
+_streamlit_fragment = getattr(st, "fragment", lambda **kwargs: (lambda func: func))
+
+
+@_streamlit_fragment(run_every="60s")
+def _render_intraday_auto_refresh_fragment(symbol, market, quote):
+    intraday_data = get_cached_intraday_data(symbol, market)
+    st.session_state.analyzed_intraday_data = intraday_data
+    _render_intraday_chart_body(symbol, market, quote, intraday_data)
 
 
 def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
@@ -909,20 +834,8 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 
     # ③ 分时图（仅A股）
     if market == "CN":
-        if intraday_data is None:
-            intraday_data = get_cached_intraday_data(symbol, market)
-        if intraday_data is not None and not intraday_data.empty:
-            intraday_fig = plot_intraday_chart(intraday_data, quote)
-            if intraday_fig:
-                st.plotly_chart(intraday_fig, width="stretch",
-                                config={'displayModeBar': False})
-        else:
-            now = pd.Timestamp.now()
-            weekday = now.dayofweek
-            if weekday >= 5:
-                _render_inline_note("📌 今日非交易日，暂无分时数据")
-            else:
-                _render_inline_note("📌 分时数据暂不可用，请稍后刷新")
+        st.markdown("### 分时走势")
+        _render_intraday_auto_refresh_fragment(symbol, market, quote)
 
     # ③ 技术指标实时数值卡片
     _display_indicator_values(data)
@@ -987,28 +900,12 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
 def _render_analysis_loading(container, symbol, market, step, percent):
     """渲染分析中的友好占位卡片，避免搜索后页面空白。"""
     market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
-    safe_symbol = html.escape(str(symbol or "--"))
-    safe_step = html.escape(str(step or "准备分析"))
     percent = max(0, min(100, int(percent)))
     with container.container():
-        st.markdown(
-            f"""
-            <div class="analysis-loading-card">
-              <div class="analysis-loading-header">
-                <div>
-                  <div class="analysis-loading-kicker">正在分析 · {html.escape(market_label)}</div>
-                  <div class="analysis-loading-title">{safe_symbol}</div>
-                </div>
-                <div class="analysis-loading-percent">{percent}%</div>
-              </div>
-              <div class="analysis-loading-bar">
-                <div style="width:{percent}%"></div>
-              </div>
-              <div class="analysis-loading-step">{safe_step}</div>
-              <div class="analysis-loading-hint">正在并发获取行情、基础资料和扩展信息。慢的时候通常是外部数据源响应较慢，不是页面卡住。</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.info(
+            f"正在分析 · {market_label}｜{symbol or '--'}｜{percent}%\n\n"
+            f"{step or '准备分析'}\n\n"
+            "正在并发获取行情、基础资料和扩展信息。慢的时候通常是外部数据源响应较慢，不是页面卡住。"
         )
 
 
@@ -1191,7 +1088,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
 def analyze_stock_page():
     """个股分析页面"""
-    st.markdown('<h1 class="main-header">股票技术分析</h1>', unsafe_allow_html=True)
+    st.markdown("# 股票技术分析")
 
     if 'analyze_symbol' not in st.session_state:
         st.session_state.analyze_symbol = "000001"
@@ -1262,7 +1159,7 @@ def analyze_stock_page():
             on_change=_queue_analysis_for_current_input,
         )
     with col_btn:
-        st.markdown('<div class="analysis-search-button-spacer"></div>', unsafe_allow_html=True)
+        st.write("")
         st.button(
             "开始分析",
             type="primary",
@@ -1300,7 +1197,6 @@ def analyze_stock_page():
         st.session_state.get("analyze_market", "CN"),
     )
     if quick_query and suggestions:
-        st.markdown('<div class="quick-match-row">', unsafe_allow_html=True)
         columns = st.columns(min(4, len(suggestions)))
         for index, item in enumerate(suggestions):
             with columns[index % len(columns)]:
@@ -1310,7 +1206,6 @@ def analyze_stock_page():
                         "name": item["name"],
                     }
                     st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
     elif quick_query:
         st.caption("没有找到本地候选；可以直接点「开始分析」，系统会尝试联网解析。")
 
@@ -1371,7 +1266,7 @@ def analyze_stock_page():
         )
 
     with col_watch_quick:
-        st.markdown('<div class="select-row-button-spacer"></div>', unsafe_allow_html=True)
+        st.write("")
         _render_watchlist_quick_action(
             st.session_state.get("analyze_symbol_input", st.session_state.analyze_symbol),
             st.session_state.analyze_market,
@@ -1379,7 +1274,7 @@ def analyze_stock_page():
 
     with col_refresh:
         # 占位高度 = selectbox 标签高度，让按钮与下拉框对齐
-        st.markdown('<div class="select-row-button-spacer"></div>', unsafe_allow_html=True)
+        st.write("")
         if st.button("刷新缓存", type="secondary", width="stretch"):
             get_cached_stock_data.clear()
             get_cached_realtime_quote.clear()

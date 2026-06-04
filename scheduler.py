@@ -38,6 +38,57 @@ LOCK_DIR = Path(os.getenv("SCHEDULER_LOCK_DIR", ".cache"))
 SCHEDULER_INSTANCE_LOCK_PATH = LOCK_DIR / "scheduler.instance.lock"
 SCHEDULED_ANALYSIS_LOCK_PATH = LOCK_DIR / "scheduled_analysis.lock"
 T1_PREHEAT_LOCK_PATH = LOCK_DIR / "t1_plan_preheat.lock"
+SCHEDULER_STATUS_PATH = Path(os.getenv("SCHEDULER_STATUS_PATH", str(LOCK_DIR / "scheduler_status.json")))
+
+
+def _status_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _read_scheduler_status() -> dict:
+    try:
+        with open(SCHEDULER_STATUS_PATH, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_scheduler_status(section: str, payload: dict) -> None:
+    try:
+        SCHEDULER_STATUS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        status = _read_scheduler_status()
+        status[section] = {
+            **(status.get(section) if isinstance(status.get(section), dict) else {}),
+            **payload,
+            "updated_at": _status_now(),
+        }
+        tmp_path = SCHEDULER_STATUS_PATH.with_suffix(f"{SCHEDULER_STATUS_PATH.suffix}.{os.getpid()}.tmp")
+        with open(tmp_path, "w", encoding="utf-8") as file:
+            json.dump(status, file, ensure_ascii=False, indent=2, default=str)
+        os.replace(tmp_path, SCHEDULER_STATUS_PATH)
+    except Exception:
+        logger.debug("写入调度状态失败: %s", SCHEDULER_STATUS_PATH, exc_info=True)
+
+
+def _summarize_t1_plan_status(plan) -> dict:
+    if not isinstance(plan, dict):
+        return {
+            "status": "failed",
+            "recommended_count": 0,
+            "error": "no plan returned",
+        }
+    metrics = plan.get("generation_metrics") or {}
+    data_status = plan.get("data_status") or {}
+    recommended = plan.get("recommended") or []
+    return {
+        "status": plan.get("status") or data_status.get("status") or "success",
+        "recommended_count": len(recommended),
+        "elapsed_seconds": metrics.get("elapsed_seconds"),
+        "cache_key": plan.get("cache_key") or plan.get("plan_cache_key"),
+        "generated_at": plan.get("generated_at"),
+        "error": data_status.get("error") or plan.get("error"),
+    }
 
 
 def _process_exists(pid: int) -> bool:
@@ -120,7 +171,7 @@ def _load_watchlist_from_file():
             with open(watchlist_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception:
-            pass
+            logger.warning("读取自选股文件失败: %s", watchlist_file, exc_info=True)
     return []
 
 
@@ -136,9 +187,19 @@ def _generate_daily_report():
         )
         paths = save_markdown_report(content, report_date, output_dir=DAILY_REPORT_DIR)
         logger.info(f"每日报告已生成: {paths['dated']}")
+        _write_scheduler_status("daily_report", {
+            "status": "success",
+            "report_date": report_date,
+            "path": paths.get("dated"),
+            "latest_path": paths.get("latest"),
+        })
         return content, paths
     except Exception as e:
         logger.warning(f"每日报告生成失败，跳过日报后续处理: {e}", exc_info=True)
+        _write_scheduler_status("daily_report", {
+            "status": "failed",
+            "error": str(e),
+        })
         return None
 
 
@@ -151,6 +212,15 @@ def run_t1_plan_preheat():
         ",".join(T1_PLAN_SECTORS or [T1_PLAN_SECTOR]),
         T1_PLAN_NUM_STOCKS,
     )
+    started_at = _status_now()
+    _write_scheduler_status("t1_preheat", {
+        "status": "running",
+        "started_at": started_at,
+        "strategies": T1_PLAN_STRATEGIES,
+        "sectors": T1_PLAN_SECTORS or [T1_PLAN_SECTOR],
+        "num_stocks": T1_PLAN_NUM_STOCKS,
+        "targets": {},
+    })
     plans = {}
     try:
         from recommendation_service import RecommendationService
@@ -164,7 +234,16 @@ def run_t1_plan_preheat():
                     sector,
                     T1_PLAN_NUM_STOCKS,
                 )
-                plans[f"{strategy}:{sector}"] = plan
+                target_key = f"{strategy}:{sector}"
+                plans[target_key] = plan
+                current_status = _read_scheduler_status().get("t1_preheat", {})
+                targets = current_status.get("targets") if isinstance(current_status.get("targets"), dict) else {}
+                targets[target_key] = _summarize_t1_plan_status(plan)
+                _write_scheduler_status("t1_preheat", {
+                    "status": "running",
+                    "started_at": started_at,
+                    "targets": targets,
+                })
                 metrics = plan.get("generation_metrics") or {}
                 logger.info(
                     "T+1 推荐计划预生成完成：strategy=%s sector=%s，%s 只，耗时 %.2fs",
@@ -174,12 +253,43 @@ def run_t1_plan_preheat():
                     metrics.get("elapsed_seconds", 0),
                 )
             except Exception as exc:
-                plans[f"{strategy}:{sector}"] = None
+                target_key = f"{strategy}:{sector}"
+                plans[target_key] = None
+                current_status = _read_scheduler_status().get("t1_preheat", {})
+                targets = current_status.get("targets") if isinstance(current_status.get("targets"), dict) else {}
+                targets[target_key] = {
+                    "status": "failed",
+                    "recommended_count": 0,
+                    "error": str(exc),
+                }
+                _write_scheduler_status("t1_preheat", {
+                    "status": "running",
+                    "started_at": started_at,
+                    "targets": targets,
+                })
                 logger.error("T+1 推荐计划预生成失败：strategy=%s sector=%s error=%s", strategy, sector, exc, exc_info=True)
         _push_t1_plan_preheat_results(plans)
+        target_summaries = {
+            key: _summarize_t1_plan_status(plan)
+            for key, plan in plans.items()
+        }
+        failures = [key for key, item in target_summaries.items() if item.get("status") not in {"success", "cached"}]
+        _write_scheduler_status("t1_preheat", {
+            "status": "partial_failed" if failures else "success",
+            "started_at": started_at,
+            "finished_at": _status_now(),
+            "targets": target_summaries,
+            "failed_targets": failures,
+        })
         return plans
     except Exception as e:
         logger.error(f"T+1 推荐计划预生成失败: {e}", exc_info=True)
+        _write_scheduler_status("t1_preheat", {
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": _status_now(),
+            "error": str(e),
+        })
         return None
 
 
@@ -187,6 +297,11 @@ def run_t1_plan_preheat():
 def run_scheduled_analysis():
     """?? 15:30 ?????????????? + ???????"""
     logger.info("?????? ? %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    started_at = _status_now()
+    _write_scheduler_status("scheduled_analysis", {
+        "status": "running",
+        "started_at": started_at,
+    })
 
     try:
         reports = []
@@ -234,6 +349,14 @@ def run_scheduled_analysis():
             logger.info("???????? %s ?????????", len(reports))
         elif not DAILY_REPORT_ENABLED:
             logger.warning("????????????????")
+            _write_scheduler_status("scheduled_analysis", {
+                "status": "skipped",
+                "started_at": started_at,
+                "finished_at": _status_now(),
+                "reason": "no reports and daily report disabled",
+                "watchlist_count": len(watchlist),
+                "report_count": len(reports),
+            })
             return
 
         daily_report = _generate_daily_report() if DAILY_REPORT_ENABLED else None
@@ -242,8 +365,22 @@ def run_scheduled_analysis():
             logger.info("??????????: %s", report_paths.get("dated"))
 
         logger.info("?????? ? %s ??? %s ?????", len(reports), len(watchlist))
+        _write_scheduler_status("scheduled_analysis", {
+            "status": "success",
+            "started_at": started_at,
+            "finished_at": _status_now(),
+            "watchlist_count": len(watchlist),
+            "report_count": len(reports),
+            "daily_report_enabled": DAILY_REPORT_ENABLED,
+        })
     except Exception as e:
         logger.error("??????: %s", e, exc_info=True)
+        _write_scheduler_status("scheduled_analysis", {
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": _status_now(),
+            "error": str(e),
+        })
 
 
 def _push_t1_plan_preheat_results(plans: dict) -> None:

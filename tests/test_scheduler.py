@@ -1,5 +1,6 @@
 """定时调度模块测试。"""
 from unittest.mock import MagicMock, patch
+import json
 
 
 import pytest
@@ -86,6 +87,45 @@ class TestT1PlanSchedule:
                 "preheat_extended_info": True,
             }
         fake_service.check_entry_plan.assert_not_called()
+
+    def test_t1_plan_preheat_writes_status_without_changing_strategy_call(self, monkeypatch, tmp_path):
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        fake_service = MagicMock()
+        fake_service.run_t1_plan.return_value = {
+            "status": "success",
+            "strategy": "短线",
+            "sector": "全部",
+            "recommended": [{"symbol": "002001"}, {"symbol": "002002"}],
+            "generation_metrics": {"elapsed_seconds": 1.2},
+            "cache_key": "t1:short:all:5",
+        }
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGIES", ["短线"])
+        monkeypatch.setattr(scheduler, "T1_PLAN_SECTORS", ["全部"])
+        monkeypatch.setattr(scheduler, "T1_PLAN_NUM_STOCKS", 5)
+        monkeypatch.setattr(scheduler, "T1_PLAN_PREHEAT_KLINE", True)
+        monkeypatch.setattr(scheduler, "T1_PLAN_PREHEAT_EXTENDED_INFO", True)
+        monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGY_TIMEOUT_SECONDS", 0)
+        monkeypatch.setattr("recommendation_service.RecommendationService", lambda: fake_service)
+
+        plans = scheduler.run_t1_plan_preheat()
+
+        assert plans["短线:全部"]["recommended"][0]["symbol"] == "002001"
+        fake_service.run_t1_plan.assert_called_once_with(
+            "短线",
+            "全部",
+            5,
+            trigger="scheduler",
+            preheat_kline=True,
+            preheat_extended_info=True,
+        )
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        target = status["t1_preheat"]["targets"]["短线:全部"]
+        assert status["t1_preheat"]["status"] == "success"
+        assert target["recommended_count"] == 2
+        assert target["cache_key"] == "t1:short:all:5"
 
     def test_t1_plan_preheat_returns_timeout_without_realtime_selection(self, monkeypatch):
         import subprocess

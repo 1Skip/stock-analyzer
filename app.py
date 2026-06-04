@@ -19,6 +19,7 @@ from ui.compare_page import compare_stocks_page
 from ui.hot_stocks_page import hot_stocks_page
 from ui.recommend_page import recommended_stocks_page
 from ui.report_history_page import report_history_page
+from ui.system_status_page import render_system_status_page
 from ui.committee_status import render_committee_status_card
 from ui.sidebar import (
     display_data_source_selector,
@@ -73,6 +74,8 @@ def _render_selected_page(page):
         backtest_page()
     elif page == "历史日报":
         report_history_page()
+    elif page == "系统状态":
+        render_system_status_page()
 
 
 def _render_main_page(page):
@@ -91,6 +94,7 @@ def main():
         "股票对比",
         "回测验证",
         "历史日报",
+        "系统状态",
     ]
     nav_emoji = {
         "个股分析": "📈",

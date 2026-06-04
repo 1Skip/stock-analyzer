@@ -1,4 +1,4 @@
-"""Unified Streamlit loading indicators."""
+﻿"""Unified Streamlit loading indicators."""
 
 from __future__ import annotations
 
@@ -11,32 +11,13 @@ import streamlit as st
 
 def render_status_loading(container, message: str, percent: int | None = None) -> None:
     """Render a compact non-spinner loading strip."""
-    safe_message = html.escape(str(message or "正在处理..."))
-    percent_html = ""
-    bar_html = ""
+    text = str(message or "正在处理...")
     if percent is not None:
-        safe_percent = max(0, min(100, int(percent)))
-        percent_html = f'<span class="status-loading-percent">{safe_percent}%</span>'
-        bar_html = (
-            '<div class="status-loading-bar">'
-            f'<div style="width:{safe_percent}%"></div>'
-            '</div>'
-        )
+        safe_percent = max(0, min(100, int(percent or 0)))
+        text = f"{text}｜{safe_percent}%"
 
     with container.container():
-        st.markdown(
-            f"""
-            <div class="status-loading-strip">
-              <div class="status-loading-main">
-                <span class="status-loading-dot"></span>
-                <div class="status-loading-copy">{safe_message}</div>
-                {percent_html}
-              </div>
-              {bar_html}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        st.info(text)
 
 
 class ProgressReporter:

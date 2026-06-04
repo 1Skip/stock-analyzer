@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable
 import time
 import requests
+import logging
 
 from config import (
     CACHE_TTL_RECOMMENDATION_RESULTS,
@@ -16,6 +17,8 @@ from config import (
     T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS,
 )
 from data.cache import JsonFileCache
+from data.providers.eastmoney_realtime_provider import EastmoneyRealtimeProvider
+from data.providers.tencent_realtime_provider import TencentRealtimeProvider
 from data.services.fundamental_service import FundamentalDataService
 from data.services.quote_service import QuoteDataService
 from indicator_context import (
@@ -37,6 +40,7 @@ from trade_plan import enrich_recommendations_with_trade_plan
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
+logger = logging.getLogger(__name__)
 
 
 def _safe_float(value: Any) -> float | None:
@@ -73,34 +77,10 @@ def _fetch_eastmoney_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, 
         return {}
     try:
         import akshare as ak  # type: ignore
-
-        spot_df = ak.stock_zh_a_spot_em()
+        return EastmoneyRealtimeProvider(ak, _safe_float).fetch_batch(symbols)
     except Exception:
+        logger.debug("东方财富实时行情获取失败: symbols=%s", symbols, exc_info=True)
         return {}
-    if spot_df is None or getattr(spot_df, "empty", True):
-        return {}
-
-    wanted = set(symbols)
-    result: dict[str, dict[str, Any]] = {}
-    for _, row in spot_df.iterrows():
-        symbol = str(row.get("代码") or "").strip()
-        if symbol not in wanted:
-            continue
-        result[symbol] = {
-            "symbol": symbol,
-            "name": row.get("名称") or symbol,
-            "price": _safe_float(row.get("最新价")),
-            "change_pct": _safe_float(row.get("涨跌幅")),
-            "open": _safe_float(row.get("今开")),
-            "prev_close": _safe_float(row.get("昨收")),
-            "high": _safe_float(row.get("最高")),
-            "low": _safe_float(row.get("最低")),
-            "volume": _safe_float(row.get("成交量")),
-            "turnover_rate": _safe_float(row.get("换手率")),
-            "market_cap": _safe_float(row.get("总市值")),
-            "source": "东方财富实时行情",
-        }
-    return result
 
 
 def _fetch_tencent_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, Any]]:
@@ -108,55 +88,11 @@ def _fetch_tencent_realtime_quotes(symbols: list[str]) -> dict[str, dict[str, An
     symbols = [str(symbol or "").strip() for symbol in symbols if symbol]
     if not symbols:
         return {}
-
-    def tencent_code(symbol: str) -> str:
-        if symbol.startswith("6"):
-            return f"sh{symbol}"
-        if symbol.startswith(("4", "8")):
-            return f"bj{symbol}"
-        return f"sz{symbol}"
-
-    result: dict[str, dict[str, Any]] = {}
     try:
-        code_to_symbol = {tencent_code(symbol): symbol for symbol in symbols}
-        response = requests.get(
-            "https://qt.gtimg.cn/q=" + ",".join(code_to_symbol.keys()),
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stockapp.finance.qq.com/"},
-            timeout=5,
-        )
-        if response.status_code != 200:
-            return {}
-        for line in response.text.splitlines():
-            raw = line.split('"', 2)[1] if '"' in line else ""
-            parts = raw.split("~")
-            if len(parts) < 46:
-                continue
-            code = parts[2] if len(parts) > 2 else ""
-            symbol = code[-6:] if code else ""
-            if symbol not in symbols:
-                continue
-            price = _safe_float(parts[3])
-            prev_close = _safe_float(parts[4])
-            change_pct = _safe_float(parts[32])
-            if change_pct is None and price is not None and prev_close:
-                change_pct = (price / prev_close - 1) * 100
-            result[symbol] = {
-                "symbol": symbol,
-                "name": parts[1] or symbol,
-                "price": price,
-                "change_pct": change_pct,
-                "open": _safe_float(parts[5]),
-                "prev_close": prev_close,
-                "high": _safe_float(parts[33]),
-                "low": _safe_float(parts[34]),
-                "volume": _safe_float(parts[6]),
-                "turnover_rate": _safe_float(parts[38]),
-                "market_cap": (_safe_float(parts[45]) or 0) * 1e8 if _safe_float(parts[45]) else None,
-                "source": "腾讯行情",
-            }
+        return TencentRealtimeProvider(requests, _safe_float).fetch_batch(symbols)
     except Exception:
+        logger.debug("腾讯实时行情获取失败: symbols=%s", symbols, exc_info=True)
         return {}
-    return result
 
 
 class RecommendationService:

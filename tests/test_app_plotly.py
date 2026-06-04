@@ -285,6 +285,52 @@ class TestPlotMainAccumulationChart:
         assert '涨跌' in names
 
 
+class TestPlotIntradayChart:
+
+    def test_intraday_chart_uses_separate_volume_panel(self):
+        from app import plot_intraday_chart
+
+        df = pd.DataFrame({
+            "time": pd.date_range("2026-06-04 09:30", periods=3, freq="min"),
+            "close": [13.30, 13.28, 13.25],
+            "avg_price": [13.30, 13.29, 13.27],
+            "volume": [1200, 800, 600],
+        })
+        df.attrs["data_source"] = "东方财富1分钟分时"
+        df.attrs["interval"] = "1分钟"
+
+        fig = plot_intraday_chart(df, {"prev_close": 13.42, "change": -1.27})
+
+        names = [trace.name for trace in fig.data]
+        assert names == ["价格", "均价", "量"]
+        assert fig.data[0].line.shape == "spline"
+        assert fig.data[1].line.shape == "spline"
+        assert fig.layout.height == 360
+        assert fig.layout.showlegend is False
+        assert "1分钟" in fig.layout.title.text
+        assert "东方财富" not in fig.layout.title.text
+        assert fig.layout.yaxis.title.text == "价格"
+        assert fig.layout.yaxis2.title.text == "涨跌幅"
+        assert fig.layout.yaxis3.title.text == "量(手)"
+
+    def test_intraday_chart_ignores_mismatched_prev_close_range(self):
+        from app import plot_intraday_chart
+
+        df = pd.DataFrame({
+            "time": pd.date_range("2026-06-04 09:30", periods=3, freq="min"),
+            "close": [13.30, 13.28, 13.25],
+            "avg_price": [13.30, 13.29, 13.27],
+            "volume": [1200, 800, 600],
+        })
+
+        fig = plot_intraday_chart(df, {"prev_close": 19.14, "change": -1.27})
+        y_range = list(fig.layout.yaxis.range)
+
+        assert y_range[0] > 13.0
+        assert y_range[1] < 13.6
+        assert not any(getattr(shape, "y0", None) == 19.14 for shape in fig.layout.shapes or [])
+
+
 # ============================================================
 # TestDetectProvider
 # ============================================================
@@ -442,6 +488,5 @@ class TestDisplaySignals:
                    "rsi": "--", "kdj": "--", "boll": "--",
                    "recommendation": "偏多<script>alert('xss')</script>"}
         display_signals(signals)
-        html_output = mock_markdown.call_args[0][0]
-        assert "<script>" not in html_output
-        assert "&lt;script&gt;" in html_output
+        assert all(call.kwargs.get("unsafe_allow_html") is not True for call in mock_markdown.call_args_list)
+        assert any("<script>" in str(call.args[0]) for call in mock_markdown.call_args_list)

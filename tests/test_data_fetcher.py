@@ -304,6 +304,10 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
                             lambda self, s, d: None)
+        monkeypatch.setattr(
+            'data_fetcher.StockDataFetcher._is_cn_daily_kline_fresh',
+            staticmethod(lambda data: True),
+        )
 
         fetcher = StockDataFetcher()
         result = fetcher.get_stock_data('002101', period='1y', market='CN', adjust='qfq')
@@ -811,6 +815,98 @@ class TestResolveStockInput:
 
         fetcher = StockDataFetcher()
         assert fetcher.resolve_stock_input('万通发展', market='CN') == ('600246', '万通发展')
+
+
+# ============================================================
+# TestGetIntradayData
+# ============================================================
+
+class TestGetIntradayData:
+
+    def test_intraday_prefers_sina_before_eastmoney(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        calls = []
+
+        def fake_sina(self, symbol, cache_key):
+            calls.append("sina")
+            df = pd.DataFrame({
+                "time": pd.date_range(pd.Timestamp.now().normalize() + pd.Timedelta(hours=9, minutes=30), periods=2, freq="min"),
+                "close": [13.30, 13.25],
+                "volume": [100, 200],
+            })
+            df.attrs["data_source"] = "新浪财经"
+            df.attrs["interval"] = "5分钟"
+            return df
+
+        def fail_akshare(self, symbol, cache_key):
+            raise AssertionError("新浪成功时不应请求东方财富分时")
+
+        monkeypatch.setattr("data_fetcher.AKSHARE_AVAILABLE", True)
+        monkeypatch.setattr(StockDataFetcher, "_fetch_intraday_sina", fake_sina)
+        monkeypatch.setattr(StockDataFetcher, "_fetch_intraday_akshare", fail_akshare)
+
+        result = StockDataFetcher().get_intraday_data("601012", "CN")
+
+        assert result is not None
+        assert calls == ["sina"]
+
+    def test_intraday_falls_back_to_eastmoney_when_sina_unavailable(self, monkeypatch):
+        from data_fetcher import StockDataFetcher
+
+        calls = []
+
+        def fail_sina(self, symbol, cache_key):
+            calls.append("sina")
+            return None
+
+        def fake_akshare(self, symbol, cache_key):
+            calls.append("akshare")
+            return pd.DataFrame({
+                "time": pd.date_range(pd.Timestamp.now().normalize() + pd.Timedelta(hours=9, minutes=30), periods=1, freq="min"),
+                "close": [13.25],
+                "volume": [100],
+            })
+
+        monkeypatch.setattr("data_fetcher.AKSHARE_AVAILABLE", True)
+        monkeypatch.setattr(StockDataFetcher, "_fetch_intraday_sina", fail_sina)
+        monkeypatch.setattr(StockDataFetcher, "_fetch_intraday_akshare", fake_akshare)
+
+        assert StockDataFetcher().get_intraday_data("601012", "CN") is not None
+        assert calls == ["sina", "akshare"]
+
+    def test_intraday_avg_price_uses_share_volume_denominator(self):
+        from data_fetcher import StockDataFetcher
+
+        today = pd.Timestamp.now().normalize()
+        raw = pd.DataFrame({
+            "time": [today + pd.Timedelta(hours=9, minutes=30), today + pd.Timedelta(hours=9, minutes=31)],
+            "close": [13.30, 13.25],
+            "volume": [100, 100],
+            "amount": [133000, 132500],
+        })
+
+        result = StockDataFetcher._normalize_intraday_frame(raw, source="test", interval="1分钟")
+
+        assert result is not None
+        assert round(float(result["avg_price"].iloc[-1]), 4) == 13.275
+        assert result.attrs["volume_unit"] == "hand"
+
+    def test_intraday_avg_price_auto_corrects_sina_amount_unit(self):
+        from data_fetcher import StockDataFetcher
+
+        today = pd.Timestamp.now().normalize()
+        raw = pd.DataFrame({
+            "time": [today + pd.Timedelta(hours=9, minutes=30), today + pd.Timedelta(hours=9, minutes=35)],
+            "close": [13.30, 13.40],
+            "volume": [760000, 657900],
+            "amount": [10130800, 657900 * 13.4],
+        })
+
+        result = StockDataFetcher._normalize_intraday_frame(raw, source="新浪财经", interval="5分钟")
+
+        assert result is not None
+        assert 13.0 < float(result["avg_price"].iloc[-1]) < 13.6
 
 
 # ============================================================

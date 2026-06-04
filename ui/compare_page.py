@@ -437,7 +437,7 @@ def _render_compare_result(result):
 
 def compare_stocks_page():
     """股票对比页面"""
-    st.markdown('<h1 class="main-header">股票对比</h1>', unsafe_allow_html=True)
+    st.markdown("# 股票对比")
 
     st.info("同时对比多只股票的关键指标，最多支持5只股票（并发获取，速度更快）")
 

@@ -91,34 +91,14 @@ def _run_hot_tasks(tasks, max_workers=4, progress_callback=None):
 
 
 def _render_hot_loading(container, market, step, percent):
-    """渲染热门板块加载卡，避免页面空白等待。"""
-    market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
-    safe_step = html.escape(str(step or "正在获取热门板块"))
-    percent = max(0, min(100, int(percent)))
-    with container.container():
-        st.markdown(
-            f"""
-            <div class="hot-loading-strip">
-              <div class="hot-loading-main">
-                <span class="hot-loading-dot"></span>
-                <div class="hot-loading-copy">
-                  <div class="hot-loading-title">\u6b63\u5728\u5237\u65b0\u70ed\u95e8\u677f\u5757 &middot; {html.escape(market_label)}</div>
-                  <div class="hot-loading-step">{safe_step}</div>
-                </div>
-                <span class="hot-loading-percent">{percent}%</span>
-              </div>
-              <div class="hot-loading-bar">
-                <div style="width:{percent}%"></div>
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    market_label = {"CN": "A股", "HK": "港股", "US": "美股"}.get(market, market)
+    percent = max(0, min(100, int(percent or 0)))
+    container.info(f"正在刷新热门板块 · {market_label}｜{step or '正在获取数据'}｜{percent}%")
 
 
 def hot_stocks_page():
     """热门板块页面"""
-    st.markdown('<h1 class="main-header">热门板块</h1>', unsafe_allow_html=True)
+    st.markdown("# 热门板块")
 
     if 'hot_market' not in st.session_state:
         st.session_state.hot_market = "CN"

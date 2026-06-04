@@ -2,6 +2,7 @@
 import html
 import streamlit as st
 from recommendation_service import RecommendationService
+from ui.scheduler_status import render_scheduler_status
 from ui.loading import status_loading
 
 
@@ -29,19 +30,8 @@ def _format_progress_message(strategy, sector, stage, metrics):
 
 
 def _render_progress_html(progress_placeholder, message, percent):
-    progress_placeholder.markdown(
-        f"""
-        <div class="status-loading-strip">
-          <div class="status-loading-main">
-            <span class="status-loading-dot"></span>
-            <div class="status-loading-copy">{html.escape(str(message or ""))}</div>
-            <span class="status-loading-percent">{percent}%</span>
-          </div>
-          <div class="status-loading-bar"><div style="width:{percent}%"></div></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    percent = max(0, min(100, int(percent or 0)))
+    progress_placeholder.info(f"{message or '正在生成 T+1 推荐计划'}｜{percent}%")
 
 
 def _save_progress_snapshot(request_key, strategy, sector, stage, percent, metrics, message):
@@ -440,15 +430,13 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 arrow = "📉"
             else:
                 arrow = "➡"
-            st.markdown(f"""
-            <div class="stock-card">
-                <h4>#{i} {html.escape(str(stock['symbol']))} {html.escape(str(stock['name']))}</h4>
-                <p><strong>综合评分:</strong> {stock['score']}/100 |
-                <strong>建议:</strong> {html.escape(str(stock['rating']))} |
-                <strong>当前价:</strong> {stock['latest_price']:.2f} {arrow}{change_pct:+.2f}% |
-                <strong>范围:</strong> {html.escape(str(stock.get('board', '沪深主板')))}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"#### #{i} {stock['symbol']} {stock['name']}")
+            st.markdown(
+                f"**综合评分:** {stock['score']}/100 | "
+                f"**建议:** {stock['rating']} | "
+                f"**当前价:** {stock['latest_price']:.2f} {arrow}{change_pct:+.2f}% | "
+                f"**范围:** {stock.get('board', '沪深主板')}"
+            )
             if stock.get("alpha_score") is not None:
                 reasons = "；".join(str(item) for item in (stock.get("rank_reason") or [])[:3])
                 penalties = "；".join(str(item) for item in (stock.get("rank_penalty") or [])[:2])
@@ -514,30 +502,30 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
             cols = st.columns(5)
             with cols[0]:
                 macd_hist = ind.get("macd_hist", 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>MACD:</b> 柱:{macd_hist:.2f} DIF:{ind["macd"]:.2f} DEA:{ind["macd_signal"]:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(str(sig.get("macd", sig.get("技术形态", "--"))))}</p>', unsafe_allow_html=True)
+                st.markdown(f"**MACD:** 柱:{macd_hist:.2f} DIF:{ind['macd']:.2f} DEA:{ind['macd_signal']:.2f}")
+                st.caption(str(sig.get("macd", sig.get("技术形态", "--"))))
             with cols[1]:
                 rsi6 = ind.get("rsi_6", ind.get("rsi", 0))
                 rsi12 = ind.get("rsi_12", 0)
                 rsi24 = ind.get("rsi_24", 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>RSI:</b> 6:{rsi6:.2f} 12:{rsi12:.2f} 24:{rsi24:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(str(sig.get("rsi", "--")))}</p>', unsafe_allow_html=True)
+                st.markdown(f"**RSI:** 6:{rsi6:.2f} 12:{rsi12:.2f} 24:{rsi24:.2f}")
+                st.caption(str(sig.get("rsi", "--")))
             with cols[2]:
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>KDJ:</b> K:{ind["kdj_k"]:.2f} D:{ind["kdj_d"]:.2f} J:{ind["kdj_j"]:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(str(sig.get("kdj", "--")))}</p>', unsafe_allow_html=True)
+                st.markdown(f"**KDJ:** K:{ind['kdj_k']:.2f} D:{ind['kdj_d']:.2f} J:{ind['kdj_j']:.2f}")
+                st.caption(str(sig.get("kdj", "--")))
             with cols[3]:
                 boll_up = ind.get("boll_upper", 0)
                 boll_mid = ind.get("boll_mid", 0)
                 boll_low = ind.get("boll_lower", 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>布林带:</b> UP:{boll_up:.2f} MID:{boll_mid:.2f} LOW:{boll_low:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">{html.escape(str(sig.get("boll", sig.get("卖出纪律", "--"))))}</p>', unsafe_allow_html=True)
+                st.markdown(f"**布林带:** UP:{boll_up:.2f} MID:{boll_mid:.2f} LOW:{boll_low:.2f}")
+                st.caption(str(sig.get("boll", sig.get("卖出纪律", "--"))))
             with cols[4]:
                 ma5 = ind.get("ma5", 0)
                 ma10 = ind.get("ma10", 0)
                 ma20 = ind.get("ma20", 0)
                 ma30 = ind.get("ma30", 0)
-                st.markdown(f'<p style="font-size:1.05rem;margin:0"><b>均线:</b> MA5:{ma5:.2f} MA10:{ma10:.2f}</p>', unsafe_allow_html=True)
-                st.markdown(f'<p style="font-size:0.95rem;margin:0;opacity:0.85">MA20:{ma20:.2f} MA30:{ma30:.2f}</p>', unsafe_allow_html=True)
+                st.markdown(f"**均线:** MA5:{ma5:.2f} MA10:{ma10:.2f}")
+                st.caption(f"MA20:{ma20:.2f} MA30:{ma30:.2f}")
             if stock.get("display_indicator_context"):
                 st.caption("指标口径：1年前复权日K，公式与个股分析页一致。")
 
@@ -577,7 +565,8 @@ def recommended_stocks_page():
     sector = st.session_state.rec_sector
     num_stocks = st.session_state.rec_num_stocks
 
-    st.markdown(f'<h1 class="main-header">智能选股推荐 — {strategy}</h1>', unsafe_allow_html=True)
+    st.markdown(f"# 智能选股推荐 - {strategy}")
+    render_scheduler_status()
 
     strategy_options = ["短线", "长线", "激进突破型", "多因子稳健型"]
     if strategy not in strategy_options:

@@ -48,7 +48,7 @@ class FakeQuoteServiceWithFuture(FakeQuoteService):
         import pandas as pd
 
         return pd.DataFrame({
-            "date": ["2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22", "2026-05-25"],
+            "date": ["2099-05-18", "2099-05-19", "2099-05-20", "2099-05-21", "2099-05-22", "2099-05-25"],
             "open": [9.8, 10.2, 10.5, 10.4, 10.6, 10.8],
             "high": [10.2, 10.8, 11.0, 10.7, 11.1, 11.3],
             "low": [9.7, 10.0, 10.4, 10.1, 10.5, 10.7],
@@ -284,6 +284,7 @@ def test_t1_plan_history_is_saved_and_read_only():
     service = RecommendationService(
         recommender=recommender,
         quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()

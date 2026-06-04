@@ -1,4 +1,4 @@
-"""A-share decision committee status card for the app shell."""
+﻿"""A-share decision committee status card for the app shell."""
 from __future__ import annotations
 
 import html
@@ -28,34 +28,22 @@ def build_committee_status() -> dict:
 def render_committee_status_card() -> None:
     """Render a compact sidebar card for local decision workflow status."""
     status = build_committee_status()
-    stage_html = "".join(
-        _stage_row(
-            item["name"],
-            item["label"],
-            done=item["done"],
-            active=item.get("active"),
-        )
-        for item in status["stages"]
-    )
+    st.caption("TradingAgents Lite · A股决策委员会")
+    for item in status["stages"]:
+        state_text = _stage_state_text(done=item["done"], active=item.get("active"))
+        st.markdown(f"- **{item['name']}** {item['label']}：{state_text}")
     daily_text = "已开启" if status["daily_report_enabled"] else "未开启"
     debate_text = "已开启" if status["debate_enabled"] else "默认关闭"
     t1_text = "已开启" if status["t1_preheat_enabled"] else "未开启"
-    st.markdown(
-        f"""
-        <div class="committee-status-card">
-          <div class="committee-status-eyebrow">TradingAgents Lite</div>
-          <div class="committee-status-title">A股决策委员会</div>
-          <div class="committee-status-subtitle">本地分析闭环状态</div>
-          <div class="committee-stage-list">{stage_html}</div>
-          <div class="committee-status-grid">
-            <span>本地日报 <b>{daily_text}</b></span>
-            <span>LLM辩论 <b>{debate_text}</b></span>
-            <span>T+1预热 <b>{t1_text}</b></span>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption(f"本地日报 {daily_text}｜LLM辩论 {debate_text}｜T+1预热 {t1_text}")
+
+
+def _stage_state_text(*, done: bool, active: bool | None = None) -> str:
+    if active is True:
+        return "运行中"
+    if active is False:
+        return "可选"
+    return "完成" if done else "待做"
 
 
 def _stage_row(name: str, label: str, *, done: bool, active: bool | None = None) -> str:

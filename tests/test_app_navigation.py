@@ -13,6 +13,7 @@ def test_all_sidebar_pages_route_to_renderer():
         "股票对比",
         "回测验证",
         "历史日报",
+        "系统状态",
     ]
 
     for page in pages:
@@ -31,6 +32,8 @@ def test_app_shell_uses_main_page_container():
     assert "options=nav_items" in source
     assert "key=\"main_page\"" in source
     assert "render_committee_status_card()" in source
+    assert "系统状态" in source
+    assert "render_system_status_page()" in inspect.getsource(app._render_selected_page)
 
 
 def test_page_switch_does_not_clear_page_cache_state():

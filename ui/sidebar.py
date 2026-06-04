@@ -62,29 +62,11 @@ def display_market_temperature():
     if not indices:
         return
 
-    rows = []
+    st.caption("大盘温度")
     for idx in indices:
-        pct = idx['change_pct']
-        direction = "🟢" if pct > 0 else ("🔴" if pct < 0 else "⚪")
-        color = "var(--color-rise)" if pct >= 0 else "var(--color-fall)"
-        rows.append(
-            f'<div style="display:flex;justify-content:space-between;align-items:center;'
-            f'padding:3px 0;font-size:0.92rem">'
-            f'<span style="opacity:0.85">{html.escape(str(idx["name"]))}</span>'
-            f'<span><b>{idx["price"]:.2f}</b> '
-            f'<span style="color:{color}">{direction} {pct:+.2f}%</span></span>'
-            f'</div>'
-        )
-
-    st.markdown(
-        f'<div style="margin:12px 0;padding:10px 12px;border-radius:10px;'
-        f'background:linear-gradient(135deg,rgba(12,28,43,0.86),rgba(5,13,24,0.72));'
-        f'border:1px solid rgba(85,199,255,0.12);box-shadow:0 10px 24px rgba(0,0,0,0.16)">'
-        f'<div style="font-size:0.8rem;opacity:0.6;margin-bottom:6px">大盘温度</div>'
-        f'{"".join(rows)}'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+        pct = idx["change_pct"]
+        direction = "上涨" if pct > 0 else ("下跌" if pct < 0 else "平盘")
+        st.metric(str(idx["name"]), f"{idx['price']:.2f}", f"{direction} {pct:+.2f}%")
 
 
 def display_watchlist_sidebar():

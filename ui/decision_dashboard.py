@@ -1408,6 +1408,30 @@ def _render_agent_card(agent: dict[str, Any]) -> str:
     )
 
 
+def _render_agent_panel(agent: dict[str, Any]) -> None:
+    delta = agent.get("score_delta", 0)
+    raw_score = agent.get("raw_score", 0)
+    confidence = int(agent.get("confidence") or 0)
+    st.markdown(f"**{agent.get('name') or 'Agent'}**  {delta:+}")
+    st.caption(agent.get("summary") or "--")
+    st.markdown(
+        f"立场：**{agent.get('stance') or '--'}** ｜ "
+        f"权重：**{agent.get('weight', 0)}** ｜ "
+        f"原始分：**{raw_score:+}** ｜ "
+        f"置信度：**{confidence}%**"
+    )
+    evidence = [str(item) for item in (agent.get("evidence") or []) if str(item).strip()]
+    warnings = [str(item) for item in (agent.get("warnings") or []) if str(item).strip()]
+    if evidence:
+        st.markdown("证据：" + "；".join(evidence[:5]))
+    else:
+        st.caption("证据：暂无明确证据")
+    if warnings:
+        st.markdown("警报：" + "；".join(warnings[:5]))
+    else:
+        st.caption("警报：暂无额外警报")
+
+
 def render_decision_dashboard(
     data,
     signals: dict[str, Any],
@@ -1478,5 +1502,6 @@ def render_decision_dashboard(
         )
 
     with st.expander("A股决策委员会：五层研究 + 执行风控 Agent", expanded=False):
-        agent_cards = "".join(_render_agent_card(agent) for agent in snapshot.get("agents", []))
-        st.markdown(f"<div class='agent-card-grid'>{agent_cards}</div>", unsafe_allow_html=True)
+        for agent in snapshot.get("agents", []):
+            _render_agent_panel(agent)
+            st.divider()

@@ -3,6 +3,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from config import RSI_OVERBOUGHT, RSI_OVERSOLD, KDJ_OVERBOUGHT, KDJ_OVERSOLD
 from chart_utils import resolve_color_scheme, MA_CONFIG
 
@@ -402,38 +403,72 @@ def plot_main_accumulation_chart(data):
 
 
 def plot_intraday_chart(df, quote):
-    """分时图 — 当日5分钟价格走势 + 均价线（数据来自新浪财经）"""
+    """分时图 — 同花顺式价格/均价 + 成交量分区展示。"""
     if df is None or df.empty:
         return None
 
-    fig = go.Figure()
+    df = df.copy()
+    df['time'] = pd.to_datetime(df['time'], errors='coerce')
+    df = df.dropna(subset=['time']).sort_values('time')
+    if df.empty:
+        return None
+
+    for col in ['close', 'avg_price', 'volume']:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    prev = None
+    if quote:
+        prev = quote.get('prev_close')
+        try:
+            prev = float(prev) if prev is not None else None
+        except (TypeError, ValueError):
+            prev = None
+
+    price_median = df['close'].dropna().median() if 'close' in df.columns else None
+    if prev and pd.notna(price_median) and price_median > 0:
+        if prev > price_median * 1.3 or prev < price_median * 0.7:
+            prev = None
+
+    interval = df.attrs.get('interval') or ''
+    latest_time = df['time'].iloc[-1].strftime('%H:%M')
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        row_heights=[0.74, 0.26],
+        vertical_spacing=0.03,
+        specs=[[{"secondary_y": True}], [{"secondary_y": False}]],
+    )
 
     fig.add_trace(go.Scatter(
         x=df['time'], y=df['close'],
         mode='lines', name='价格',
-        line=dict(color='#0071e3', width=1.5),
-        hovertemplate='%{y:.2f}<extra></extra>'
-    ))
+        line=dict(color='#0071e3', width=1.35, shape='spline', smoothing=0.65),
+        hovertemplate='价格 %{y:.2f}<extra></extra>'
+    ), row=1, col=1, secondary_y=False)
 
     if 'avg_price' in df.columns and df['avg_price'].notna().any():
         fig.add_trace(go.Scatter(
             x=df['time'], y=df['avg_price'],
             mode='lines', name='均价',
-            line=dict(color='#f9ab00', width=1, dash='dash'),
+            line=dict(color='#f9ab00', width=1.15, shape='spline', smoothing=0.75),
             hovertemplate='均价 %{y:.2f}<extra></extra>'
-        ))
+        ), row=1, col=1, secondary_y=False)
 
-    if quote and quote.get('prev_close'):
-        prev = quote['prev_close']
+    if prev:
         fig.add_hline(y=prev, line=dict(color='#8e8e93', width=0.8, dash='dot'),
-                      annotation_text=f'昨收 {prev:.2f}')
+                      annotation_text=f'昨收 {prev:.2f}', row=1, col=1)
 
+    volume = df['volume'] if 'volume' in df.columns else pd.Series([0] * len(df))
+    volume_colors = np.where(df['close'].diff().fillna(0) >= 0, 'rgba(255,59,48,0.45)', 'rgba(52,199,89,0.45)')
     fig.add_trace(go.Bar(
-        x=df['time'], y=df['volume'],
-        name='量', yaxis='y2',
-        marker=dict(color='rgba(26,115,232,0.15)'),
-        hovertemplate='量 %{y:.0f}<extra></extra>'
-    ))
+        x=df['time'], y=volume,
+        name='量',
+        marker=dict(color=volume_colors),
+        hovertemplate='量 %{y:.0f}手<extra></extra>'
+    ), row=2, col=1)
 
     change_pct = quote.get('change', 0) if quote else 0
     title_color = '#ff3b30' if change_pct > 0 else '#34c759' if change_pct < 0 else '#8e8e93'
@@ -443,19 +478,74 @@ def plot_intraday_chart(df, quote):
                   '13:00','13:30','14:00','14:30','15:00']
     tickvals = [pd.Timestamp.combine(data_date, pd.Timestamp(t).time()) for t in tick_times]
 
+    price_values = pd.concat([df['close'], df.get('avg_price', pd.Series(dtype=float))]).dropna()
+    y_range = None
+    if prev and not price_values.empty:
+        max_delta = max(abs(price_values.max() - prev), abs(price_values.min() - prev), prev * 0.005)
+        y_range = [prev - max_delta * 1.12, prev + max_delta * 1.12]
+        fig.update_yaxes(
+            range=[(y_range[0] / prev - 1) * 100, (y_range[1] / prev - 1) * 100],
+            ticksuffix='%',
+            tickformat='.2f',
+            showgrid=False,
+            zeroline=False,
+            secondary_y=True,
+            row=1,
+            col=1,
+        )
+    elif not price_values.empty:
+        low = float(price_values.min())
+        high = float(price_values.max())
+        pad = max((high - low) * 0.18, max(abs(high), 1) * 0.003)
+        y_range = [low - pad, high + pad]
+
     fig.update_layout(
-        title=dict(text=f"分时走势", font=dict(size=14, color=title_color)),
-        xaxis=dict(title='', tickvals=tickvals, tickformat='%H:%M',
-                    showgrid=False, zeroline=False),
-        yaxis=dict(title='价格', side='left', showgrid=True, gridcolor='rgba(128,128,128,0.1)'),
-        yaxis2=dict(title='', overlaying='y', side='right', showticklabels=False,
-                     showgrid=False),
+        title=dict(text=f"分时走势 · {interval or '1分钟'} · {latest_time}", font=dict(size=14, color=title_color)),
         hovermode='x unified',
-        height=280,
+        height=360,
         bargap=0,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='left', x=0),
-        margin=dict(l=20, r=20, t=40, b=20),
+        showlegend=False,
+        margin=dict(l=20, r=34, t=54, b=22),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
         font_family='-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif',
+    )
+    fig.update_xaxes(
+        title='',
+        tickvals=tickvals,
+        tickformat='%H:%M',
+        showgrid=False,
+        zeroline=False,
+        row=2,
+        col=1,
+    )
+    fig.update_xaxes(showgrid=False, zeroline=False, showticklabels=False, row=1, col=1)
+    fig.update_yaxes(
+        title='价格',
+        range=y_range,
+        side='left',
+        showgrid=True,
+        gridcolor='rgba(128,128,128,0.12)',
+        zeroline=False,
+        row=1,
+        col=1,
+        secondary_y=False,
+    )
+    fig.update_yaxes(
+        title='涨跌幅',
+        showgrid=False,
+        zeroline=False,
+        row=1,
+        col=1,
+        secondary_y=True,
+    )
+    fig.update_yaxes(
+        title='量(手)',
+        showgrid=True,
+        gridcolor='rgba(128,128,128,0.08)',
+        zeroline=False,
+        row=2,
+        col=1,
     )
 
     return fig

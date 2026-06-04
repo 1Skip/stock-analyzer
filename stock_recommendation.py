@@ -30,6 +30,7 @@ from technical_indicators import TechnicalIndicators
 from data.services.info_service import StockInfoService
 from data.services.fundamental_service import FundamentalDataService
 from data.providers.akshare_provider import _find_profile_index_item
+from recommendation_modules import auxiliary_data, board_rankings, hot_stocks, market_rankings, strategy_cache
 from config import CACHE_TTL_STRATEGY_KLINE, RUNTIME_CACHE_DIR
 
 # 板块股票定义 - 短线龙头股
@@ -291,25 +292,12 @@ print(json.dumps(payload, ensure_ascii=False, default=str))
 
 
 def _fetch_tencent_market_cap(symbol, timeout_seconds=2):
-    prefix = "sh" if str(symbol).startswith("6") else "bj" if str(symbol).startswith(("4", "8")) else "sz"
-    try:
-        response = requests.get(
-            f"https://qt.gtimg.cn/q={prefix}{symbol}",
-            headers={"User-Agent": "Mozilla/5.0", "Referer": "https://stockapp.finance.qq.com/"},
-            timeout=timeout_seconds,
-        )
-        if response.status_code != 200:
-            return None, None, "腾讯行情状态异常"
-        parts = response.text.split("~")
-        if len(parts) < 46:
-            return None, None, "腾讯行情字段不足"
-        market_cap = _safe_float(parts[45])
-        name = str(parts[1] or "").replace(" ", "").strip() if len(parts) > 1 else None
-        if market_cap is None or market_cap <= 0:
-            return None, name, "腾讯行情无市值"
-        return market_cap * 1e8, name, "腾讯行情"
-    except Exception as exc:
-        return None, None, f"腾讯行情失败: {exc}"
+    return auxiliary_data.fetch_tencent_market_cap(
+        symbol,
+        requests_module=requests,
+        safe_float=_safe_float,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 class StockRecommender:
@@ -365,126 +353,37 @@ class StockRecommender:
 
     @staticmethod
     def _strategy_cache_trade_date():
-        today = pd.Timestamp.now().normalize()
-        if today.weekday() >= 5:
-            today = today - pd.Timedelta(days=today.weekday() - 4)
-        return today.strftime("%Y-%m-%d")
+        return strategy_cache.strategy_cache_trade_date()
 
     @staticmethod
     def _strategy_kline_cache_path(cache_key):
-        safe_key = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(cache_key))
-        return os.path.join(STRATEGY_KLINE_CACHE_DIR, f"{safe_key}.json")
+        return strategy_cache.strategy_kline_cache_path(cache_key)
 
     def _load_strategy_kline_cache(self, cache_key):
-        path = self._strategy_kline_cache_path(cache_key)
-        if not os.path.exists(path):
-            return None
-        try:
-            modified_at = pd.Timestamp.fromtimestamp(os.path.getmtime(path))
-            if pd.Timestamp.now() - modified_at > pd.Timedelta(seconds=CACHE_TTL_STRATEGY_KLINE):
-                return None
-            with open(path, "r", encoding="utf-8") as file:
-                cached = file.read()
-            data = pd.read_json(io.StringIO(cached), orient='split')
-            if not isinstance(data.index, pd.DatetimeIndex):
-                data.index = pd.to_datetime(data.index)
-            if len(data) < 10:
-                return None
-            data = self._drop_weekend_bars(data)
-            data.attrs['data_source'] = '策略K线本地缓存'
-            return data
-        except Exception:
-            return None
+        return strategy_cache.load_strategy_kline_cache(self, cache_key)
 
     def _get_strategy_stock_data(self, symbol, period='3mo', interval='1d', market='CN', fetcher=None):
-        """智能推荐策略专用K线源：新浪优先，腾讯兜底，东财只作后备。"""
-        fetcher = fetcher or StockDataFetcher()
-        if market != 'CN':
-            return fetcher.get_stock_data(symbol, period=period, interval=interval, market=market)
-        cache_key = f"{market}:{symbol}:{period}:{interval}:{self._strategy_cache_trade_date()}"
-        cached_data = self._load_strategy_kline_cache(cache_key)
-        if cached_data is not None:
-            cached_data.attrs.setdefault('data_source', '策略K线本地缓存')
-            return cached_data
-
-        sources = [
-            ("新浪财经", fetcher._get_cn_stock_data_sina_fallback),
-            ("腾讯财经", fetcher._get_cn_stock_data_akshare),
-            ("东方财富", fetcher._get_cn_stock_data_akshare_em),
-        ]
-        for source_label, source_func in sources:
-            try:
-                data = source_func(symbol, period)
-                if data is not None and len(data) >= 10:
-                    data = self._drop_weekend_bars(data)
-                    data.attrs['data_source'] = source_label
-                    self._save_strategy_kline_cache(cache_key, data)
-                    return data
-            except Exception:
-                continue
-
-        try:
-            data = fetcher._load_offline_cache(symbol)
-            if data is not None and len(data) >= 10:
-                data = self._drop_weekend_bars(data)
-                data.attrs['data_source'] = data.attrs.get('data_source') or '离线缓存'
-                self._save_strategy_kline_cache(cache_key, data)
-                return data
-        except Exception:
-            pass
-        return None
+        return strategy_cache.get_strategy_stock_data(
+            self,
+            symbol,
+            period=period,
+            interval=interval,
+            market=market,
+            fetcher=fetcher,
+        )
 
     def _save_strategy_kline_cache(self, cache_key, data):
-        try:
-            if data is None or getattr(data, "empty", True):
-                return
-            os.makedirs(STRATEGY_KLINE_CACHE_DIR, exist_ok=True)
-            path = self._strategy_kline_cache_path(cache_key)
-            tmp_path = f"{path}.tmp"
-            with open(tmp_path, "w", encoding="utf-8") as file:
-                file.write(data.to_json(orient='split', date_format='iso'))
-            os.replace(tmp_path, path)
-        except Exception:
-            pass
+        return strategy_cache.save_strategy_kline_cache(cache_key, data)
 
     def refresh_strategy_kline_cache(self, stocks=None, period='3mo', interval='1d', market='CN', max_workers=8):
-        """刷新全量策略K线缓存：用于手动按钮或每日定时任务。"""
-        stocks = list(stocks or self._get_strategy_popular_cn_stocks())
-        fetcher = StockDataFetcher()
-        refreshed = 0
-        failed = 0
-
-        def refresh_one(stock):
-            symbol = str((stock or {}).get("code") or "").strip()
-            if not symbol:
-                return False
-            cache_key = f"{market}:{symbol}:{period}:{interval}:{self._strategy_cache_trade_date()}"
-            for source_func in (
-                fetcher._get_cn_stock_data_sina_fallback,
-                fetcher._get_cn_stock_data_akshare,
-                fetcher._get_cn_stock_data_akshare_em,
-            ):
-                try:
-                    data = source_func(symbol, period)
-                    if data is not None and len(data) >= 10:
-                        data = self._drop_weekend_bars(data)
-                        self._save_strategy_kline_cache(cache_key, data)
-                        return True
-                except Exception:
-                    continue
-            return False
-
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(refresh_one, stock): stock for stock in stocks}
-            for future in as_completed(futures):
-                try:
-                    if future.result():
-                        refreshed += 1
-                    else:
-                        failed += 1
-                except Exception:
-                    failed += 1
-        return {"total": len(stocks), "refreshed": refreshed, "failed": failed}
+        return strategy_cache.refresh_strategy_kline_cache(
+            self,
+            stocks=stocks,
+            period=period,
+            interval=interval,
+            market=market,
+            max_workers=max_workers,
+        )
 
     def _build_indicators_dict(self, latest):
         """从最新一行数据构建标准化指标字典"""
@@ -508,106 +407,11 @@ class StockRecommender:
         }
 
     def get_hot_stocks_cn(self, limit=20):
-        """
-        获取A股热门股票（使用新浪财经批量行情，一次请求全部获取）
-        """
-        results = []
         stocks = self._get_main_board_popular_cn_stocks(max(limit, 30))
-
-        try:
-            # 为每只股票构造新浪代码（优先上海，尝试深圳）
-            headers = {
-                'Referer': 'https://finance.sina.com.cn',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-
-            # 先尝试批量获取上海（6开头）
-            sh_stocks = [s for s in stocks if s['code'].startswith(('600', '601', '603', '605', '688'))]
-            sz_stocks = [s for s in stocks if s not in sh_stocks]
-
-            all_quotes = {}
-
-            # 批量获取上海股票
-            if sh_stocks:
-                codes = [f"sh{s['code']}" for s in sh_stocks]
-                url = f"https://hq.sinajs.cn/list={','.join(codes)}"
-                try:
-                    resp = requests.get(url, headers=headers, timeout=10)
-                    if resp.status_code == 200:
-                        for line in resp.text.strip().split('\n'):
-                            match = re.search(r'hq_str_sh(\d+)="([^"]*)"', line)
-                            if match:
-                                code = match.group(1)
-                                data = match.group(2).split(',')
-                                if len(data) >= 33:
-                                    all_quotes[code] = data
-                except Exception:
-                    pass
-
-            # 批量获取深圳股票
-            if sz_stocks:
-                codes = [f"sz{s['code']}" for s in sz_stocks]
-                url = f"https://hq.sinajs.cn/list={','.join(codes)}"
-                try:
-                    resp = requests.get(url, headers=headers, timeout=10)
-                    if resp.status_code == 200:
-                        for line in resp.text.strip().split('\n'):
-                            match = re.search(r'hq_str_sz(\d+)="([^"]*)"', line)
-                            if match:
-                                code = match.group(1)
-                                data = match.group(2).split(',')
-                                if len(data) >= 33:
-                                    all_quotes[code] = data
-                except Exception:
-                    pass
-
-            # 解析行情数据
-            for stock in stocks:
-                code = stock['code']
-                data = all_quotes.get(code)
-                if not data:
-                    continue
-
-                try:
-                    name = data[0]
-                    open_price = float(data[1])
-                    prev_close = float(data[2])
-                    price = float(data[3])
-                    high = float(data[4])
-                    low = float(data[5])
-                    volume = int(float(data[8]))  # 成交量（股）
-                    # 自己算涨跌幅（新浪字段32不可靠，有时为"00"）
-                    change = ((price - prev_close) / prev_close * 100) if prev_close > 0 else 0
-
-                    results.append({
-                        '代码': code,
-                        '名称': name,
-                        '最新价': round(price, 2),
-                        '涨跌幅': round(change, 2),
-                        '换手率': None,  # 新浪批量接口不含换手率
-                        '成交量': volume,
-                        '成交额': int(volume * price) if volume > 0 else 0,
-                        '热度分数': round(abs(change), 2)
-                    })
-                except (ValueError, IndexError):
-                    continue
-
-        except Exception:
-            pass
-
-        # 按热度分数排序
-        results.sort(key=lambda x: x['热度分数'], reverse=True)
-        return results[:limit]
+        return hot_stocks.hot_stocks_cn(stocks, requests_module=requests, limit=limit)
 
     def get_hot_sectors_cn(self, limit=30):
-        """获取A股行业板块排行：同花顺页面优先，东财/同花顺 AKShare 兜底。"""
-        sectors = self._get_hot_sectors_ths_html(limit)
-        if sectors:
-            return sectors[:limit]
-        sectors = self._get_hot_sectors_akshare_em(limit)
-        if sectors:
-            return sectors[:limit]
-        return self._get_hot_sectors_akshare_ths(limit)[:limit]
+        return board_rankings.hot_sectors(self, limit)
 
     def _get_hot_sectors_ths_html(self, limit=30):
         sectors = []
@@ -655,14 +459,7 @@ class StockRecommender:
             return sectors if sectors else []
 
     def get_hot_concepts_cn(self, limit=30):
-        """获取A股概念板块排行：同花顺资金流优先，东财/同花顺 AKShare 兜底。"""
-        concepts = self._get_hot_concepts_ths_html(limit)
-        if concepts:
-            return concepts[:limit]
-        concepts = self._get_hot_concepts_akshare_em(limit)
-        if concepts:
-            return concepts[:limit]
-        return self._get_hot_concepts_akshare_ths(limit)[:limit]
+        return board_rankings.hot_concepts(self, limit)
 
     def _get_hot_concepts_ths_html(self, limit=30):
         """同花顺概念资金流向，全量抓取后按涨跌幅排序。
@@ -881,43 +678,7 @@ class StockRecommender:
 
     @classmethod
     def _get_stock_sector(cls, code):
-        """获取股票所属行业板块（东方财富F10公司概况API，带缓存）"""
-        if code in cls._sector_cache:
-            return cls._sector_cache[code]
-        try:
-            if code.startswith(('8', '9')):
-                mkt = 'BJ'
-            elif code.startswith('6'):
-                mkt = 'SH'
-            else:
-                mkt = 'SZ'
-            url = 'https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/CompanySurveyAjax'
-            resp = requests.get(url, params={'code': f'{mkt}{code}'}, headers={
-                'Referer': 'https://emweb.securities.eastmoney.com/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                jbzl = data.get('jbzl') or {}
-                sector = (jbzl.get('sshy') or '').strip()
-                if sector and sector != '--':
-                    cls._sector_cache[code] = sector
-                    return sector
-        except Exception:
-            pass
-        # 回退：根据代码前缀判断交易所
-        if code.startswith(('8', '9')):
-            fallback = '北交所'
-        elif code.startswith('68'):
-            fallback = '科创板'
-        elif code.startswith('30'):
-            fallback = '创业板'
-        elif code.startswith('6'):
-            fallback = '沪市主板'
-        else:
-            fallback = '深市主板'
-        cls._sector_cache[code] = fallback
-        return fallback
+        return auxiliary_data.stock_sector(code, cache=cls._sector_cache, requests_module=requests)
 
     def _get_market_ranking_ths(self, sort_asc=False, limit=10, enrich_sector=True):
         """获取同花顺全市场涨跌幅榜（公开页，含沪深京）。"""
@@ -1013,64 +774,25 @@ class StockRecommender:
 
     def _get_market_ranking(self, sort_asc=False, limit=10, enrich_sector=True):
         """获取全市场涨跌幅榜：同花顺优先，新浪兜底。"""
-        ranking = self._get_market_ranking_ths(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
-        if ranking:
-            return ranking
-        return self._get_market_ranking_sina(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
+        return market_rankings.get_market_ranking(
+            self,
+            sort_asc=sort_asc,
+            limit=limit,
+            enrich_sector=enrich_sector,
+        )
 
     def get_top_gainers_cn(self, limit=10):
         """获取A股全市场涨幅榜（同花顺实时排行）"""
         ranking = self._get_market_ranking(sort_asc=False, limit=limit + 5, enrich_sector=False)
-        gainers = [s for s in ranking if s['涨跌幅'] > 0]
-        return gainers[:limit]
+        return market_rankings.top_gainers(ranking, limit)
 
     def get_top_losers_cn(self, limit=10):
         """获取A股全市场跌幅榜（同花顺实时排行）"""
         ranking = self._get_market_ranking(sort_asc=True, limit=limit + 5, enrich_sector=False)
-        losers = [s for s in ranking if s['涨跌幅'] < 0]
-        return losers[:limit]
+        return market_rankings.top_losers(ranking, limit)
 
     def get_hot_stocks_hk(self, limit=20):
-        """获取港股热门股票（使用yfinance数据源）"""
-        results = []
-
-        def fetch_stock_info(stock):
-            try:
-                symbol = stock['code']
-                ticker = yf.Ticker(f"{symbol}.HK")
-                hist = ticker.history(period="5d")
-                info = ticker.info
-
-                if hist.empty or len(hist) < 2:
-                    return None
-
-                latest = hist.iloc[-1]
-                prev = hist.iloc[-2]
-                change = ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-
-                return {
-                    '代码': symbol,
-                    '名称': stock['name'],
-                    '最新价': round(latest['Close'], 2),
-                    '涨跌幅': round(change, 2),
-                    '换手率': None,
-                    '成交量': int(latest['Volume']),
-                    '成交额': int(latest['Volume'] * latest['Close']),
-                    '热度分数': round(abs(change), 2)
-                }
-            except Exception:
-                return None
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(fetch_stock_info, stock): stock
-                      for stock in POPULAR_HK_STOCKS[:limit]}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
-
-        results.sort(key=lambda x: x['热度分数'], reverse=True)
-        return results[:limit]
+        return hot_stocks.hot_stocks_hk(POPULAR_HK_STOCKS, yf_module=yf, limit=limit)
 
     def get_top_gainers_hk(self, limit=10, hot_stocks=None):
         """获取港股涨幅榜（可传入预取的 hot_stocks 避免重复请求）"""
@@ -1101,45 +823,7 @@ class StockRecommender:
         return losers[:limit]
 
     def get_hot_stocks_us(self, limit=20):
-        """获取美股热门股票"""
-        results = []
-
-        def fetch_stock_info(symbol):
-            try:
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="5d")
-                info = ticker.info
-
-                if hist.empty or len(hist) < 2:
-                    return None
-
-                latest = hist.iloc[-1]
-                prev = hist.iloc[-2]
-                change = ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-
-                return {
-                    'symbol': symbol,
-                    'name': info.get('shortName', symbol),
-                    'price': round(latest['Close'], 2),
-                    'change': round(change, 2),
-                    'volume': int(latest['Volume']),
-                    'market_cap': info.get('marketCap', 0)
-                }
-            except Exception:
-                return None
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(fetch_stock_info, symbol): symbol
-                      for symbol in POPULAR_US_STOCKS[:limit]}
-
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
-
-        # 按成交量排序
-        results.sort(key=lambda x: x['volume'], reverse=True)
-        return results[:limit]
+        return hot_stocks.hot_stocks_us(POPULAR_US_STOCKS, yf_module=yf, limit=limit)
 
     def analyze_stock(self, symbol, market='CN', period='3mo'):
         """

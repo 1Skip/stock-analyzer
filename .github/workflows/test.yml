@@ -24,5 +24,10 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
+      - name: 静态检查（高信号规则）
+        run: |
+          pip install ruff
+          ruff check . --select E9,F63,F7,F82
+
       - name: 运行测试（跳过网络测试）
         run: pytest tests/ -v -m "not network" --tb=short

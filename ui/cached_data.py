@@ -24,6 +24,7 @@ stock_info_service = StockInfoService()
 logger = logging.getLogger(__name__)
 STOCK_INPUT_CACHE_VERSION = "stock-input-v4-ths-daily-kline-name-index"
 STOCK_DATA_CACHE_VERSION = "stock-data-v2-ths-daily-kline"
+INTRADAY_CACHE_VERSION = "intraday-v3-sina-chart-ths-style"
 
 
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
@@ -146,7 +147,7 @@ def get_cached_realtime_quote(symbol, market):
 
 
 @st.cache_data(ttl=CACHE_TTL_INTRADAY, show_spinner=False)
-def get_cached_intraday_data(symbol, market):
+def get_cached_intraday_data(symbol, market, cache_version=INTRADAY_CACHE_VERSION):
     """缓存分时数据 — 60秒缓存，仅A股"""
     try:
         return quote_service.get_intraday_data(symbol, market)

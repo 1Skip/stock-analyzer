@@ -17,6 +17,15 @@
 - **Codex Skill** — `.codex/skills/stock-analyzer/SKILL.md` 是随仓库提交的 Codex 执行 SOP，用于提醒 AI 在本项目中先查红线、按真实链路验证、区分缓存/调度状态，并按要求执行文档同步流程。
 - **分工关系** — Skill 不替代 `CLAUDE.md`；`CLAUDE.md` 记录项目规则，Skill 把规则压缩成 Codex 工作时的检查清单。
 
+## 2026-06-04 工程优化更新
+
+- **智能推荐模块拆分** — `stock_recommendation.py` 的热门榜、板块榜、策略股票池、辅助数据和策略缓存已拆到 `recommendation_modules/`；原有短线、长线、激进突破型、多因子稳健型的股票池、过滤、评分、排序和 T+1 选股语义保持不变。
+- **行情数据源 provider 化** — 日 K、实时行情、分时、指数、Yahoo K线/报价等源已拆到 `data/providers/`，`data_fetcher.py` 保留统一入口、缓存、健康检查和 fallback 编排，便于单独测试数据源字段差异和超时失败。
+- **分时走势口径** — A 股分时图改回新浪财经 5 分钟数据优先，东方财富 1 分钟数据备用；页面分时区块使用 Streamlit fragment 每 60 秒自动刷新，图表按同花顺式价格波浪线、均价线、昨收线和成交量分区展示。新浪源本身不是秒级接口，自动刷新只代表每分钟重新拉取/读取缓存，不代表每秒有新点。
+- **调度状态可观测** — 调度器会写入 `.cache/scheduler_status.json`，记录 15:30 日报、15:45 T+1 预热和常规调度的状态、耗时、命中数、失败原因等；智能推荐页和系统状态页可直接查看最近一次状态。
+- **质量检查收敛** — GitHub Actions 增加窄范围 `ruff check` 语法/高风险规则；新增真实数据契约检查、文档编码检查、`unsafe_allow_html` 扫描和缓存状态检查脚本。当前 `unsafe_allow_html` 已收敛到 5 处，保留项为全局 CSS 注入、个股页定位锚点/滚动脚本和决策仪表盘核心 HTML。
+- **真实数据边界** — 新增真实数据契约脚本只检查字段契约、结构和缺失状态，不提交行情快照或假数据；网络校验需要显式使用 `--network`，离线默认不声称外部接口实时可用。
+
 ## 2026-05-21 个股分析日K与同花顺口径更新
 
 - **日K真实源链路** — A 股个股分析页新增同花顺网页端日K源，并保留东方财富、腾讯财经、新浪财经、Yahoo Finance 的真实回退链；收盘后若首选源最后一根日K不是当天，会继续尝试下一个真实日K源，不用实时价拼接假日K。
@@ -426,8 +435,11 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `ui/ai_analysis_ui.py` | AI 辅助解读 UI（默认折叠 + API 配置 + 单/多Agent 解释补充） |
 | `ui/charts.py` | Plotly 图表（K线/RSI/KDJ/BOLL/分时图） |
 | `ui/cached_data.py` | 缓存数据层（fetcher 实例 + @st.cache_data 函数） |
+| `ui/scheduler_status.py` | 调度状态展示（日报、T+1 预热、调度失败原因） |
+| `ui/system_status_page.py` | 系统状态页（调度状态 + 缓存文件状态） |
 | `data_fetcher.py` | 多源数据获取 + 健康检查 + 离线缓存 + 全量A股名称索引 |
 | `data/` | 新分层数据服务（providers/services/cache/health/models），逐步承接行情、基础资料、研报、信号、新闻、公告等接口 |
+| `recommendation_modules/` | 智能推荐工程拆分模块（热门榜、板块榜、策略池、辅助数据、策略缓存） |
 | `decision_committee.py` | A股决策委员会（技术/资金/基本面/题材/风险/执行风控六 Agent，含权重、置信度、关键位） |
 | `reports/` | 每日 Markdown 决策仪表盘（大盘温度、自选股、推荐股、研报、风险事件、板块归因、操作检查清单） |
 | `technical_indicators.py` | 技术指标计算 |
@@ -443,13 +455,14 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 | `scheduler.py` | 定时调度 |
 | `config.py` | 集中配置 |
 | `watchlist.py` | 自选股管理 |
+| `scripts/` | 工程检查脚本（真实数据契约、HTML 安全扫描、文档编码、缓存状态） |
 | `tests/` | 测试（当前完整回归 776 项） |
 
 ### 分层数据服务
 
 项目已开始按 `a-stock-data` 的接口分层思路拆分数据层，但不会直接照搬外部仓库实现：
 
-- `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料、财务摘要、资金流、东方财富个股新闻、财新数据通市场资讯、腾讯行情估值补充，以及旧行情获取器适配层 `LegacyQuoteProvider`；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异。
+- `data/providers/`：外部数据源适配器，目前包含 AKShare 个股基础资料/财务/资金/新闻、同花顺日 K、东方财富日 K/实时/分时/指数、腾讯日 K/实时、Yahoo K线/报价、新浪日 K/实时/分时，以及旧行情获取器适配层 `LegacyQuoteProvider`；个股新闻兼容 AKShare + pandas/pyarrow 字符串存储差异。
 - `data/services/`：业务接口层，目前提供 `FundamentalDataService.get_stock_profile()`、`QuoteDataService` 和 `StockInfoService`。
 - 基础资料兜底：`FundamentalDataService` 会缓存 A 股全量基础资料索引，组合东方财富全量快照、上交所主板/科创板、深交所 A 股、北交所列表，用于补齐行业、上市日期、股本、市值、PB 等缺失字段；北交所存量股票切换 `920` 号段时，会按股票名称匹配现代码资料，避免“报一个补一个”。
 - `data/cache.py`：统一 JSON 文件缓存，默认落到 `.cache/`；跨进程写锁会记录 PID 和时间戳，遇到空锁、异常锁、已退出进程锁或过期锁时自动清理，避免残留 `.lock` 阻塞日报。
@@ -457,7 +470,7 @@ pytest tests/test_technical_indicators.py -v  # 单文件
 - `data/models.py`：标准数据模型，当前包含 `StockProfile`。
 - `data/runtime.py`：统一第三方接口超时包装和非关键数据源安全调用。
 
-当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。行情相关入口（K线、实时行情、分时、批量报价、大盘指数、数据源选择）已先收敛到 `QuoteDataService`，后续可以继续把新浪、腾讯、AKShare 等源拆成独立 provider。
+当前 Web 个股分析页会并行请求基础资料，不阻塞 K 线主数据渲染。行情相关入口（K线、实时行情、分时、批量报价、大盘指数、数据源选择）已收敛到 `QuoteDataService`，具体源细节继续下沉到独立 provider，方便针对单一数据源做字段契约测试、超时兜底和故障诊断。
 个股页还会以非阻塞方式加载“财务 / 资金 / 新闻”折叠区和“市场快讯 / 催化消息”折叠区；Web 首屏拉取财务、资金流、个股新闻和市场资讯核心层，财务展示报告期、资金展示资金流日期，新闻展示最新新闻时间或“暂无”状态；研报/风险事件/板块归因等深层数据保留给日报和决策委员会使用，避免拖慢首次搜索。
 
 ### 每日分析报告

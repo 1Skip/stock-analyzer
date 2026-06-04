@@ -1257,7 +1257,7 @@ def test_analyze_page_uses_code_name_title_card():
     assert "当前分析标的" in source
     assert "def _render_analysis_target_header" in source
     assert "display_name = stock_name if stock_name and stock_name != symbol else" in source
-    assert "{html.escape(str(symbol or \"--\"))}{f\" · {html.escape(str(display_name))}\" if display_name else \"\"}" in source
+    assert "st.markdown(f\"**{symbol or '--'}{f' · {display_name}' if display_name else ''}**\")" in source
 
 
 def test_analyze_page_renders_market_news_section():
@@ -1491,3 +1491,16 @@ def test_ai_analysis_ui_is_optional_auxiliary():
     assert "AI 辅助解读（可选）" in source
     assert "主结论以 A股决策委员会 为准" in source
     assert 'with st.expander("展开 AI 辅助解读", expanded=False)' in source
+
+
+def test_intraday_auto_refresh_is_default_fragment_without_controls():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert '_streamlit_fragment = getattr(st, "fragment"' in source
+    assert '@_streamlit_fragment(run_every="60s")' in source
+    assert "def _render_intraday_auto_refresh_fragment" in source
+    assert "刷新分时" not in source
+    assert "自动刷新" not in source
+    assert "_render_intraday_auto_refresh_fragment(symbol, market, quote)" in source

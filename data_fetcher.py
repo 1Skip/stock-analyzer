@@ -24,6 +24,19 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from threading import Lock
+from data.providers.daily_kline_provider import (
+    AkshareDailyKlineProvider,
+    SinaDailyKlineProvider,
+    ThsDailyKlineProvider,
+    is_request_error,
+    is_timeout_error,
+)
+from data.providers.eastmoney_intraday_provider import EastmoneyIntradayProvider
+from data.providers.index_realtime_provider import SinaIndexRealtimeProvider
+from data.providers.sina_intraday_provider import SinaIntradayProvider
+from data.providers.sina_realtime_provider import SinaRealtimeProvider
+from data.providers.yahoo_kline_provider import YahooKlineProvider
+from data.providers.yahoo_quote_provider import YahooQuoteProvider
 
 logger = logging.getLogger(__name__)
 
@@ -469,7 +482,7 @@ class StockDataFetcher:
             elif market == "HK":
                 # 港股：Yahoo Finance 历史K线（国内可直连），新浪实时行情
                 result = self._retry_with_backoff(
-                    lambda s, p: yf.Ticker(f"{s}.HK").history(period=p, interval=interval),
+                    lambda s, p: YahooKlineProvider(yf).fetch(s, p, interval=interval, market="HK"),
                     'yfinance', symbol, period
                 )
                 if result is not None and not result.empty:
@@ -487,7 +500,7 @@ class StockDataFetcher:
                     data_source = "新浪财经"
                 if result is None:
                     result = self._retry_with_backoff(
-                        lambda s, p: yf.Ticker(s).history(period=p, interval=interval),
+                        lambda s, p: YahooKlineProvider(yf).fetch(s, p, interval=interval, market="US"),
                         'yfinance', symbol, period
                     )
                     if result is not None and not result.empty:
@@ -534,299 +547,54 @@ class StockDataFetcher:
         return last_day >= today
 
     def _get_us_stock_data_sina(self, symbol, period, **kwargs):
-        """使用新浪财经获取美股历史日K数据"""
         try:
-            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = period_days.get(period, 365)
-            # 美股约252个交易日/年，加10条余量
-            datalen = max(int(days * 252 / 365) + 10, 10)
-
-            url = 'https://stock.finance.sina.com.cn/usstock/api/json_v2.php/US_MinKService.getDailyK'
-            params = {'symbol': symbol.lower(), 'type': 'day', 'datalen': datalen}
-            headers = {
-                'Referer': 'https://finance.sina.com.cn',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            resp = _session.get(url, params=params, headers=headers, timeout=15)
-            if resp.status_code != 200:
-                return None
-
-            data = resp.json()
-            if not data or not isinstance(data, list) or len(data) < 10:
-                return None
-
-            df = pd.DataFrame(data)
-            df = df.rename(columns={'d': 'date', 'o': 'open', 'h': 'high',
-                                    'l': 'low', 'c': 'close', 'v': 'volume'})
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-            for col in ['open', 'high', 'low', 'close', 'volume']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-
-            if len(df) >= 10:
-                return df
+            return SinaDailyKlineProvider(_session).fetch_us(symbol, period)
         except Exception as e:
             print(f"新浪美股历史数据获取失败 {symbol}: {str(e)}")
         return None
 
     def _get_cn_stock_data_ths(self, symbol, period, **kwargs):
-        """使用同花顺网页端日K接口获取A股历史数据（默认前复权日K）。"""
         try:
-            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = period_days.get(period, 365)
-            adjust = kwargs.get("adjust") or ""
-            line_code = "01" if adjust == "qfq" else "00"
-            url = f"https://d.10jqka.com.cn/v6/line/hs_{symbol}/{line_code}/last.js"
-            headers = {
-                'Referer': f'https://stockpage.10jqka.com.cn/{symbol}/',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            }
-            response = _session.get(url, headers=headers, timeout=10)
-            if response.status_code != 200 or not response.text.strip():
-                return None
-
-            text = response.text.strip()
-            start = text.find("{")
-            end = text.rfind("}")
-            if start < 0 or end < start:
-                return None
-            payload = json.loads(text[start:end + 1])
-            rows = []
-            for item in str(payload.get("data") or "").split(";"):
-                fields = item.split(",")
-                if len(fields) < 6:
-                    continue
-                rows.append({
-                    "date": fields[0],
-                    "open": fields[1],
-                    "high": fields[2],
-                    "low": fields[3],
-                    "close": fields[4],
-                    "volume": fields[5],
-                    "amount": fields[6] if len(fields) > 6 else None,
-                    "turnover_rate": fields[7] if len(fields) > 7 else None,
-                })
-
-            if len(rows) < 10:
-                return None
-
-            df = pd.DataFrame(rows)
-            df['date'] = pd.to_datetime(df['date'], format='%Y%m%d', errors='coerce')
-            df.set_index('date', inplace=True)
-            for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'turnover_rate']:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            df = df.dropna(subset=['open', 'high', 'low', 'close'])
-            cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=days)
-            df = df[df.index >= cutoff]
-
-            if len(df) >= 10:
-                df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
-                df.attrs['data_provider'] = '同花顺'
-                df.attrs['volume_unit'] = 'share'
-                return df
+            return ThsDailyKlineProvider(_session).fetch(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
             print(f"同花顺日K 获取失败 {symbol}: {str(e)}")
         return None
 
     def _get_cn_stock_data_akshare_em(self, symbol, period, **kwargs):
-        """使用 AKShare 获取A股历史数据（东方财富数据源，与同花顺一致）"""
         if not AKSHARE_AVAILABLE:
             return None
-
         try:
-            adjust = kwargs.get("adjust") or ""
-            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = period_days.get(period, 365)
-
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
-
-            df = ak.stock_zh_a_hist(
-                symbol=symbol,
-                period="daily",
-                start_date=start_date,
-                end_date=end_date,
-                adjust=adjust
-            )
-
-            if df is not None and not df.empty and len(df) >= 10:
-                # stock_zh_a_hist 列名为中文，需要重命名
-                df = df.rename(columns={
-                    '日期': 'date',
-                    '开盘': 'open',
-                    '收盘': 'close',
-                    '最高': 'high',
-                    '最低': 'low',
-                    '成交量': 'volume',
-                })
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
-
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                df = df.dropna(subset=['open', 'high', 'low', 'close'])
-
-                if len(df) >= 10:
-                    df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
-                    df.attrs['data_provider'] = '东方财富'
-                    df.attrs['volume_unit'] = 'hand'
-                    return df
-
+            return AkshareDailyKlineProvider(ak).fetch_eastmoney(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
             print(f"AKShare(东方财富) 获取失败 {symbol}: {str(e)}")
-
         return None
 
     def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
-        """使用 AKShare 获取A股历史数据（腾讯财经数据源，直连稳定）"""
         if not AKSHARE_AVAILABLE:
             return None
-
         try:
-            adjust = kwargs.get("adjust") or ""
-            # 转换period为天数
-            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = period_days.get(period, 365)
-
-            # 判断交易所，构造 AKShare 所需前缀
-            if symbol.startswith(('600', '601', '603', '605', '688')):
-                ak_symbol = f"sh{symbol}"
-            else:
-                ak_symbol = f"sz{symbol}"
-
-            end_date = datetime.now().strftime('%Y%m%d')
-            start_date = (datetime.now() - timedelta(days=days)).strftime('%Y%m%d')
-
-            # 使用 stock_zh_a_daily（直连稳定，不走东方财富 push2his 接口）
-            df = ak.stock_zh_a_daily(
-                symbol=ak_symbol,
-                start_date=start_date,
-                end_date=end_date,
-                adjust=adjust
-            )
-
-            if df is not None and not df.empty and len(df) >= 10:
-                # stock_zh_a_daily 列名已是英文：date, open, high, low, close, volume
-                df['date'] = pd.to_datetime(df['date'])
-                df.set_index('date', inplace=True)
-
-                for col in ['open', 'high', 'low', 'close', 'volume']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                df = df.dropna(subset=['open', 'high', 'low', 'close'])
-
-                if len(df) >= 10:
-                    df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else '不复权'
-                    df.attrs['data_provider'] = '腾讯财经'
-                    df.attrs['volume_unit'] = 'share'
-                    return df
-
+            return AkshareDailyKlineProvider(ak).fetch_tencent(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
             print(f"AKShare 获取失败 {symbol}: {str(e)}")
-
         return None
 
     def _get_cn_stock_data_sina_fallback(self, symbol, period, **kwargs):
-        """获取A股数据 - 新浪财经（备选数据源，带超时）"""
         try:
-            period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-            days = period_days.get(period, 365)
-
-            # 判断交易所后缀
-            if symbol.startswith(('600', '601', '603', '605', '688')):
-                sina_symbol = f"sh{symbol}"
-            else:
-                sina_symbol = f"sz{symbol}"
-
-            url = f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol={sina_symbol}&scale=240&ma=5&datalen={days}"
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Referer': 'https://finance.sina.com.cn/'
-            }
-            response = _session.get(url, headers=headers, timeout=10)
-
-            if response.status_code == 200 and response.text.strip():
-                data = json.loads(response.text)
-                if data and isinstance(data, list) and len(data) >= 10:
-                    df = pd.DataFrame(data)
-                    df.rename(columns={
-                        'day': 'date', 'open': 'open', 'high': 'high',
-                        'low': 'low', 'close': 'close', 'volume': 'volume'
-                    }, inplace=True)
-                    df['date'] = pd.to_datetime(df['date'])
-                    df.set_index('date', inplace=True)
-                    for col in ['open', 'high', 'low', 'close', 'volume']:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors='coerce')
-                    df = df.dropna(subset=['open', 'high', 'low', 'close'])
-                    if len(df) >= 10:
-                        df.attrs['adjust_method'] = '未复权（新浪财经）'
-                        df.attrs['data_provider'] = '新浪财经'
-                        df.attrs['volume_unit'] = 'share'
-                        return df
-        except requests.exceptions.Timeout:
-            print(f"新浪财经请求超时 {symbol}")
-        except requests.exceptions.RequestException as e:
-            print(f"新浪财经网络错误 {symbol}: {str(e)}")
+            return SinaDailyKlineProvider(_session).fetch_cn(symbol, period)
         except Exception as e:
-            print(f"新浪财经失败 {symbol}: {str(e)}")
-
+            if is_timeout_error(e):
+                print(f"新浪财经请求超时 {symbol}")
+            elif is_request_error(e):
+                print(f"新浪财经网络错误 {symbol}: {str(e)}")
+            else:
+                print(f"新浪财经失败 {symbol}: {str(e)}")
         return None
 
     def _get_cn_stock_data_yfinance(self, symbol, period, **kwargs):
-        """使用yfinance获取A股数据"""
-        import time
-        max_retries = 2
-
-        for attempt in range(max_retries):
-            try:
-                if '.' not in symbol:
-                    # 根据股票代码规则判断交易所
-                    # 600/601/603/688 开头是上海，000/002/300 开头是深圳
-                    if symbol.startswith(('600', '601', '603', '605', '688')):
-                        # 上海交易所
-                        symbol_yf = f"{symbol}.SS"
-                    elif symbol.startswith(('000', '001', '002', '003', '300', '301')):
-                        # 深圳交易所
-                        symbol_yf = f"{symbol}.SZ"
-                    else:
-                        # 未知，先尝试上海再尝试深圳
-                        symbol_yf = f"{symbol}.SS"
-
-                    ticker = yf.Ticker(symbol_yf)
-                    data = ticker.history(period=period)
-
-                    # 如果失败，尝试另一个交易所
-                    if data.empty or len(data) < 10:
-                        if symbol_yf.endswith('.SS'):
-                            symbol_yf = f"{symbol}.SZ"
-                        else:
-                            symbol_yf = f"{symbol}.SS"
-                        ticker = yf.Ticker(symbol_yf)
-                        data = ticker.history(period=period)
-                else:
-                    ticker = yf.Ticker(symbol)
-                    data = ticker.history(period=period)
-
-                if not data.empty and len(data) >= 10:
-                    # 标准化列名
-                    data.columns = [col.lower().replace(' ', '_') for col in data.columns]
-                    data.attrs['adjust_method'] = 'adjusted close（yfinance）'
-                    data.attrs['volume_unit'] = 'share'
-                    return data
-
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-
-            except Exception as e:
-                print(f"yfinance尝试 {attempt+1} 失败 {symbol}: {str(e)}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-
+        try:
+            return YahooKlineProvider(yf).fetch_cn_with_retry(symbol, period)
+        except Exception as e:
+            print(f"yfinance 获取失败 {symbol}: {str(e)}")
         return None
 
     def get_stock_info(self, symbol, market="US"):
@@ -838,12 +606,7 @@ class StockDataFetcher:
                 return {'shortName': name, 'symbol': symbol}
 
         def _fetch_info():
-            if market == "HK":
-                ticker = yf.Ticker(f"{symbol}.HK")
-                return ticker.info
-            else:
-                ticker = yf.Ticker(symbol)
-                return ticker.info
+            return YahooQuoteProvider(yf).fetch_info(symbol, market)
 
         info = self._retry_with_backoff(_fetch_info, 'yfinance')
         if info is None:
@@ -851,6 +614,10 @@ class StockDataFetcher:
         return info
 
     def get_stock_name(self, symbol, market="US"):
+        if market == "CN":
+            name = SinaRealtimeProvider(_session).fetch_cn_name(symbol)
+            if name:
+                return name
         """获取股票名称，新浪优先（快~200ms），AKShare快照兜底，映射表最终回退"""
         if market == "CN":
             # 第一优先：新浪财经实时行情（~200ms，快）
@@ -1124,6 +891,9 @@ class StockDataFetcher:
                 }
 
                 # 第一优先：新浪财经实时行情（~200ms，快）
+                quote = SinaRealtimeProvider(_session).fetch_cn_quote(symbol)
+                if quote:
+                    return quote
                 url = f"https://hq.sinajs.cn/list={prefix}{symbol}"
                 response = _session.get(url, headers=headers, timeout=5)
                 if response.status_code == 200:
@@ -1169,24 +939,9 @@ class StockDataFetcher:
                         }
 
                 # 备选：使用yfinance
-                ticker = yf.Ticker(f"{symbol}.SS")
-                hist = ticker.history(period="5d")
-                info = ticker.info
-
-                if not hist.empty:
-                    latest = hist.iloc[-1]
-                    prev = hist.iloc[-2] if len(hist) > 1 else latest
-                    return {
-                        'symbol': symbol,
-                        'name': info.get('shortName', symbol),
-                        'price': latest['Close'],
-                        'open': latest['Open'],
-                        'high': latest['High'],
-                        'low': latest['Low'],
-                        'volume': latest['Volume'],
-                        'prev_close': prev['Close'],
-                        'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-                    }
+                quote = YahooQuoteProvider(yf).fetch_quote(symbol, "CN")
+                if quote:
+                    return quote
 
             elif market == "HK":
                 # 港股实时行情：新浪财经优先
@@ -1194,46 +949,18 @@ class StockDataFetcher:
                 if quote:
                     return quote
                 # 备选：Yahoo Finance
-                ticker = yf.Ticker(f"{symbol}.HK")
-                hist = ticker.history(period="5d")
-                info = ticker.info
-                if not hist.empty:
-                    latest = hist.iloc[-1]
-                    prev = hist.iloc[-2] if len(hist) > 1 else latest
-                    return {
-                        'symbol': symbol,
-                        'name': info.get('shortName', symbol),
-                        'price': latest['Close'],
-                        'open': latest['Open'],
-                        'high': latest['High'],
-                        'low': latest['Low'],
-                        'volume': latest['Volume'],
-                        'prev_close': prev['Close'],
-                        'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-                    }
+                quote = YahooQuoteProvider(yf).fetch_quote(symbol, "HK")
+                if quote:
+                    return quote
             else:
                 # 美股实时行情：新浪财经优先
                 quote = self._get_sina_realtime(symbol, "us")
                 if quote:
                     return quote
                 # 备选：Yahoo Finance
-                ticker = yf.Ticker(symbol)
-                hist = ticker.history(period="5d")
-                info = ticker.info
-                if not hist.empty:
-                    latest = hist.iloc[-1]
-                    prev = hist.iloc[-2] if len(hist) > 1 else latest
-                    return {
-                        'symbol': symbol,
-                        'name': info.get('shortName', symbol),
-                        'price': latest['Close'],
-                        'open': latest['Open'],
-                        'high': latest['High'],
-                        'low': latest['Low'],
-                        'volume': latest['Volume'],
-                        'prev_close': prev['Close'],
-                        'change': ((latest['Close'] - prev['Close']) / prev['Close'] * 100)
-                    }
+                quote = YahooQuoteProvider(yf).fetch_quote(symbol, "US")
+                if quote:
+                    return quote
 
         except Exception as e:
             print(f"获取实时行情失败 {symbol}: {str(e)}")
@@ -1248,6 +975,7 @@ class StockDataFetcher:
             return result
 
         import concurrent.futures as _cf
+        provider = SinaRealtimeProvider(_session)
 
         def _sina_code(symbol):
             if symbol.startswith('6'):
@@ -1286,6 +1014,9 @@ class StockDataFetcher:
         def _fetch_chunk(chunk):
             chunk_result = {}
             try:
+                chunk_result.update(provider.fetch_cn_batch_quotes(list(chunk)))
+                if chunk_result:
+                    return chunk_result
                 code_to_symbol = {_sina_code(symbol): symbol for symbol in chunk}
                 url = "https://hq.sinajs.cn/list=" + ",".join(code_to_symbol.keys())
                 headers = {
@@ -1370,22 +1101,10 @@ class StockDataFetcher:
                     print(f"AKShare指数行情失败 {symbol}: {e}")
 
             # yfinance
-            yf_map = {'000001': '^SSEC', '399001': '399001.SZ', '399006': '399006.SZ'}
-            yf_symbol = yf_map.get(symbol, f"{symbol}.SS")
             try:
-                ticker = yf.Ticker(yf_symbol)
-                info = ticker.info or {}
-                hist = ticker.history(period='5d')
-                if hist is not None and len(hist) >= 2:
-                    latest = hist.iloc[-1]
-                    prev = hist.iloc[-2]
-                    return {
-                        'symbol': symbol,
-                        'name': info.get('shortName', symbol),
-                        'price': float(latest['Close']),
-                        'change_pct': float((latest['Close'] / prev['Close'] - 1) * 100),
-                        'prev_close': float(prev['Close']),
-                    }
+                quote = YahooQuoteProvider(yf).fetch_index_quote(symbol)
+                if quote:
+                    return quote
             except Exception:
                 pass
 
@@ -1395,36 +1114,8 @@ class StockDataFetcher:
 
     def _get_index_realtime_sina(self, symbol, timeout=2):
         """新浪财经指数实时行情，作为大盘温度快速源。"""
-        if symbol.startswith('000') or symbol.startswith('600'):
-            sina_code = f"sh{symbol}"
-        elif symbol.startswith('899'):
-            sina_code = f"bj{symbol}"
-        else:
-            sina_code = f"sz{symbol}"
-        url = f"https://hq.sinajs.cn/list={sina_code}"
-        headers = {
-            'Referer': 'https://finance.sina.com.cn',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
         try:
-            resp = _session.get(url, headers=headers, timeout=timeout)
-            if resp.status_code != 200:
-                return None
-            match = re.search(r'"([^"]*)"', resp.text)
-            if not match:
-                return None
-            data = match.group(1).split(',')
-            if len(data) < 4:
-                return None
-            price = float(data[3]) if data[3] else 0
-            prev_close = float(data[2]) if data[2] else 1
-            return {
-                'symbol': symbol,
-                'name': data[0],
-                'price': price,
-                'change_pct': (price / prev_close - 1) * 100 if prev_close else 0,
-                'prev_close': prev_close,
-            }
+            return SinaIndexRealtimeProvider(_session).fetch_quote(symbol, timeout=timeout)
         except Exception:
             return None
 
@@ -1451,6 +1142,10 @@ class StockDataFetcher:
 
     def _get_sina_realtime(self, symbol, market):
         """新浪财经实时行情 — 支持 us / hk"""
+        quote = SinaRealtimeProvider(_session).fetch_global_quote(symbol, market)
+        if quote:
+            return quote
+
         if market == "hk":
             sina_sym = f"hk{symbol}"
         elif market == "us":
@@ -1502,7 +1197,7 @@ class StockDataFetcher:
         return None
 
     def get_intraday_data(self, symbol, market="CN"):
-        """获取当日分钟K线数据，用于分时图（仅A股，新浪优先，东方财富备用）"""
+        """获取当日分钟K线数据，用于分时图（仅A股，新浪优先，东方财富备用）。"""
         if market != "CN":
             return None
 
@@ -1517,64 +1212,83 @@ class StockDataFetcher:
             df = self._fetch_intraday_akshare(symbol, cache_key)
         return df
 
-    def _fetch_intraday_sina(self, symbol, cache_key):
-        """新浪财经分钟数据（稳定，5分钟线）"""
-        try:
-            prefix = 'sh' if symbol.startswith('6') else 'sz'
-            sina_symbol = f'{prefix}{symbol}'
-            url = ('https://quotes.sina.cn/cn/api/json_v2.php/'
-                   f'CN_MarketDataService.getKLineData?symbol={sina_symbol}'
-                   '&scale=5&ma=no&datalen=240')
-            r = _session.get(url, timeout=10)
-            if r.status_code != 200:
-                return None
-            data = r.json()
-            if not data or not isinstance(data, list):
-                return None
-            df = pd.DataFrame(data)
-            df.rename(columns={
-                'day': 'time', 'open': 'open', 'high': 'high',
-                'low': 'low', 'close': 'close', 'volume': 'volume',
-                'amount': 'amount'
-            }, inplace=True)
-            df['time'] = pd.to_datetime(df['time'])
-            for col in ['open', 'high', 'low', 'close']:
+    @staticmethod
+    def _normalize_intraday_frame(df, *, source, interval):
+        """统一分时字段和均价口径，避免成交量单位把均价线抬偏。"""
+        if df is None or df.empty or 'time' not in df.columns:
+            return None
+        df = df.copy()
+        df['time'] = pd.to_datetime(df['time'], errors='coerce')
+        df = df.dropna(subset=['time'])
+        for col in ['open', 'high', 'low', 'close', 'volume', 'amount', 'avg_price']:
+            if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            df['volume'] = pd.to_numeric(df['volume'], errors='coerce').astype(int)
-            if 'amount' in df.columns:
-                df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
-                # 计算均价 = 累计成交额 / 累计成交量
-                df['avg_price'] = df['amount'].cumsum() / df['volume'].cumsum().replace(0, float('nan'))
-            # 仅保留当日数据
-            today = pd.Timestamp.now().date()
-            df = df[df['time'].dt.date == today].copy()
-            if df.empty:
-                return None
-            self.cache[cache_key] = (datetime.now(), df, "新浪财经")
-            return df
-        except Exception:
+
+        today = pd.Timestamp.now().date()
+        df = df[df['time'].dt.date == today].copy()
+        if df.empty:
             return None
 
-    def _fetch_intraday_akshare(self, symbol, cache_key):
-        """东方财富分钟数据（备用，1分钟线）"""
+        if 'volume' in df.columns:
+            volume = df['volume'].fillna(0).astype(float)
+            df['volume'] = volume
+            df['volume_shares'] = volume * 100
+        else:
+            df['volume'] = 0.0
+            df['volume_shares'] = 0.0
+
+        if 'amount' in df.columns:
+            amount = df['amount'].fillna(0).astype(float)
+            denom = df['volume_shares'].cumsum().replace(0, float('nan'))
+            calculated_avg = amount.cumsum() / denom
+            close_median = df['close'].dropna().median() if 'close' in df.columns else None
+            calculated_median = calculated_avg.dropna().median()
+            if pd.notna(close_median) and pd.notna(calculated_median) and calculated_median > 0:
+                ratio = close_median / calculated_median
+                if 80 <= ratio <= 120:
+                    calculated_avg = calculated_avg * 100
+            if 'avg_price' not in df.columns or not df['avg_price'].notna().any():
+                df['avg_price'] = calculated_avg
+            else:
+                avg = pd.to_numeric(df['avg_price'], errors='coerce')
+                avg_median = avg.dropna().median()
+                if pd.notna(close_median) and pd.notna(avg_median) and (avg_median > close_median * 3 or avg_median < close_median / 3):
+                    df['avg_price'] = calculated_avg
+                else:
+                    df['avg_price'] = avg.fillna(calculated_avg)
+
+        df = df.sort_values('time').reset_index(drop=True)
+        df.attrs['data_source'] = source
+        df.attrs['interval'] = interval
+        df.attrs['volume_unit'] = 'hand'
+        return df
+
+    def _fetch_intraday_sina(self, symbol, cache_key):
+        """新浪财经分钟数据（稳定，5分钟线，作为兜底源）"""
         try:
-            df = ak.stock_zh_a_hist_min_em(symbol=symbol, period='1', adjust='')
-            if df is not None and len(df) > 0:
-                df.rename(columns={
-                    '时间': 'time', '开盘': 'open', '收盘': 'close',
-                    '最高': 'high', '最低': 'low', '成交量': 'volume',
-                    '成交额': 'amount', '均价': 'avg_price'
-                }, inplace=True)
-                df['time'] = pd.to_datetime(df['time'])
-                # 仅保留当日数据
-                today = pd.Timestamp.now().date()
-                df = df[df['time'].dt.date == today].copy()
-                if df.empty:
-                    return None
-                self.cache[cache_key] = (datetime.now(), df, "AKShare(东方财富)")
-                return df
+            provider = SinaIntradayProvider(_session)
+            raw = provider.fetch_raw(symbol)
+            df = self._normalize_intraday_frame(raw, source=provider.source, interval=provider.interval)
+            if df is None:
+                return None
+            self.cache[cache_key] = (datetime.now(), df, f"{provider.source}{provider.interval}")
+            return df
         except Exception:
-            pass
+            logger.debug("新浪分时数据获取失败: symbol=%s", symbol, exc_info=True)
+        return None
+
+    def _fetch_intraday_akshare(self, symbol, cache_key):
+        """东方财富分钟数据（1分钟线，分时图优先源）"""
+        try:
+            provider = EastmoneyIntradayProvider(ak)
+            raw = provider.fetch_raw(symbol)
+            df = self._normalize_intraday_frame(raw, source=provider.source, interval=provider.interval)
+            if df is None:
+                return None
+            self.cache[cache_key] = (datetime.now(), df, "东方财富1分钟")
+            return df
+        except Exception:
+            logger.debug("东方财富分时数据获取失败: symbol=%s", symbol, exc_info=True)
         return None
 
     @staticmethod
