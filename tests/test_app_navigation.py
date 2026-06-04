@@ -8,7 +8,7 @@ def test_all_sidebar_pages_route_to_renderer():
 
     pages = [
         "个股分析",
-        "热门板块",
+        "涨跌排行",
         "智能推荐",
         "股票对比",
         "回测验证",
@@ -149,10 +149,10 @@ def test_page_switch_keeps_current_page_state(monkeypatch):
 
     monkeypatch.setattr(st, "rerun", lambda: reruns.append(True))
 
-    changed = app._sync_active_page("热门板块")
+    changed = app._sync_active_page("涨跌排行")
 
     assert changed is True
-    assert st.session_state["_active_page"] == "热门板块"
+    assert st.session_state["_active_page"] == "涨跌排行"
     assert st.session_state["hot_data"] == {"current": True}
     assert reruns == [True]
 

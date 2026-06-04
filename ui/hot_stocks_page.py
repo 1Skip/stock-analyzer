@@ -1,5 +1,4 @@
-﻿"""热门板块页面 — 行业/概念排行 + 涨跌幅榜"""
-import html
+﻿"""涨跌排行页面 — A股/港股/美股涨跌幅榜"""
 import concurrent.futures
 import streamlit as st
 import pandas as pd
@@ -12,8 +11,6 @@ from quality_monitor import build_hot_data_status
 _HOT_SECTION_LABELS = {
     "gainers": "个股涨幅榜",
     "losers": "个股跌幅榜",
-    "sectors": "行业板块排行",
-    "concepts": "概念板块排行",
 }
 
 
@@ -31,10 +28,8 @@ def fetch_hot_stocks(market, progress_callback=None):
         tasks = {
             'gainers': lambda: recommender.get_top_gainers_cn(limit=10),
             'losers': lambda: recommender.get_top_losers_cn(limit=10),
-            'sectors': lambda: recommender.get_hot_sectors_cn(limit=30),
-            'concepts': lambda: recommender.get_hot_concepts_cn(limit=30),
         }
-        return _run_hot_tasks(tasks, max_workers=5, progress_callback=progress_callback)
+        return _run_hot_tasks(tasks, max_workers=2, progress_callback=progress_callback)
     elif market == "HK":
         _emit_progress(progress_callback, "获取热门港股", 30)
         hot = recommender.get_hot_stocks_hk(limit=20)
@@ -65,7 +60,7 @@ def _emit_progress(progress_callback, stage, percent, **metrics):
 
 
 def _run_hot_tasks(tasks, max_workers=4, progress_callback=None):
-    """并发获取热门板块数据，单个源失败不拖垮整页。"""
+    """并发获取涨跌排行数据，单个源失败不拖垮整页。"""
     results = {key: [] for key in tasks}
     total = len(tasks)
     completed = 0
@@ -93,12 +88,12 @@ def _run_hot_tasks(tasks, max_workers=4, progress_callback=None):
 def _render_hot_loading(container, market, step, percent):
     market_label = {"CN": "A股", "HK": "港股", "US": "美股"}.get(market, market)
     percent = max(0, min(100, int(percent or 0)))
-    container.info(f"正在刷新热门板块 · {market_label}｜{step or '正在获取数据'}｜{percent}%")
+    container.info(f"正在刷新涨跌排行 · {market_label}｜{step or '正在获取数据'}｜{percent}%")
 
 
 def hot_stocks_page():
-    """热门板块页面"""
-    st.markdown("# 热门板块")
+    """涨跌排行页面"""
+    st.markdown("# 涨跌排行")
 
     if 'hot_market' not in st.session_state:
         st.session_state.hot_market = "CN"
@@ -132,7 +127,7 @@ def hot_stocks_page():
         market_label = {"CN": "A股", "US": "美股", "HK": "港股"}.get(market, market)
         progress = make_progress_reporter(
             loading_panel,
-            "正在刷新热门板块",
+            "正在刷新涨跌排行",
             context=market_label,
         )
         progress.update("启动", 5)
@@ -151,7 +146,7 @@ def hot_stocks_page():
         data = st.session_state.get('hot_data')
 
     if not data:
-        st.info("点击“获取数据”刷新行业、概念与个股涨跌幅排行。")
+        st.info("点击“获取数据”刷新个股涨幅榜和跌幅榜。")
         return
 
     status = st.session_state.get("hot_data_status") or build_hot_data_status(data)
@@ -166,34 +161,10 @@ def hot_stocks_page():
         st.warning("部分榜单为空：" + "、".join(missing_labels))
 
     if market == "CN":
-        sectors = data.get('sectors', [])
-        concepts = data.get('concepts', [])
         gainers = data.get('gainers', [])
         losers = data.get('losers', [])
 
-        st.caption("热门板块与个股涨跌幅榜用于观察全市场热度，保留创业板、科创板、北交所；智能推荐和推荐计划才仅限沪深主板。")
-
-        st.subheader("行业板块排行")
-        if sectors:
-            df_sectors = pd.DataFrame(sectors)
-            def color_change(val):
-                if val > 0:
-                    return 'color: #ff3b30'
-                elif val < 0:
-                    return 'color: #34c759'
-                return ''
-            df_styled = df_sectors.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
-            st.dataframe(df_styled, width="stretch", hide_index=True)
-        else:
-            st.info("暂无行业板块排行数据：当前行业板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
-
-        st.subheader("概念板块排行")
-        if concepts:
-            df_concepts = pd.DataFrame(concepts)
-            df_c_styled = df_concepts.style.map(color_change, subset=['涨跌幅', '领涨股涨幅'])
-            st.dataframe(df_c_styled, width="stretch", hide_index=True)
-        else:
-            st.info("暂无概念板块排行数据：当前概念板块数据源未返回有效结果，个股涨跌幅榜仍可正常参考。")
+        st.caption("涨跌排行用于观察全市场个股涨跌幅，保留创业板、科创板、北交所；智能推荐和推荐计划才仅限对应策略股票池。")
 
         st.subheader("个股涨幅榜")
         df_gainers = pd.DataFrame(gainers)

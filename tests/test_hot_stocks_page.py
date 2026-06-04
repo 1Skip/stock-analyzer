@@ -1,16 +1,16 @@
-"""热门板块页面工具测试。"""
+"""涨跌排行页面工具测试。"""
 
 from ui.hot_stocks_page import _run_hot_tasks
 
 
 def test_run_hot_tasks_collects_results():
     result = _run_hot_tasks({
-        "sectors": lambda: [{"板块": "电力"}],
-        "concepts": lambda: [{"板块": "特高压"}],
+        "gainers": lambda: [{"代码": "000001"}],
+        "losers": lambda: [{"代码": "000002"}],
     })
 
-    assert result["sectors"][0]["板块"] == "电力"
-    assert result["concepts"][0]["板块"] == "特高压"
+    assert result["gainers"][0]["代码"] == "000001"
+    assert result["losers"][0]["代码"] == "000002"
 
 
 def test_run_hot_tasks_isolates_failures():

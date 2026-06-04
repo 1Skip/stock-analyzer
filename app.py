@@ -62,7 +62,7 @@ def _render_selected_page(page):
     """渲染当前选中的主页面，避免各页面输出逻辑散落在入口中。"""
     if page == "个股分析":
         analyze_stock_page()
-    elif page == "热门板块":
+    elif page == "涨跌排行":
         hot_stocks_page()
     elif page == "智能推荐":
         recommended_stocks_page()
@@ -89,7 +89,7 @@ def main():
     """渲染主应用。"""
     nav_items = [
         "个股分析",
-        "热门板块",
+        "涨跌排行",
         "智能推荐",
         "股票对比",
         "回测验证",
@@ -98,11 +98,12 @@ def main():
     ]
     nav_emoji = {
         "个股分析": "📈",
-        "热门板块": "🔥",
+        "涨跌排行": "🔥",
         "智能推荐": "💡",
         "股票对比": "📊",
         "回测验证": "⏱️",
         "历史日报": "📄",
+        "系统状态": "🛠️",
     }
 
     if "main_page" not in st.session_state:
