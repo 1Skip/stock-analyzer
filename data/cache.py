@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import base64
+import logging
 import re
 import threading
 import time
@@ -15,6 +16,7 @@ from typing import Any
 from config import RUNTIME_CACHE_DIR
 
 
+logger = logging.getLogger(__name__)
 _CACHE_LOCKS: dict[Path, threading.Lock] = {}
 _CACHE_LOCKS_GUARD = threading.Lock()
 
@@ -56,6 +58,7 @@ class JsonFileCache:
         try:
             updated_at = datetime.fromisoformat(item["updated_at"])
         except Exception:
+            logger.debug("缓存条目时间戳无效: path=%s key=%s", self.path, key, exc_info=True)
             return None
         if datetime.now() - updated_at > self.ttl:
             return None
@@ -89,6 +92,7 @@ class JsonFileCache:
                 data = json.load(file)
             return data if isinstance(data, dict) else {}
         except Exception:
+            logger.warning("读取 JSON 缓存失败，按空缓存处理: %s", self.path, exc_info=True)
             return {}
 
     @contextmanager
@@ -109,6 +113,7 @@ class JsonFileCache:
                         lock_path.unlink(missing_ok=True)
                         continue
                     except Exception:
+                        logger.debug("清理过期缓存锁失败: %s", lock_path, exc_info=True)
                         pass
                 if time.monotonic() > deadline:
                     try:
@@ -116,6 +121,7 @@ class JsonFileCache:
                             lock_path.unlink(missing_ok=True)
                             continue
                     except Exception:
+                        logger.debug("检查缓存锁超时状态失败: %s", lock_path, exc_info=True)
                         pass
                     raise TimeoutError(f"cache lock timeout: {lock_path}")
                 time.sleep(0.05)
@@ -128,6 +134,7 @@ class JsonFileCache:
                 try:
                     lock_path.unlink(missing_ok=True)
                 except Exception:
+                    logger.debug("释放缓存锁失败: %s", lock_path, exc_info=True)
                     pass
 
 
@@ -140,6 +147,7 @@ def _is_stale_process_lock(lock_path: Path, max_age_seconds: float = 60.0) -> bo
         lines = lock_path.read_text(encoding="utf-8").splitlines()
         pid = int(lines[0].strip()) if lines else None
     except Exception:
+        logger.debug("读取缓存锁进程信息失败: %s", lock_path, exc_info=True)
         pid = None
     if pid and _process_exists(pid):
         return False

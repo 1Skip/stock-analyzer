@@ -303,7 +303,7 @@ class TestGetStockDataCN:
 
         monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
         monkeypatch.setattr(
             'data_fetcher.StockDataFetcher._is_cn_daily_kline_fresh',
             staticmethod(lambda data: True),
@@ -347,7 +347,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare_em", lambda self, *args, **kwargs: None)
         monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare", lambda self, *args, **kwargs: fresh)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         result = fetcher.get_stock_data('600246', period='1y', market='CN', adjust='qfq')
@@ -370,7 +370,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         # 禁用离线缓存
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -405,7 +405,7 @@ class TestGetStockDataCN:
 
         monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('auto')
@@ -420,8 +420,8 @@ class TestGetStockDataCN:
                             lambda url, **kw: exec('raise Exception("network error")'))
 
         fetcher = StockDataFetcher()
-        monkeypatch.setattr(fetcher, '_load_offline_cache', lambda s: None)
-        monkeypatch.setattr(fetcher, '_save_offline_cache', lambda s, d: None)
+        monkeypatch.setattr(fetcher, '_load_offline_cache', lambda s, **kwargs: None)
+        monkeypatch.setattr(fetcher, '_save_offline_cache', lambda s, d, **kwargs: None)
         assert fetcher.get_stock_data('000001', period='1y', market='CN') is None
 
     def test_offline_cache_as_last_resort(self, monkeypatch, tmp_path):
@@ -463,7 +463,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -483,7 +483,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -505,7 +505,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -526,7 +526,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -552,7 +552,7 @@ class TestGetStockDataCN:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_hist', mock_ak_hist)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare_em')
@@ -1131,7 +1131,7 @@ class TestSourcePriority:
         monkeypatch.setattr('data_fetcher.AKSHARE_AVAILABLE', True)
         monkeypatch.setattr('data_fetcher.ak.stock_zh_a_daily', mock_ak_daily)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')
@@ -1160,7 +1160,7 @@ class TestSourcePriority:
 
         monkeypatch.setattr('data_fetcher._session.get', mock_get)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('sina')
@@ -1179,7 +1179,7 @@ class TestSourcePriority:
 
         monkeypatch.setattr('data_fetcher.yf.Ticker', MockTicker)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
-                            lambda self, s, d: None)
+                            lambda self, s, d, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('yfinance')

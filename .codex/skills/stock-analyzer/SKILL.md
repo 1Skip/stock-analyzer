@@ -9,7 +9,7 @@ Use this skill whenever working in this `stock_analyzer` repository.
 
 ## First Steps
 
-1. Read `CLAUDE.md` before non-trivial code or process changes.
+1. Read `agent.md` before non-trivial code or process changes.
 2. Read `docs/memory/MEMORY.md` and the relevant latest memory file when the request refers to prior decisions, red lines, bugs, recommendation behavior, scheduler, Feishu, GitHub Actions, or "更新推送".
 3. Prefer `rg` for searching and inspect the actual code path before answering "why", "is it enabled", "has it cached", "has it pushed", or "is it fixed".
 4. Answer and commit messages in Chinese for this project.

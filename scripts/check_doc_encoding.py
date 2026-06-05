@@ -8,7 +8,7 @@ import argparse
 from pathlib import Path
 
 
-DEFAULT_ROOTS = [Path("README.md"), Path("CLAUDE.md"), Path("docs")]
+DEFAULT_ROOTS = [Path("README.md"), Path("agent.md"), Path("docs")]
 
 
 def iter_markdown(paths: list[Path]):

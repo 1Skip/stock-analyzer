@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import re
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+
+import requests
+import pandas as pd
+
+from data.providers.sina_realtime_provider import SinaRealtimeProvider
 
 
 CODE = "\u4ee3\u7801"
@@ -14,6 +20,14 @@ TURNOVER_RATE = "\u6362\u624b\u7387"
 VOLUME = "\u6210\u4ea4\u91cf"
 AMOUNT = "\u6210\u4ea4\u989d"
 HEAT_SCORE = "\u70ed\u5ea6\u5206\u6570"
+
+
+_SINA_SESSION = requests.Session()
+_SINA_SESSION.trust_env = False
+
+
+def _default_sina_provider() -> SinaRealtimeProvider:
+    return SinaRealtimeProvider(_SINA_SESSION)
 
 
 def hot_stocks_cn(
@@ -98,7 +112,18 @@ def hot_stocks_hk(
     yf_module: Any,
     limit: int = 20,
     max_workers: int = 5,
+    sina_provider: Any | None = None,
+    ak_module: Any | None = None,
+    eastmoney_provider: Any | None | bool = None,
 ) -> list[dict[str, Any]]:
+    ak_results = _hot_stocks_hk_from_akshare(
+        ak_module,
+        limit=limit,
+        eastmoney_provider=eastmoney_provider,
+    )
+    if ak_results:
+        return ak_results[:limit]
+
     results: list[dict[str, Any]] = []
 
     def fetch_stock_info(stock: dict[str, Any]) -> dict[str, Any] | None:
@@ -130,6 +155,8 @@ def hot_stocks_hk(
             result = future.result()
             if result:
                 results.append(result)
+    if not results:
+        results = _hot_stocks_hk_from_sina(stocks[:limit], sina_provider=sina_provider)
     results.sort(key=lambda item: item[HEAT_SCORE], reverse=True)
     return results[:limit]
 
@@ -140,6 +167,7 @@ def hot_stocks_us(
     yf_module: Any,
     limit: int = 20,
     max_workers: int = 5,
+    sina_provider: Any | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
 
@@ -170,5 +198,270 @@ def hot_stocks_us(
             result = future.result()
             if result:
                 results.append(result)
+    if not results:
+        results = _hot_stocks_us_from_sina(symbols[:limit], sina_provider=sina_provider)
     results.sort(key=lambda item: item["volume"], reverse=True)
     return results[:limit]
+
+
+def _hot_stocks_hk_from_sina(
+    stocks: list[dict[str, Any]],
+    *,
+    sina_provider: Any | None = None,
+) -> list[dict[str, Any]]:
+    provider = sina_provider or _default_sina_provider()
+    results: list[dict[str, Any]] = []
+    for stock in stocks:
+        symbol = str(stock.get("code") or "").strip()
+        if not symbol:
+            continue
+        try:
+            quote = provider.fetch_global_quote(symbol, "hk")
+        except Exception:
+            quote = None
+        if not quote:
+            continue
+        price = _safe_float(quote.get("price"))
+        change = _safe_float(quote.get("change"))
+        volume = _safe_float(quote.get("volume")) or 0
+        if price is None or change is None:
+            continue
+        results.append(
+            {
+                CODE: symbol,
+                NAME: quote.get("name") or stock.get("name") or symbol,
+                LATEST_PRICE: round(price, 2),
+                CHANGE_PCT: round(change, 2),
+                TURNOVER_RATE: None,
+                VOLUME: int(volume),
+                AMOUNT: int(volume * price) if volume > 0 else 0,
+                HEAT_SCORE: round(abs(change), 2),
+                "source": "新浪财经",
+            }
+        )
+    return results
+
+
+def _hot_stocks_hk_from_akshare(
+    ak_module: Any | None,
+    *,
+    limit: int,
+    eastmoney_provider: Any | None | bool = None,
+) -> list[dict[str, Any]]:
+    if eastmoney_provider is not False:
+        provider = eastmoney_provider or _hot_stocks_hk_from_eastmoney
+        try:
+            direct_results = provider(limit=limit)
+        except TypeError:
+            direct_results = provider(limit)
+        if direct_results:
+            return direct_results
+    if ak_module is None or not hasattr(ak_module, "stock_hk_hot_rank_em"):
+        return []
+    try:
+        df = _call_without_proxy_env(ak_module.stock_hk_hot_rank_em)
+    except Exception:
+        return []
+    if df is None or getattr(df, "empty", True):
+        return []
+    results: list[dict[str, Any]] = []
+    for _, row in df.head(limit).iterrows():
+        symbol = str(row.get(CODE) or row.get("代码") or "").strip()
+        if not symbol:
+            continue
+        price = _safe_float(row.get(LATEST_PRICE) or row.get("最新价"))
+        change = _safe_float(row.get(CHANGE_PCT) or row.get("涨跌幅"))
+        if price is None or change is None:
+            continue
+        results.append(
+            {
+                CODE: symbol.zfill(5) if symbol.isdigit() else symbol,
+                NAME: row.get(NAME) or row.get("股票名称") or symbol,
+                LATEST_PRICE: round(price, 2),
+                CHANGE_PCT: round(change, 2),
+                TURNOVER_RATE: None,
+                VOLUME: None,
+                AMOUNT: None,
+                HEAT_SCORE: round(abs(change), 2),
+                "source": "东方财富港股人气榜",
+            }
+        )
+    return results
+
+
+def _hot_stocks_hk_from_eastmoney(*, limit: int) -> list[dict[str, Any]]:
+    try:
+        rank_response = _SINA_SESSION.post(
+            "https://emappdata.eastmoney.com/stockrank/getAllCurrHkUsList",
+            json={
+                "appId": "appId01",
+                "globalId": "786e4c21-70dc-435a-93bb-38",
+                "marketType": "000003",
+                "pageNo": 1,
+                "pageSize": max(100, limit),
+            },
+            timeout=8,
+        )
+        if rank_response.status_code != 200:
+            return []
+        rank_data = rank_response.json().get("data") or []
+        rank_df = pd.DataFrame(rank_data)
+        if rank_df.empty or "sc" not in rank_df.columns:
+            return []
+        rank_df = rank_df.head(max(1, limit)).copy()
+        rank_df["code"] = rank_df["sc"].astype(str).str.split("|").str[1]
+        secids = ",".join("116." + str(code) for code in rank_df["code"] if str(code))
+        if not secids:
+            return []
+        quote_by_code = _eastmoney_hk_quotes(secids)
+        if not quote_by_code:
+            return _eastmoney_rank_with_sina_quotes(rank_df, limit=limit)
+    except Exception:
+        return []
+
+    results: list[dict[str, Any]] = []
+    for _, row in rank_df.iterrows():
+        symbol = str(row.get("code") or "").strip()
+        item = quote_by_code.get(symbol)
+        if not symbol or not item:
+            continue
+        price = _safe_float(item.get("f2"))
+        change = _safe_float(item.get("f3"))
+        if price is None or change is None:
+            continue
+        results.append(
+            {
+                CODE: symbol.zfill(5) if symbol.isdigit() else symbol,
+                NAME: item.get("f14") or symbol,
+                LATEST_PRICE: round(price, 2),
+                CHANGE_PCT: round(change, 2),
+                TURNOVER_RATE: None,
+                VOLUME: None,
+                AMOUNT: None,
+                HEAT_SCORE: round(abs(change), 2),
+                "source": "东方财富港股人气榜",
+            }
+        )
+    return results[:limit]
+
+
+def _eastmoney_hk_quotes(secids: str) -> dict[str, dict[str, Any]]:
+    try:
+        quote_response = _SINA_SESSION.get(
+            "https://push2.eastmoney.com/api/qt/ulist.np/get",
+            params={
+                "ut": "f057cbcbce2a86e2866ab8877db1d059",
+                "fltt": "2",
+                "invt": "2",
+                "fields": "f14,f3,f12,f2",
+                "secids": secids,
+            },
+            timeout=8,
+        )
+        if quote_response.status_code != 200:
+            return {}
+        quotes = ((quote_response.json().get("data") or {}).get("diff")) or []
+        return {str(item.get("f12") or ""): item for item in quotes}
+    except Exception:
+        return {}
+
+
+def _eastmoney_rank_with_sina_quotes(rank_df: pd.DataFrame, *, limit: int) -> list[dict[str, Any]]:
+    provider = _default_sina_provider()
+    results: list[dict[str, Any]] = []
+    for _, row in rank_df.iterrows():
+        symbol = str(row.get("code") or "").strip()
+        if not symbol:
+            continue
+        try:
+            quote = provider.fetch_global_quote(symbol, "hk")
+        except Exception:
+            quote = None
+        if not quote:
+            continue
+        price = _safe_float(quote.get("price"))
+        change = _safe_float(quote.get("change"))
+        volume = _safe_float(quote.get("volume")) or 0
+        if price is None or change is None:
+            continue
+        results.append(
+            {
+                CODE: symbol.zfill(5) if symbol.isdigit() else symbol,
+                NAME: quote.get("name") or symbol,
+                LATEST_PRICE: round(price, 2),
+                CHANGE_PCT: round(change, 2),
+                TURNOVER_RATE: None,
+                VOLUME: int(volume),
+                AMOUNT: int(volume * price) if volume > 0 else 0,
+                HEAT_SCORE: round(abs(change), 2),
+                "source": "东方财富港股人气榜+新浪行情",
+            }
+        )
+    return results[:limit]
+
+
+def _call_without_proxy_env(func: Any) -> Any:
+    proxy_keys = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    )
+    old_values = {key: os.environ.get(key) for key in proxy_keys}
+    try:
+        for key in proxy_keys:
+            os.environ.pop(key, None)
+        return func()
+    finally:
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _hot_stocks_us_from_sina(
+    symbols: list[str],
+    *,
+    sina_provider: Any | None = None,
+) -> list[dict[str, Any]]:
+    provider = sina_provider or _default_sina_provider()
+    results: list[dict[str, Any]] = []
+    for raw_symbol in symbols:
+        symbol = str(raw_symbol or "").strip().upper()
+        if not symbol:
+            continue
+        try:
+            quote = provider.fetch_global_quote(symbol, "us")
+        except Exception:
+            quote = None
+        if not quote:
+            continue
+        price = _safe_float(quote.get("price"))
+        change = _safe_float(quote.get("change"))
+        volume = _safe_float(quote.get("volume")) or 0
+        if price is None or change is None:
+            continue
+        results.append(
+            {
+                "symbol": symbol,
+                "name": quote.get("name") or symbol,
+                "price": round(price, 2),
+                "change": round(change, 2),
+                "volume": int(volume),
+                "market_cap": 0,
+                "source": "新浪财经",
+            }
+        )
+    return results
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None

@@ -792,7 +792,7 @@ class StockRecommender:
         return market_rankings.top_losers(ranking, limit)
 
     def get_hot_stocks_hk(self, limit=20):
-        return hot_stocks.hot_stocks_hk(POPULAR_HK_STOCKS, yf_module=yf, limit=limit)
+        return hot_stocks.hot_stocks_hk(POPULAR_HK_STOCKS, yf_module=yf, ak_module=ak, limit=limit)
 
     def get_top_gainers_hk(self, limit=10, hot_stocks=None):
         """获取港股涨幅榜（可传入预取的 hot_stocks 避免重复请求）"""

@@ -1,5 +1,6 @@
 # 项目 Memory 索引
 
+- [Bug fixes & context 2026-06-05](bug_fixes_and_context_2026-06-05.md) — 合并 `CLAUDE.md` 到 `agent.md` 并删除旧文档；完成低风险工程优化、系统状态只读诊断、缓存日志、港股/美股涨跌排行真实数据兜底和结果型下拉框验证；非网络全量测试 `867 passed`。
 - [Bug fixes & context 2026-06-04](bug_fixes_and_context_2026-06-04.md) — 完成工程优化收尾：智能推荐模块拆分、行情 provider 化、调度状态可观测、真实数据契约/文档/HTML 安全检查、分时改回新浪优先并按同花顺式波浪线展示；明确推荐策略红线未改。
 - [Bug fixes & context 2026-06-03](bug_fixes_and_context_2026-06-03.md) — 风控防御看板重排主结论/风险/观察/支撑，指标说明改为内嵌展开；扩展信息深层数据链路修复，资金流/股息率等有值展示、无值降噪并在数据质量区说明；Streamlit `width="stretch"` 与 selectbox 状态警告清理。
 - [Bug fixes & context 2026-05-21](bug_fixes_and_context_2026-05-21.md) — 个股分析日K/成交量/MA/KDJ/BOLL 与同花顺截图口径对齐；新增同花顺日K源、日K新鲜度回退、旧 session 日K失效、成交量真实单位换算、日K range slider 移除和中文名称兜底。
