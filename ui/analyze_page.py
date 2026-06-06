@@ -450,6 +450,8 @@ def _volume_series_for_display(data, quote=None):
 
     display_volume = volume.astype(float).copy()
     quote_day = _quote_date(quote)
+    if quote_day is None:
+        return display_volume
     last_day = None
     if isinstance(display_volume.index, pd.DatetimeIndex) and not display_volume.index.empty:
         last_day = display_volume.index[-1].normalize()
@@ -1006,6 +1008,13 @@ def _load_cached_daily_kline_fallback(symbol, market):
             return None
         data.attrs["data_source"] = "本地真实K线缓存"
         data.attrs["adjust_method"] = "前复权"
+        cached_attrs = cached.get("attrs") if isinstance(cached.get("attrs"), dict) else {}
+        for attr_key, attr_value in cached_attrs.items():
+            if attr_key != "data_source":
+                data.attrs[attr_key] = attr_value
+        if "volume" in data.columns and not data.attrs.get("volume_unit"):
+            max_volume = pd.to_numeric(data["volume"], errors="coerce").dropna().max()
+            data.attrs["volume_unit"] = "share" if pd.notna(max_volume) and max_volume >= 1_000_000 else "hand"
         data.attrs["source_note"] = "在线日K源暂不可用，当前显示本地最近一次真实前复权日K缓存"
         return data
     except Exception:
@@ -1047,152 +1056,91 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
     info = {'shortName': symbol, 'symbol': symbol}
     data = None
-    cached_daily_seed = _load_cached_daily_kline_fallback(symbol, market)
     quote = None
     intraday_data = None
     profile = None
     extended_info = None
 
-    if cached_daily_seed is not None:
-        _emit_progress(progress_callback, "读取本地真实K线缓存", 22, symbol=symbol)
-        data = cached_daily_seed
-        total = 6 if market == "CN" else 3
-        _emit_progress(progress_callback, "历史K线完成", 45, done=1, total=total)
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
-        futures = {}
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
+    futures = {}
+    try:
+        _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
+        futures = {
+            'info': executor.submit(get_cached_stock_info, symbol, market),
+            'data': executor.submit(
+                get_cached_stock_data,
+                symbol,
+                '1y',
+                market,
+                'qfq' if market == "CN" else "",
+                stock_data_cache_version(market),
+            ),
+            'quote': executor.submit(get_cached_realtime_quote, symbol, market),
+        }
+        if market == "CN":
+            futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+            futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
+            futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+
+        completed = 0
+        total = len(futures)
+
         try:
-            futures = {
-                'info': executor.submit(get_cached_stock_info, symbol, market),
-                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
-            }
-            if market == "CN":
-                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
-                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
-                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+            data = futures['data'].result(timeout=20)
+        except Exception:
+            data = _load_cached_daily_kline_fallback(symbol, market)
+        if data is None or getattr(data, "empty", True):
+            data = _load_cached_daily_kline_fallback(symbol, market)
+        completed += 1
+        _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
 
-            try:
-                info_result = futures['info'].result(timeout=0.5)
-                if info_result:
-                    info = info_result
-            except Exception:
-                info = {'shortName': symbol, 'symbol': symbol}
-            _emit_progress(progress_callback, "基础信息完成", 52, done=2, total=total)
-
-            try:
-                quote = futures['quote'].result(timeout=1.0)
-            except Exception:
-                quote = None
-            _emit_progress(progress_callback, "实时行情完成", 60, done=3, total=total)
-
-            try:
-                if 'intraday' in futures:
-                    intraday_data = futures['intraday'].result(timeout=0.5)
-            except Exception:
-                intraday_data = None
-            if 'intraday' in futures:
-                _emit_progress(progress_callback, "分时数据完成", 68, done=4, total=total)
-
-            try:
-                if 'profile' in futures:
-                    profile = futures['profile'].result(timeout=2.5)
-            except Exception:
-                profile = {"loading": True, "source": "基础资料服务"}
-            if 'profile' in futures:
-                _emit_progress(progress_callback, "基础资料完成", 76, done=5, total=total)
-
-            try:
-                if 'extended_info' in futures:
-                    extended_info = futures['extended_info'].result(timeout=8.5)
-            except Exception:
-                extended_info = {"loading": True, "source": "AKShare"}
-            if 'extended_info' in futures:
-                _emit_progress(progress_callback, "扩展资料完成", 82, done=6, total=total)
-        finally:
-            for future in futures.values():
-                if not future.done():
-                    future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
-    else:
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
-        futures = {}
         try:
-            _emit_progress(progress_callback, "提交行情任务", 22, symbol=symbol)
-            futures = {
-                'info': executor.submit(get_cached_stock_info, symbol, market),
-                'data': executor.submit(
-                    get_cached_stock_data,
-                    symbol,
-                    '1y',
-                    market,
-                    'qfq' if market == "CN" else "",
-                    stock_data_cache_version(market),
-                ),
-                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
-            }
-            if market == "CN":
-                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
-                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
-                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+            info_result = futures['info'].result(timeout=0.2)
+            if info_result:
+                info = info_result
+        except Exception:
+            info = {'shortName': symbol, 'symbol': symbol}
+        completed += 1
+        _emit_progress(progress_callback, "基础信息完成", 52, done=completed, total=total)
 
-            completed = 0
-            total = len(futures)
+        try:
+            quote = futures['quote'].result(timeout=0.2)
+        except Exception:
+            quote = None
+        completed += 1
+        _emit_progress(progress_callback, "实时行情完成", 60, done=completed, total=total)
 
-            try:
-                data = futures['data'].result(timeout=20)
-            except Exception:
-                data = _load_cached_daily_kline_fallback(symbol, market)
-            if data is None or getattr(data, "empty", True):
-                data = _load_cached_daily_kline_fallback(symbol, market)
-            completed += 1
-            _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
-
-            try:
-                info_result = futures['info'].result(timeout=0.2)
-                if info_result:
-                    info = info_result
-            except Exception:
-                info = {'shortName': symbol, 'symbol': symbol}
-            completed += 1
-            _emit_progress(progress_callback, "基础信息完成", 52, done=completed, total=total)
-
-            try:
-                quote = futures['quote'].result(timeout=0.2)
-            except Exception:
-                quote = None
-            completed += 1
-            _emit_progress(progress_callback, "实时行情完成", 60, done=completed, total=total)
-
-            try:
-                if 'intraday' in futures:
-                    intraday_data = futures['intraday'].result(timeout=0.2)
-            except Exception:
-                intraday_data = None
+        try:
             if 'intraday' in futures:
-                completed += 1
-                _emit_progress(progress_callback, "分时数据完成", 68, done=completed, total=total)
+                intraday_data = futures['intraday'].result(timeout=0.2)
+        except Exception:
+            intraday_data = None
+        if 'intraday' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "分时数据完成", 68, done=completed, total=total)
 
-            try:
-                if 'profile' in futures:
-                    profile = futures['profile'].result(timeout=2.5)
-            except Exception:
-                profile = {"loading": True, "source": "基础资料服务"}
+        try:
             if 'profile' in futures:
-                completed += 1
-                _emit_progress(progress_callback, "基础资料完成", 76, done=completed, total=total)
+                profile = futures['profile'].result(timeout=2.5)
+        except Exception:
+            profile = {"loading": True, "source": "基础资料服务"}
+        if 'profile' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "基础资料完成", 76, done=completed, total=total)
 
-            try:
-                if 'extended_info' in futures:
-                    extended_info = futures['extended_info'].result(timeout=8.5)
-            except Exception:
-                extended_info = {"loading": True, "source": "AKShare"}
+        try:
             if 'extended_info' in futures:
-                completed += 1
-                _emit_progress(progress_callback, "扩展资料完成", 82, done=completed, total=total)
-        finally:
-            for future in futures.values():
-                if not future.done():
-                    future.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
+                extended_info = futures['extended_info'].result(timeout=8.5)
+        except Exception:
+            extended_info = {"loading": True, "source": "AKShare"}
+        if 'extended_info' in futures:
+            completed += 1
+            _emit_progress(progress_callback, "扩展资料完成", 82, done=completed, total=total)
+    finally:
+        for future in futures.values():
+            if not future.done():
+                future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if data is None or data.empty:
         return {

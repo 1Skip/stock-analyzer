@@ -313,7 +313,8 @@ class StockDataFetcher:
                 cache_key = self._offline_cache_key(symbol, adjust)
                 cache_data[cache_key] = {
                     'timestamp': datetime.now().isoformat(),
-                    'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data
+                    'data': data.to_json(orient='split', date_format='iso') if isinstance(data, pd.DataFrame) else data,
+                    'attrs': dict(getattr(data, 'attrs', {}) or {}) if isinstance(data, pd.DataFrame) else {},
                 }
 
                 # 原子写入：先写临时文件，再 os.replace 替换
@@ -380,6 +381,13 @@ class StockDataFetcher:
                 df.index = pd.to_datetime(df.index)
 
             df.attrs['data_source'] = f"离线缓存 ({age.days}天{age.seconds//3600}小时前)"
+            cached_attrs = cached.get('attrs') if isinstance(cached.get('attrs'), dict) else {}
+            for attr_key, attr_value in cached_attrs.items():
+                if attr_key != 'data_source':
+                    df.attrs[attr_key] = attr_value
+            if 'volume' in df.columns and not df.attrs.get('volume_unit'):
+                max_volume = pd.to_numeric(df['volume'], errors='coerce').dropna().max()
+                df.attrs['volume_unit'] = 'share' if pd.notna(max_volume) and max_volume >= 1_000_000 else 'hand'
             if adjust:
                 df.attrs['adjust_method'] = '前复权' if adjust == 'qfq' else adjust
             return df

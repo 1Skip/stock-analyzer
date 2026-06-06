@@ -168,13 +168,15 @@ def plot_volume_chart(data, quote=None):
     quote_volume = _quote_volume_in_hands(quote)
     if quote_volume is not None and not volume.empty:
         quote_day = _quote_date(quote)
+        if quote_day is None:
+            quote_volume = None
         last_day = data.index[-1].normalize() if isinstance(data.index, pd.DatetimeIndex) else None
-        if quote_day is not None and last_day is not None and quote_day > last_day:
+        if quote_volume is not None and quote_day is not None and last_day is not None and quote_day > last_day:
             volume = pd.concat([volume, pd.Series([quote_volume], index=[quote_day])])
             close_values = pd.concat([close_values, pd.Series([quote.get("price", close_values.iloc[-1])], index=[quote_day])])
             open_values = pd.concat([open_values, pd.Series([quote.get("open", open_values.iloc[-1])], index=[quote_day])])
             x_values = volume.index.strftime("%Y-%m-%d")
-        else:
+        elif quote_volume is not None:
             volume.iloc[-1] = quote_volume
 
     tick_values = _category_axis_ticks(x_values)

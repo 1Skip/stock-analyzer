@@ -270,6 +270,38 @@ class TestOfflineCache:
         assert '000001' in cache_data
         assert isinstance(cache_data['000001']['data'], str)
 
+    def test_offline_cache_preserves_volume_unit_attrs(self, tmp_path):
+        from data_fetcher import StockDataFetcher
+        cache_file = tmp_path / 'cache.json'
+        StockDataFetcher._offline_cache_file = str(cache_file)
+        fetcher = StockDataFetcher()
+        df = _make_ohlcv_df(days=30, base_price=10.0)
+        df.attrs["volume_unit"] = "share"
+
+        fetcher._save_offline_cache('000001', df)
+        restored = fetcher._load_offline_cache('000001')
+
+        assert restored.attrs["volume_unit"] == "share"
+
+    def test_offline_cache_infers_legacy_volume_unit(self, tmp_path):
+        from data_fetcher import StockDataFetcher
+        cache_file = tmp_path / 'cache.json'
+        df = _make_ohlcv_df(days=30, base_price=10.0)
+        cache_data = {
+            '000001': {
+                'timestamp': datetime.now().isoformat(),
+                'data': df.to_json(orient='split', date_format='iso'),
+            }
+        }
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f)
+
+        StockDataFetcher._offline_cache_file = str(cache_file)
+        fetcher = StockDataFetcher()
+        restored = fetcher._load_offline_cache('000001')
+
+        assert restored.attrs["volume_unit"] == "share"
+
 
 # ============================================================
 # TestGetStockData - 核心数据获取

@@ -127,7 +127,7 @@ class TestPlotCandlestickChart:
         assert 'plot_volume_chart(data, quote)' in chart_block
         assert '_latest_volume_values(data, profile, quote)' in chart_block
 
-    def test_volume_chart_uses_realtime_volume_without_date_ticks(self, sample_data):
+    def test_volume_chart_ignores_realtime_volume_without_quote_date(self, sample_data):
         from app import plot_volume_chart
 
         sample_data = sample_data.copy()
@@ -137,9 +137,8 @@ class TestPlotCandlestickChart:
         volume_trace = next(trace for trace in fig.data if trace.name == "量")
         ma5_trace = next(trace for trace in fig.data if trace.name == "MA5")
 
-        assert round(float(volume_trace.y[-1]), 4) == round(64735.54 / 10000, 4)
+        assert round(float(volume_trace.y[-1]), 4) == round(float(sample_data["volume"].iloc[-1]) / 10000, 4)
         expected_ma5 = sample_data["volume"].astype(float).copy()
-        expected_ma5.iloc[-1] = 64735.54
         assert round(float(ma5_trace.y[-1]), 4) == round(expected_ma5.rolling(5).mean().iloc[-1] / 10000, 4)
         assert fig.layout.xaxis.showticklabels is False
 

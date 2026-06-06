@@ -389,6 +389,58 @@ def test_volume_header_uses_realtime_volume_for_current_day_ma():
     ]
 
 
+def test_volume_header_ignores_realtime_volume_without_quote_date():
+    import pandas as pd
+    from ui.analyze_page import _latest_volume_values
+
+    data = pd.DataFrame({"volume": [
+        6192576, 8740527, 7439800, 6717828, 5904970,
+        8149267, 6880449, 6956600, 4403998, 5788700,
+    ]}, index=pd.date_range("2026-05-07", periods=10, freq="B"))
+    data.attrs["volume_unit"] = "share"
+    profile = {"float_shares": 662212199.0}
+    quote = {"volume": 64735.54, "volume_unit": "hand"}
+
+    assert _latest_volume_values(data, profile, quote) == [
+        ("量", "57887.00"),
+        ("MA5", "64358.03"),
+        ("MA10", "67174.71"),
+        ("换手", "0.87%"),
+    ]
+
+
+def test_cached_daily_kline_fallback_infers_volume_unit(tmp_path, monkeypatch):
+    import json
+    from datetime import datetime
+
+    from data_fetcher import StockDataFetcher
+    from ui.analyze_page import _load_cached_daily_kline_fallback
+
+    cache_file = tmp_path / "stock_cache.json"
+    data = pd.DataFrame(
+        {
+            "open": [10.0, 10.2],
+            "high": [10.5, 10.8],
+            "low": [9.8, 10.0],
+            "close": [10.3, 10.6],
+            "volume": [6_000_000, 7_000_000],
+        },
+        index=pd.to_datetime(["2026-06-03", "2026-06-04"]),
+    )
+    payload = {
+        StockDataFetcher._offline_cache_key("000001", "qfq"): {
+            "timestamp": datetime.now().isoformat(),
+            "data": data.to_json(orient="split", date_format="iso"),
+        }
+    }
+    cache_file.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(StockDataFetcher, "_offline_cache_file", str(cache_file))
+
+    restored = _load_cached_daily_kline_fallback("000001", "CN")
+
+    assert restored.attrs["volume_unit"] == "share"
+
+
 def test_recommend_page_shows_multi_factor_diagnostics():
     from pathlib import Path
 
@@ -1283,16 +1335,82 @@ def test_stock_profile_section_is_never_dropped_when_loading():
     assert "profile = futures['profile'].result(timeout=2.5)" in source
 
 
-def test_cached_daily_kline_fallback_still_fetches_auxiliary_sections():
-    from pathlib import Path
+def _analysis_daily_kline_fixture():
+    dates = pd.date_range("2026-04-01", periods=45, freq="B")
+    closes = [10 + i * 0.03 for i in range(len(dates))]
+    return pd.DataFrame(
+        {
+            "open": [price - 0.02 for price in closes],
+            "high": [price + 0.08 for price in closes],
+            "low": [price - 0.08 for price in closes],
+            "close": closes,
+            "volume": [1_000_000 + i * 10_000 for i in range(len(dates))],
+        },
+        index=dates,
+    )
 
-    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
-    cached_branch = source.split("if cached_daily_seed is not None:", 1)[1].split("else:", 1)[0]
 
-    assert "futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)" in cached_branch
-    assert "futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)" in cached_branch
-    assert "profile = {'loading': True" not in cached_branch
-    assert "extended_info = {'loading': True" not in cached_branch
+def test_run_stock_analysis_uses_online_daily_kline_before_local_fallback(monkeypatch):
+    import ui.analyze_page as analyze_page
+
+    online_data = _analysis_daily_kline_fixture()
+    online_data.attrs["data_provider"] = "同花顺"
+    online_data.attrs["volume_unit"] = "share"
+    fallback_calls = []
+
+    monkeypatch.setattr(analyze_page, "get_cached_stock_info", lambda *args: {"shortName": "测试股份", "symbol": "000001"})
+    monkeypatch.setattr(analyze_page, "get_cached_stock_data", lambda *args: online_data.copy())
+    monkeypatch.setattr(analyze_page, "get_cached_realtime_quote", lambda *args: None)
+    monkeypatch.setattr(analyze_page, "get_cached_intraday_data", lambda *args: None)
+    monkeypatch.setattr(analyze_page, "get_cached_stock_profile", lambda *args: {"name": "测试股份"})
+    monkeypatch.setattr(analyze_page, "get_cached_stock_extended_info", lambda *args: {"research_reports": []})
+
+    def fail_if_fallback_is_used(*args):
+        fallback_calls.append(args)
+        raise AssertionError("online daily kline should be tried before local fallback")
+
+    monkeypatch.setattr(analyze_page, "_load_cached_daily_kline_fallback", fail_if_fallback_is_used)
+
+    result = analyze_page._run_stock_analysis_task("000001", "CN", "1y")
+
+    assert "error" not in result
+    assert result["data"].attrs.get("data_provider") == "同花顺"
+    assert "source_note" not in result["data"].attrs
+    assert fallback_calls == []
+
+
+def test_run_stock_analysis_falls_back_after_online_daily_kline_failure_and_keeps_auxiliary(monkeypatch):
+    import ui.analyze_page as analyze_page
+
+    fallback_data = _analysis_daily_kline_fixture()
+    fallback_data.attrs["data_source"] = "本地真实K线缓存"
+    fallback_data.attrs["volume_unit"] = "share"
+    fallback_data.attrs["source_note"] = "在线日K源暂不可用，当前显示本地最近一次真实前复权日K缓存"
+    fallback_calls = []
+
+    def online_failure(*args):
+        raise RuntimeError("online source unavailable")
+
+    def fallback(*args):
+        fallback_calls.append(args)
+        return fallback_data.copy()
+
+    monkeypatch.setattr(analyze_page, "get_cached_stock_info", lambda *args: {"shortName": "测试股份", "symbol": "000001"})
+    monkeypatch.setattr(analyze_page, "get_cached_stock_data", online_failure)
+    monkeypatch.setattr(analyze_page, "get_cached_realtime_quote", lambda *args: None)
+    monkeypatch.setattr(analyze_page, "get_cached_intraday_data", lambda *args: None)
+    monkeypatch.setattr(analyze_page, "get_cached_stock_profile", lambda *args: {"industry": "测试行业"})
+    monkeypatch.setattr(analyze_page, "get_cached_stock_extended_info", lambda *args: {"research_reports": [{"title": "测试研报"}]})
+    monkeypatch.setattr(analyze_page, "_load_cached_daily_kline_fallback", fallback)
+
+    result = analyze_page._run_stock_analysis_task("000001", "CN", "1y")
+
+    assert "error" not in result
+    assert fallback_calls == [("000001", "CN")]
+    assert result["data"].attrs.get("data_source") == "本地真实K线缓存"
+    assert result["data"].attrs.get("source_note")
+    assert result["profile"] == {"industry": "测试行业"}
+    assert result["extended_info"] == {"research_reports": [{"title": "测试研报"}]}
 
 
 def test_analyze_page_keeps_top_watchlist_action():
