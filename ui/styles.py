@@ -515,6 +515,43 @@ CUSTOM_CSS = """
         margin: 6px 0 12px 0;
     }
 
+    /* ===== 回到顶部按钮 ===== */
+    #app-top {
+        position: absolute;
+        top: 0;
+    }
+    .back-to-top-button {
+        position: fixed;
+        right: 28px;
+        bottom: 28px;
+        z-index: 9999;
+        width: 46px;
+        height: 46px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 999px;
+        border: 1px solid rgba(85,199,255,0.30);
+        background: rgba(8, 20, 33, 0.90);
+        color: var(--text-main) !important;
+        box-shadow: 0 14px 34px rgba(0,0,0,0.30), 0 0 22px rgba(23,168,255,0.16);
+        font-size: 1.25rem;
+        font-weight: 900;
+        line-height: 1;
+        text-decoration: none !important;
+        backdrop-filter: blur(14px);
+        transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    .back-to-top-button:hover {
+        transform: translateY(-2px);
+        border-color: rgba(85,199,255,0.58);
+        color: #ffffff !important;
+        box-shadow: 0 18px 42px rgba(0,0,0,0.34), 0 0 26px rgba(23,168,255,0.24);
+    }
+    .back-to-top-button:active {
+        transform: scale(0.96);
+    }
+
     /* ===== Divider ===== */
     hr {
         opacity: 0.2;
@@ -1498,6 +1535,13 @@ CUSTOM_CSS = """
         }
         .agent-meta-grid {
             grid-template-columns: 1fr;
+        }
+        .back-to-top-button {
+            right: 16px;
+            bottom: 18px;
+            width: 42px;
+            height: 42px;
+            font-size: 1.12rem;
         }
     }
 </style>

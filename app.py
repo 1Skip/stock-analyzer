@@ -45,6 +45,16 @@ from ui.analyze_page import _validate_symbol, display_signals  # noqa: F401
 _PAGE_SWITCH_PENDING_KEY = "_page_switch_pending"
 
 
+def _render_back_to_top_button():
+    """渲染全局右下角回到顶部按钮。"""
+    st.markdown(
+        '<div id="app-top"></div>'
+        '<a class="back-to-top-button" href="#app-top" '
+        'aria-label="回到顶部" title="回到顶部">↑</a>',
+        unsafe_allow_html=True,
+    )
+
+
 def _sync_active_page(page):
     """切换主页面时 rerun 卸载旧 DOM，同时保留各页面已加载状态。"""
     if "_active_page" not in st.session_state:
@@ -87,6 +97,8 @@ def _render_main_page(page):
 
 def main():
     """渲染主应用。"""
+    _render_back_to_top_button()
+
     nav_items = [
         "个股分析",
         "涨跌排行",

@@ -69,6 +69,29 @@ def test_custom_css_does_not_keep_stale_pages_visible():
     assert "[data-stale=\"true\"]" not in CUSTOM_CSS
 
 
+def test_custom_css_has_back_to_top_button_styles():
+    assert ".back-to-top-button" in CUSTOM_CSS
+    assert "position: fixed;" in CUSTOM_CSS
+    assert "right: 28px;" in CUSTOM_CSS
+    assert "bottom: 28px;" in CUSTOM_CSS
+
+
+def test_app_renders_back_to_top_button(monkeypatch):
+    import app
+    import streamlit as st
+
+    calls = []
+    monkeypatch.setattr(st, "markdown", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    app._render_back_to_top_button()
+
+    html, kwargs = calls[0]
+    assert 'id="app-top"' in html[0]
+    assert 'class="back-to-top-button"' in html[0]
+    assert 'href="#app-top"' in html[0]
+    assert kwargs["unsafe_allow_html"] is True
+
+
 def test_committee_status_card_renders_local_status_only(monkeypatch):
     import inspect
     import app
