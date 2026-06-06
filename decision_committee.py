@@ -255,7 +255,6 @@ def _fundamental_agent(extended_info: dict[str, Any], profile: dict[str, Any]) -
     name = "基本面 Agent"
     financial = extended_info.get("financial") or {}
     metrics = financial.get("metrics") or {}
-    research = extended_info.get("research") or {}
     evidence = []
     warnings = []
     raw = 0
@@ -300,14 +299,6 @@ def _fundamental_agent(extended_info: dict[str, Any], profile: dict[str, Any]) -
             raw += 4
     if market_cap is not None:
         evidence.append(f"总市值 {_fmt_money(market_cap)}")
-    reports = research.get("reports") or []
-    if reports:
-        evidence.append(f"近期研报 {len(reports)} 篇")
-        raw += 6
-    consensus = (research.get("eps_consensus") or {}).get("values") or {}
-    if consensus:
-        evidence.append("存在一致预期 EPS")
-        raw += 5
     if not evidence:
         evidence.append("暂无完整基本面/估值数据")
 

@@ -1238,6 +1238,8 @@ def test_analyze_page_renders_extended_info_placeholder():
     assert 'extended_info = extended_info or {"loading": True}' in source
     assert "扩展信息仍在加载或当前请求未及时返回" in source
     assert 'extended_info = futures[\'extended_info\'].result(timeout=8.5)' in source
+    assert "研报覆盖：" in source
+    assert "一致预期：" in source
 
 
 def test_cached_extended_info_fetches_deep_layers_for_metric_cards():
@@ -1279,6 +1281,18 @@ def test_stock_profile_section_is_never_dropped_when_loading():
     assert "基础资料仍在加载或当前请求未及时返回" in source
     assert 'with st.expander("基础资料 / 估值", expanded=False)' in source
     assert "profile = futures['profile'].result(timeout=2.5)" in source
+
+
+def test_cached_daily_kline_fallback_still_fetches_auxiliary_sections():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    cached_branch = source.split("if cached_daily_seed is not None:", 1)[1].split("else:", 1)[0]
+
+    assert "futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)" in cached_branch
+    assert "futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)" in cached_branch
+    assert "profile = {'loading': True" not in cached_branch
+    assert "extended_info = {'loading': True" not in cached_branch
 
 
 def test_analyze_page_keeps_top_watchlist_action():

@@ -265,6 +265,10 @@ def _render_extended_info(extended_info):
     extended_info = extended_info or {"loading": True}
     financial = extended_info.get("financial") or {}
     fund_flow = extended_info.get("fund_flow") or {}
+    research = extended_info.get("research") or {}
+    reports = research.get("reports") or []
+    eps_consensus = research.get("eps_consensus") or {}
+    eps_values = eps_consensus.get("values") or {}
     news = extended_info.get("news") or []
 
     with st.expander("财务 / 资金 / 新闻", expanded=False):
@@ -295,6 +299,24 @@ def _render_extended_info(extended_info):
                 st.metric("近5日主力净流入", _format_money(fund_flow.get("five_day_main_net_inflow")))
         else:
             st.caption("资金流日期：暂无")
+
+        st.caption(f"研报覆盖：{len(reports)}篇" if reports else "研报覆盖：暂无")
+        if reports:
+            st.caption("研报摘要：")
+            for item in reports[:3]:
+                title = str(item.get("title") or item.get("name") or "未命名研报")
+                date = str(item.get("date") or item.get("publish_date") or "")
+                suffix = f" ({date})" if date else ""
+                st.markdown(f"- {title}{suffix}")
+
+        if eps_values:
+            eps_text = "；".join(f"{key}: {value}" for key, value in list(eps_values.items())[:4])
+            st.caption(f"一致预期：{eps_text}")
+        elif eps_consensus.get("status"):
+            reason = eps_consensus.get("reason") or eps_consensus.get("status")
+            st.caption(f"一致预期：暂无（{reason}）")
+        else:
+            st.caption("一致预期：暂无")
 
         news_date = _latest_news_date(news)
         if news:
@@ -1036,14 +1058,60 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
         data = cached_daily_seed
         total = 6 if market == "CN" else 3
         _emit_progress(progress_callback, "历史K线完成", 45, done=1, total=total)
-        _emit_progress(progress_callback, "基础信息完成", 52, done=2, total=total)
-        _emit_progress(progress_callback, "实时行情完成", 60, done=3, total=total)
-        if market == "CN":
-            profile = {"loading": True, "source": "基础资料服务"}
-            extended_info = {"loading": True, "source": "AKShare"}
-            _emit_progress(progress_callback, "分时数据完成", 68, done=4, total=total)
-            _emit_progress(progress_callback, "基础资料完成", 76, done=5, total=total)
-            _emit_progress(progress_callback, "扩展资料完成", 82, done=6, total=total)
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=5)
+        futures = {}
+        try:
+            futures = {
+                'info': executor.submit(get_cached_stock_info, symbol, market),
+                'quote': executor.submit(get_cached_realtime_quote, symbol, market),
+            }
+            if market == "CN":
+                futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
+                futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
+                futures['extended_info'] = executor.submit(get_cached_stock_extended_info, symbol, market)
+
+            try:
+                info_result = futures['info'].result(timeout=0.5)
+                if info_result:
+                    info = info_result
+            except Exception:
+                info = {'shortName': symbol, 'symbol': symbol}
+            _emit_progress(progress_callback, "基础信息完成", 52, done=2, total=total)
+
+            try:
+                quote = futures['quote'].result(timeout=1.0)
+            except Exception:
+                quote = None
+            _emit_progress(progress_callback, "实时行情完成", 60, done=3, total=total)
+
+            try:
+                if 'intraday' in futures:
+                    intraday_data = futures['intraday'].result(timeout=0.5)
+            except Exception:
+                intraday_data = None
+            if 'intraday' in futures:
+                _emit_progress(progress_callback, "分时数据完成", 68, done=4, total=total)
+
+            try:
+                if 'profile' in futures:
+                    profile = futures['profile'].result(timeout=2.5)
+            except Exception:
+                profile = {"loading": True, "source": "基础资料服务"}
+            if 'profile' in futures:
+                _emit_progress(progress_callback, "基础资料完成", 76, done=5, total=total)
+
+            try:
+                if 'extended_info' in futures:
+                    extended_info = futures['extended_info'].result(timeout=8.5)
+            except Exception:
+                extended_info = {"loading": True, "source": "AKShare"}
+            if 'extended_info' in futures:
+                _emit_progress(progress_callback, "扩展资料完成", 82, done=6, total=total)
+        finally:
+            for future in futures.values():
+                if not future.done():
+                    future.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
     else:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=6)
         futures = {}

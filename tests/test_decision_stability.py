@@ -59,6 +59,30 @@ def test_a_share_decision_is_stable_for_identical_inputs():
     assert second["agents"] == first["agents"]
 
 
+def test_optional_research_layers_do_not_change_core_decision_score():
+    data, signals, quote, extended_info, profile = _sample_decision_inputs()
+    without_research = {
+        **extended_info,
+        "research": {"reports": [], "eps_consensus": {}},
+    }
+    with_research = {
+        **extended_info,
+        "research": {
+            "reports": [{"title": "late report"}],
+            "eps_consensus": {"values": {"2026EPS": 1.23}},
+        },
+    }
+
+    base = build_a_share_decision(data, signals, quote, without_research, symbol="002541", stock_name="sample", profile=profile)
+    late = build_a_share_decision(data, signals, quote, with_research, symbol="002541", stock_name="sample", profile=profile)
+
+    assert late["score"] == base["score"]
+    assert late["confidence"] == base["confidence"]
+    assert late["action"] == base["action"]
+    assert late["position"] == base["position"]
+    assert "近期研报覆盖" in late["catalysts"]
+
+
 def test_cn_daily_kline_cache_version_is_stable_for_same_day_after_close(monkeypatch):
     import ui.cached_data as cached_data
 
