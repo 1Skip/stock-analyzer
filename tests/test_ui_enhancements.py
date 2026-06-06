@@ -1324,19 +1324,48 @@ def test_analyze_page_uses_qfq_daily_kline_without_realtime_indicator_merge():
     assert "MA30" in source
 
 
-def test_cn_stock_data_cache_version_refreshes_by_minute(monkeypatch):
+def test_cn_stock_data_cache_version_refreshes_by_minute_during_trading(monkeypatch):
     import ui.cached_data as cached_data
 
     class FakeDateTime:
         @classmethod
         def now(cls):
             from datetime import datetime
-            return datetime(2026, 5, 21, 17, 11)
+            return datetime(2026, 5, 21, 14, 11)
 
     monkeypatch.setattr(cached_data, "datetime", FakeDateTime)
 
-    assert cached_data.stock_data_cache_version("CN").endswith("202605211711")
+    assert cached_data.stock_data_cache_version("CN").endswith("202605211411")
     assert cached_data.stock_data_cache_version("US") == cached_data.STOCK_DATA_CACHE_VERSION
+
+
+def test_cn_stock_data_cache_version_is_stable_for_same_trading_day_after_close(monkeypatch):
+    import ui.cached_data as cached_data
+
+    class FakeDateTime:
+        current = None
+
+        @classmethod
+        def now(cls):
+            return cls.current
+
+    from datetime import datetime
+
+    monkeypatch.setattr(cached_data, "datetime", FakeDateTime)
+
+    versions = []
+    for current in (
+        datetime(2026, 5, 21, 15, 31),
+        datetime(2026, 5, 21, 17, 11),
+        datetime(2026, 5, 21, 21, 54),
+        datetime(2026, 5, 21, 22, 1),
+        datetime(2026, 5, 21, 23, 59),
+    ):
+        FakeDateTime.current = current
+        versions.append(cached_data.stock_data_cache_version("CN"))
+
+    assert len(set(versions)) == 1
+    assert versions[0].endswith("20260521-closed")
 
 
 def test_recommend_page_displays_profile_fields():

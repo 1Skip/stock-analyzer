@@ -27,6 +27,20 @@ STOCK_DATA_CACHE_VERSION = "stock-data-v2-ths-daily-kline"
 INTRADAY_CACHE_VERSION = "intraday-v3-sina-chart-ths-style"
 
 
+def _cn_daily_kline_cache_bucket(now=None):
+    """Use minute refresh only while A-share daily bars can still be changing."""
+    current = now or datetime.now()
+    minutes = current.hour * 60 + current.minute
+    weekday = current.weekday()
+    trading_day = current.strftime("%Y%m%d")
+
+    if weekday < 5 and ((9 * 60 + 15) <= minutes <= (15 * 60 + 30)):
+        return current.strftime("%Y%m%d%H%M")
+    if weekday < 5 and minutes < (9 * 60 + 15):
+        return f"{trading_day}-preopen"
+    return f"{trading_day}-closed"
+
+
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=64, show_spinner=False)
 def get_cached_stock_data(symbol, period, market, adjust="", cache_version=STOCK_DATA_CACHE_VERSION):
     """缓存股票数据获取"""
@@ -39,7 +53,7 @@ def get_cached_stock_data(symbol, period, market, adjust="", cache_version=STOCK
 
 def stock_data_cache_version(market="CN"):
     if market == "CN":
-        return f"{STOCK_DATA_CACHE_VERSION}-{datetime.now().strftime('%Y%m%d%H%M')}"
+        return f"{STOCK_DATA_CACHE_VERSION}-{_cn_daily_kline_cache_bucket()}"
     return STOCK_DATA_CACHE_VERSION
 
 
