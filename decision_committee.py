@@ -744,10 +744,29 @@ def _collect_points(agents: list[AgentView], *, positive: bool) -> list[str]:
     result = []
     for agent in agents:
         if positive and agent.score_delta > 0:
-            result.extend(agent.evidence[:2])
-        if not positive and agent.score_delta < 0:
-            result.extend(agent.warnings or agent.evidence[:2])
+            result.extend(_directional_items(agent.evidence, positive=True)[:2])
+        if not positive:
+            if agent.score_delta < 0:
+                result.extend(agent.warnings)
+            result.extend(_directional_items(agent.evidence, positive=False)[:2])
     return result or (["暂无明确看多证据"] if positive else ["暂无明显看空风险"])
+
+
+def _directional_items(items: list[str], *, positive: bool) -> list[str]:
+    return [item for item in items if _item_direction(item) == positive]
+
+
+def _item_direction(item: str) -> bool | None:
+    text = str(item)
+    if not text or "暂无" in text or "中性" in text:
+        return None
+    negative_keywords = ("空头", "死叉", "超买", "回调", "偏空", "下方", "流出", "为负", "偏高", "过高", "亏损")
+    positive_keywords = ("多头", "金叉", "超卖", "反弹", "偏多", "上方", "流入", "盈利", "支撑", "增长")
+    if _contains(text, negative_keywords):
+        return False
+    if _contains(text, positive_keywords):
+        return True
+    return None
 
 
 def _collect_risk_alerts(agents: list[AgentView]) -> list[str]:

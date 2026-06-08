@@ -90,6 +90,30 @@ def test_a_share_decision_ignores_zero_quote_price():
     assert result["entry_hint"] != "等待有效价格数据"
 
 
+def test_bullish_points_filter_negative_technical_evidence():
+    data = pd.DataFrame([{
+        "close": 10.5,
+        "boll_upper": 12.0,
+        "boll_mid": 10.0,
+        "boll_lower": 8.0,
+        "ma20": 10.0,
+        "ma60": 9.5,
+    }])
+    signals = {
+        "recommendation": "偏多信号（强）",
+        "macd": "空头趋势",
+        "rsi": "超买 (73.1)",
+        "kdj": "中性",
+        "boll": "中轨上方，偏多",
+    }
+
+    result = build_a_share_decision(data, signals, {"price": 10.6, "change": 1.2})
+
+    assert "空头趋势" not in result["bullish_points"]
+    assert "超买 (73.1)" not in result["bullish_points"]
+    assert any(item in result["bearish_points"] for item in ("空头趋势", "超买 (73.1)"))
+
+
 def test_watchlist_decision_penalizes_risk_events():
     item = {
         "symbol": "000001",

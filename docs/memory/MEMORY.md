@@ -1,5 +1,6 @@
 # 项目 Memory 索引
 
+- [Bug fixes & context 2026-06-08](bug_fixes_and_context_2026-06-08.md) — 修复 A 股决策委员会“看多依据”误混入“空头趋势/超买”等负向证据的问题；看多/看空列表改为按单条证据方向归集，未改变评分、仓位、推荐池或指标公式；`tests/test_decision_committee.py` 通过。
 - [Bug fixes & context 2026-06-07](bug_fixes_and_context_2026-06-07.md) — 修复个股分析 A 股日 K 在线源被本地缓存抢先使用的问题；成交量图和量能指标忽略无日期实时量，离线缓存保留/推断 `volume_unit`；已用浏览器实点验证 `002541` 页面无“在线日K源暂不可用”、成交量图正常渲染，并通过 `277 passed` 回归。
 - [Bug fixes & context 2026-06-05](bug_fixes_and_context_2026-06-05.md) — 合并 `CLAUDE.md` 到 `agent.md` 并删除旧文档；完成低风险工程优化、系统状态只读诊断、缓存日志、港股/美股涨跌排行真实数据兜底和结果型下拉框验证；非网络全量测试 `867 passed`。
 - [Bug fixes & context 2026-06-04](bug_fixes_and_context_2026-06-04.md) — 完成工程优化收尾：智能推荐模块拆分、行情 provider 化、调度状态可观测、真实数据契约/文档/HTML 安全检查、分时改回新浪优先并按同花顺式波浪线展示；明确推荐策略红线未改。
