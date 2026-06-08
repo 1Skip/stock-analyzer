@@ -10,3 +10,18 @@
 ## 回归测试
 
 - `.\.venv\Scripts\python.exe -m pytest tests\test_decision_committee.py -q` 通过，`5 passed`。
+
+## 扩展信息分层缓存部分命中修复
+
+- 修复 `StockInfoService` 读取扩展信息分层缓存时必须同时命中财务摘要和资金流两层的问题。旧逻辑中，资金流短缓存过期或为空时，即使财务摘要长缓存仍有效，也会整包放弃分层缓存并重新请求外部 provider。
+- 现在财务摘要和资金流任意一层可用即可返回 `layered_cache`：可用层保留真实缓存数据，缺失层返回 `{}`，避免因为资金流接口短时不可用或缓存过期而拖累财务信息展示。
+- 本次不改变真实数据优先级、不引入模拟资金流或假财务数据；缺失层继续按空结构展示，由页面数据质量说明表达缺口。
+- 同步补充 `tests/test_data_services.py` 回归用例，覆盖“财务缓存有效、资金流缓存过期”时不调用外部 provider 的场景。
+
+## 项目协作规则补充
+
+- `agent.md` 补充回复纪律、讲人话约束、默认交付信息和禁止空泛话术规则，仅影响项目协作说明，不改变程序行为。
+
+## 回归测试
+
+- `.\.venv\Scripts\python.exe -m pytest tests\test_data_services.py -q` 通过，`61 passed`。

@@ -806,6 +806,41 @@ class TestStockInfoService:
         assert result["fund_flow"]["main_net_inflow"] == 30_000_000
         assert calls["count"] == 1
 
+    def test_info_service_reuses_financial_cache_when_fund_flow_expired(self, tmp_path):
+        calls = {"count": 0}
+
+        class FakeProvider:
+            def get_stock_extended_info(self, symbol, include_deep_layers=True):
+                calls["count"] += 1
+                return {
+                    "symbol": symbol,
+                    "financial": {"metrics": {"归母净利润": 1}},
+                    "fund_flow": {},
+                    "news": [],
+                    "market_news": [],
+                    "research": {"reports": []},
+                    "dividend": {},
+                    "risk_events": {"announcements": []},
+                    "sector_attribution": {"industry": {}, "concepts": []},
+                }
+
+        cache = JsonFileCache("stock_info_partial_layer_bundle", ttl_seconds=0, cache_dir=tmp_path)
+        service = StockInfoService(provider=FakeProvider(), cache=cache)
+        service.financial_cache = JsonFileCache("stock_financial_partial_layer", ttl_seconds=3600, cache_dir=tmp_path)
+        service.fund_flow_cache = JsonFileCache("stock_fund_flow_partial_layer", ttl_seconds=0, cache_dir=tmp_path)
+        service.research_cache = JsonFileCache("stock_research_partial_layer", ttl_seconds=3600, cache_dir=tmp_path)
+        service.risk_cache = JsonFileCache("stock_risk_partial_layer", ttl_seconds=3600, cache_dir=tmp_path)
+
+        service.financial_cache.set("CN:000001:financial:v1", {"metrics": {"归母净利润": 1}})
+        service.risk_cache.set("CN:000001:risk_events:v1", {"announcements": []})
+
+        result = service.get_stock_extended_info("000001", "CN")
+
+        assert result["financial"]["metrics"]["归母净利润"] == 1
+        assert result["fund_flow"] == {}
+        assert result["source"] == "layered_cache"
+        assert calls["count"] == 0
+
     def test_info_service_does_not_cache_empty_fund_flow_layer(self, tmp_path):
         class FakeProvider:
             def get_stock_extended_info(self, symbol, include_deep_layers=True):

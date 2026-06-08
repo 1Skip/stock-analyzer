@@ -88,13 +88,15 @@ class StockInfoService:
         base_key = f"{market}:{symbol}"
         financial = self.financial_cache.get(f"{base_key}:financial:v1")
         fund_flow = self.fund_flow_cache.get(f"{base_key}:fund_flow:v1")
-        if not self._is_usable_layer(financial) or not self._is_usable_layer(fund_flow):
+        has_financial = self._is_usable_layer(financial)
+        has_fund_flow = self._is_usable_layer(fund_flow)
+        if not has_financial and not has_fund_flow:
             return None
 
         payload = {
             "symbol": symbol,
-            "financial": financial,
-            "fund_flow": fund_flow,
+            "financial": financial if has_financial else {},
+            "fund_flow": fund_flow if has_fund_flow else {},
             "news": [],
             "market_news": [],
             "research": {"reports": [], "eps_consensus": {}},
