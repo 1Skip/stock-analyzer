@@ -1115,6 +1115,27 @@ class TestStrategyRecommendations:
         assert "深度检查" in stages
         assert "完成" in stages
 
+    def test_multi_factor_light_prefilter_rejects_kline_impossible_cases(self, recommender, monkeypatch):
+        dates = pd.date_range('2026-01-01', periods=40, freq='B')
+        close = np.linspace(10, 20, 40)
+        data = pd.DataFrame({
+            'open': close,
+            'high': close * 1.01,
+            'low': close * 0.99,
+            'close': close,
+            'volume': np.full(40, 1000000),
+        }, index=dates)
+        monkeypatch.setattr(recommender, "_get_strategy_stock_data", lambda *args, **kwargs: data)
+        monkeypatch.setattr(recommender, "_merge_realtime_quote", lambda data, *args, **kwargs: data)
+        monkeypatch.setattr(recommender, "_evaluate_ma_volume_condition", lambda data: (False, "技术不满足", 0.8))
+        monkeypatch.setattr(recommender, "_has_recent_limit_up_touch", lambda data, days=15: (False, "无涨停"))
+        monkeypatch.setattr(recommender, "_has_three_day_rise", lambda data: (False, "未连涨"))
+
+        result = recommender._analyze_multi_factor_light({"code": "002001", "name": "测试股"})
+
+        assert result["passed"] is False
+        assert result["reason"] in {"非短期过热", "K线核心因子不足"}
+
     def test_aggressive_breakout_emits_stage_progress(self, recommender, monkeypatch):
         stocks = [{"code": "002415", "name": "候选A"}]
         events = []

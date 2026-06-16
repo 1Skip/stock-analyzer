@@ -124,6 +124,7 @@ class RecommendationService:
         )
         self.plan_cache = JsonFileCache("recommendation_t1_plans", 86400 * 14)
         self.plan_history_cache = JsonFileCache("recommendation_t1_plan_history", 86400 * 120)
+        self.strategy_review_cache = JsonFileCache("recommendation_strategy_reviews", 86400 * 120)
 
     def run(
         self,
@@ -313,6 +314,133 @@ class RecommendationService:
             "reviews": reviews,
             "summary": summarize_history_outcomes(reviews),
         }
+
+    def build_strategy_review(self, *, limit: int = 80) -> dict[str, Any]:
+        """Build a read-only strategy review from saved T+1 plans."""
+        rows = self.list_t1_plan_history(limit=limit)
+        plan_rows: list[dict[str, Any]] = []
+        buckets: dict[str, dict[str, Any]] = {}
+        latest_trade_date = ""
+        for row in rows:
+            plan = row.get("plan") or {}
+            outcome = self.evaluate_t1_plan_outcomes(plan)
+            summary = outcome.get("summary") or {}
+            strategy = str(plan.get("strategy") or row.get("strategy") or "--")
+            sector = str(plan.get("sector") or row.get("sector") or "--")
+            plan_date = str(plan.get("plan_for_trade_date") or "")[:10]
+            generated_at = str(plan.get("generated_at") or row.get("generated_at") or "")
+            trade_date = plan_date or generated_at[:10]
+            latest_trade_date = max(latest_trade_date, trade_date)
+            item = {
+                "generated_at": generated_at,
+                "strategy": strategy,
+                "sector": sector,
+                "num_stocks": plan.get("num_stocks") or row.get("num_stocks"),
+                "plan_for_trade_date": plan_date,
+                "recommended_count": len(plan.get("recommended") or []),
+                "total": summary.get("total", 0),
+                "completed": summary.get("completed", 0),
+                "pending": summary.get("pending", 0),
+                "avg_1d_return_pct": summary.get("avg_1d_return_pct"),
+                "win_rate_1d_pct": summary.get("win_rate_1d_pct"),
+                "status": outcome.get("status"),
+            }
+            plan_rows.append(item)
+            bucket = buckets.setdefault(
+                strategy,
+                {
+                    "strategy": strategy,
+                    "plans": 0,
+                    "total": 0,
+                    "completed": 0,
+                    "pending": 0,
+                    "returns_1d": [],
+                    "win_rates": [],
+                },
+            )
+            bucket["plans"] += 1
+            bucket["total"] += int(item["total"] or 0)
+            bucket["completed"] += int(item["completed"] or 0)
+            bucket["pending"] += int(item["pending"] or 0)
+            if item["avg_1d_return_pct"] is not None:
+                bucket["returns_1d"].append(item["avg_1d_return_pct"])
+            if item["win_rate_1d_pct"] is not None:
+                bucket["win_rates"].append(item["win_rate_1d_pct"])
+
+        strategy_rows = []
+        for bucket in buckets.values():
+            returns = bucket.pop("returns_1d")
+            win_rates = bucket.pop("win_rates")
+            bucket["avg_1d_return_pct"] = round(sum(returns) / len(returns), 2) if returns else None
+            bucket["win_rate_1d_pct"] = round(sum(win_rates) / len(win_rates), 2) if win_rates else None
+            strategy_rows.append(bucket)
+        strategy_rows.sort(
+            key=lambda item: (
+                item.get("avg_1d_return_pct") if item.get("avg_1d_return_pct") is not None else -999,
+                item.get("win_rate_1d_pct") if item.get("win_rate_1d_pct") is not None else -999,
+            ),
+            reverse=True,
+        )
+        return {
+            "status": "ok" if plan_rows else "empty",
+            "reviewed_at": datetime.now().isoformat(timespec="seconds"),
+            "latest_trade_date": latest_trade_date or None,
+            "plan_rows": plan_rows,
+            "strategy_rows": strategy_rows,
+            "suggestions": self._build_strategy_review_suggestions(strategy_rows),
+        }
+
+    def latest_strategy_review(self, *, limit: int = 80) -> dict[str, Any]:
+        """Return the latest archived strategy review, building it if missing."""
+        trade_date = self._latest_review_trade_date()
+        cache_key = self._strategy_review_cache_key(trade_date)
+        cached = self.strategy_review_cache.get(cache_key)
+        if isinstance(cached, dict):
+            return cached
+        return self.refresh_strategy_review(limit=limit, trade_date=trade_date)
+
+    def refresh_strategy_review(self, *, limit: int = 80, trade_date: str | None = None) -> dict[str, Any]:
+        """Build and archive the latest strategy review."""
+        review = self.build_strategy_review(limit=limit)
+        trade_date = trade_date or review.get("latest_trade_date") or self._latest_review_trade_date()
+        review = dict(review)
+        review["review_trade_date"] = trade_date
+        review["archive_key"] = self._strategy_review_cache_key(trade_date)
+        self.strategy_review_cache.set(review["archive_key"], review)
+        return review
+
+    @staticmethod
+    def _build_strategy_review_suggestions(strategy_rows: list[dict[str, Any]]) -> list[str]:
+        if not strategy_rows:
+            return ["暂无可复盘的历史计划，先积累 5-10 个交易日样本。"]
+        suggestions = []
+        completed_rows = [row for row in strategy_rows if int(row.get("completed") or 0) > 0]
+        if not completed_rows:
+            return ["历史计划仍在等待后续 K 线，暂不生成进化加权建议。"]
+        best = completed_rows[0]
+        best_avg = best.get("avg_1d_return_pct")
+        if best_avg is not None:
+            suggestions.append(f"{best['strategy']} 近期 1 日均收益靠前，可作为明日候选加权观察。")
+        weak = [
+            row for row in completed_rows
+            if row.get("avg_1d_return_pct") is not None and row.get("avg_1d_return_pct") < 0
+        ]
+        if weak:
+            suggestions.append(f"{weak[-1]['strategy']} 近期表现偏弱，建议先降权观察，不直接扩大推荐。")
+        if sum(int(row.get("completed") or 0) for row in completed_rows) < 20:
+            suggestions.append("样本数量仍偏少，当前建议只读展示，暂不自动改变四个策略排序。")
+        return suggestions[:4]
+
+    @staticmethod
+    def _strategy_review_cache_key(trade_date: str | None) -> str:
+        return f"strategy_review:{trade_date or 'latest'}"
+
+    @staticmethod
+    def _latest_review_trade_date(now: datetime | None = None) -> str:
+        candidate = (now or datetime.now()).date()
+        while candidate.weekday() >= 5:
+            candidate -= timedelta(days=1)
+        return candidate.isoformat()
 
     def refresh_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
         return self.recommender.refresh_strategy_kline_cache(*args, **kwargs)

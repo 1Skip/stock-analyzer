@@ -594,10 +594,18 @@ def test_recommend_page_groups_plan_review_buttons():
 
     source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
 
-    block = source.split('st.button("回看计划表现"', 1)[0].split("col1, col2, col3, col4", 1)[-1]
+    assert "def _render_strategy_review" in source
+    assert "刷新最近交易日复盘" in source
+    assert "复盘交易日" in source
+    assert "latest_strategy_review" in source
+    assert "明日进化建议" in source
+    assert "历史计划" in source
+    block = source.split('st.button("回看计划表现"', 1)[0].split("col1, col2, col3, col4, col5", 1)[-1]
     assert "with col3:" in block
     history_block = source.split('st.button("统计历史计划"', 1)[0].split('st.button("回看计划表现"', 1)[-1]
     assert "with col4:" in history_block
+    strategy_block = source.split('st.button("刷新最近交易日复盘"', 1)[0].split('st.button("统计历史计划"', 1)[-1]
+    assert "with col5:" in strategy_block
 
 
 def test_report_history_page_groups_action_buttons():

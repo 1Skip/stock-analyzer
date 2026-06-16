@@ -1545,9 +1545,16 @@ class StockRecommender:
         data = self._merge_realtime_quote(data, fetcher, symbol, market, quote=(realtime_quotes or {}).get(symbol))
         technical_ok, technical_note, volume_ratio = self._evaluate_ma_volume_condition(data)
         limit_event_ok, _ = self._has_recent_limit_up_touch(data, days=15)
+        three_day_rise_ok, _ = self._has_three_day_rise(data)
         short_rise = (data['close'].iloc[-1] / data['close'].tail(11).iloc[0] - 1) * 100 if len(data) >= 11 else 0
+        kline_core_matched = sum(1 for ok in (technical_ok, three_day_rise_ok, limit_event_ok) if ok)
+        if short_rise > 35:
+            return {"passed": False, "reason": "非短期过热"}
+        if kline_core_matched == 0:
+            return {"passed": False, "reason": "K线核心因子不足"}
         light_score = 0
         light_score += 60 if technical_ok else 0
+        light_score += 20 if three_day_rise_ok else 0
         light_score += 25 if limit_event_ok else 0
         light_score += min(15, max(0, (volume_ratio - 1.2) * 8))
         light_score += max(0, 20 - max(0, short_rise))
@@ -1563,6 +1570,8 @@ class StockRecommender:
             "technical_note": technical_note,
             "volume_ratio": volume_ratio,
             "limit_event_ok": limit_event_ok,
+            "three_day_rise_ok": three_day_rise_ok,
+            "kline_core_matched": kline_core_matched,
         }
 
     def _shortlist_multi_factor_candidates(self, stocks, num_stocks, market='CN', sector_name=None, diagnostics=None, progress_callback=None):

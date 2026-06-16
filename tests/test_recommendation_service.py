@@ -302,6 +302,54 @@ def test_t1_plan_history_is_saved_and_read_only():
     assert recommender.called == [("multi", 5, False)]
 
 
+def test_strategy_review_summarizes_history_without_rerunning_strategy():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+
+    multi_factor = "\u591a\u56e0\u5b50\u7a33\u5065\u578b"
+    aggressive = "\u6fc0\u8fdb\u7a81\u7834\u578b"
+    all_sector = "\u5168\u90e8"
+
+    service.run_t1_plan(multi_factor, all_sector, 5)
+    service.run_t1_plan(aggressive, all_sector, 5)
+    review = service.build_strategy_review(limit=20)
+
+    assert review["status"] == "ok"
+    assert {row["strategy"] for row in review["strategy_rows"]} == {multi_factor, aggressive}
+    assert len(review["plan_rows"]) == 2
+    assert review["suggestions"]
+    assert recommender.called == [("multi", 5, False), ("aggressive", 5, False)]
+
+
+def test_strategy_review_is_archived_by_latest_trade_date(monkeypatch):
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+    service.strategy_review_cache = FakeCache()
+    monkeypatch.setattr(
+        RecommendationService,
+        "_latest_review_trade_date",
+        staticmethod(lambda now=None: "2026-06-12"),
+    )
+
+    review = service.latest_strategy_review(limit=20)
+    cached = service.strategy_review_cache.get("strategy_review:2026-06-12")
+
+    assert review["review_trade_date"] == "2026-06-12"
+    assert cached["archive_key"] == "strategy_review:2026-06-12"
+
+
 def test_t1_plan_records_preheat_and_elapsed_metrics_without_changing_strategy(monkeypatch):
     cache = FakeCache()
     recommender = FakeRecommender()

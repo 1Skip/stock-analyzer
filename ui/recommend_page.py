@@ -219,6 +219,63 @@ def _render_history_review(history_review):
             ))
 
 
+def _render_strategy_review(strategy_review):
+    if not isinstance(strategy_review, dict):
+        return
+    with st.expander("策略复盘", expanded=True):
+        if strategy_review.get("status") == "empty":
+            st.info("暂无历史 T+1 计划。先生成并保存几次计划后，这里会展示策略复盘。")
+            return
+        latest_trade_date = strategy_review.get("latest_trade_date") or "--"
+        reviewed_at = strategy_review.get("reviewed_at") or "--"
+        archive_date = strategy_review.get("review_trade_date") or latest_trade_date
+        st.caption(f"复盘交易日：{archive_date}｜最近计划入场日：{latest_trade_date}｜复盘时间：{reviewed_at}")
+        strategy_rows = strategy_review.get("strategy_rows") or []
+        if strategy_rows:
+            st.markdown("**复盘概览**")
+            st.dataframe(
+                [
+                    {
+                        "策略": row.get("strategy"),
+                        "计划数": row.get("plans"),
+                        "标的数": row.get("total"),
+                        "已完成": row.get("completed"),
+                        "待数据": row.get("pending"),
+                        "1日均收益": _format_return(row.get("avg_1d_return_pct")),
+                        "1日胜率": _format_return(row.get("win_rate_1d_pct")),
+                    }
+                    for row in strategy_rows
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        suggestions = strategy_review.get("suggestions") or []
+        if suggestions:
+            st.markdown("**明日进化建议**")
+            for suggestion in suggestions:
+                st.caption(f"- {suggestion}")
+        plan_rows = strategy_review.get("plan_rows") or []
+        if plan_rows:
+            st.markdown("**历史计划**")
+            st.dataframe(
+                [
+                    {
+                        "生成时间": row.get("generated_at"),
+                        "策略": row.get("strategy"),
+                        "板块": row.get("sector"),
+                        "推荐数": row.get("recommended_count"),
+                        "计划入场日": row.get("plan_for_trade_date"),
+                        "已完成": row.get("completed"),
+                        "1日均收益": _format_return(row.get("avg_1d_return_pct")),
+                        "1日胜率": _format_return(row.get("win_rate_1d_pct")),
+                    }
+                    for row in plan_rows[:30]
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+
 def _format_return(value):
     return f"{value:+.2f}%" if isinstance(value, (int, float)) else "--"
 
@@ -612,6 +669,8 @@ def recommended_stocks_page():
         st.session_state.rec_outcome_review = None
     if 'rec_history_review' not in st.session_state:
         st.session_state.rec_history_review = None
+    if 'rec_strategy_review' not in st.session_state:
+        st.session_state.rec_strategy_review = None
     if 'rec_is_running' not in st.session_state:
         st.session_state.rec_is_running = False
     if 'rec_last_error' not in st.session_state:
@@ -623,6 +682,8 @@ def recommended_stocks_page():
 
     service = RecommendationService()
     current_request_key = _request_key(strategy, sector, num_stocks)
+    if st.session_state.rec_strategy_review is None and not st.session_state.rec_is_running:
+        st.session_state.rec_strategy_review = service.latest_strategy_review(limit=80)
     running_request_key = st.session_state.get("rec_active_request_key")
     is_current_request_running = bool(st.session_state.rec_is_running and running_request_key == current_request_key)
     is_other_request_running = bool(st.session_state.rec_is_running and running_request_key != current_request_key)
@@ -638,7 +699,7 @@ def recommended_stocks_page():
             st.session_state.rec_data_loaded = True
             pass
 
-    col1, col2, col3, col4 = st.columns([1, 1.35, 1.05, 1.05])
+    col1, col2, col3, col4, col5 = st.columns([1, 1.35, 1.05, 1.05, 1.05])
     with col1:
         if st.button("刷新K线缓存", type="secondary", disabled=st.session_state.rec_is_running):
             with status_loading("正在更新推荐策略日K缓存，不是读取T+1推荐计划缓存，请稍候...", 20):
@@ -672,6 +733,12 @@ def recommended_stocks_page():
             type="secondary",
             disabled=st.session_state.rec_is_running,
         )
+    with col5:
+        strategy_review_clicked = st.button(
+            "刷新最近交易日复盘",
+            type="secondary",
+            disabled=st.session_state.rec_is_running,
+        )
 
     generate_label = "生成 T+1 推荐计划"
     if is_current_request_running:
@@ -690,6 +757,7 @@ def recommended_stocks_page():
         st.session_state.rec_entry_check = None
         st.session_state.rec_outcome_review = None
         st.session_state.rec_history_review = None
+        st.session_state.rec_strategy_review = None
         st.session_state.rec_last_error = None
         st.session_state.rec_is_running = True
         st.session_state.rec_active_request_key = current_request_key
@@ -727,6 +795,8 @@ def recommended_stocks_page():
             sector=sector,
             limit=20,
         )
+    if strategy_review_clicked:
+        st.session_state.rec_strategy_review = service.refresh_strategy_review(limit=80)
 
     if st.session_state.rec_last_error:
         st.error(st.session_state.rec_last_error)
@@ -741,6 +811,8 @@ def recommended_stocks_page():
 
     if not st.session_state.rec_data_loaded:
         st.info("选择策略和板块后，点击“生成 T+1 推荐计划”开始收盘后/盘后计划分析。")
+
+    _render_strategy_review(st.session_state.rec_strategy_review)
 
     if st.session_state.rec_results and _result_matches_request(st.session_state.rec_results, current_request_key):
         st.session_state.rec_results = service.ensure_t1_plan_display_profiles(st.session_state.rec_results)
