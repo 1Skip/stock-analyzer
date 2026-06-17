@@ -25,13 +25,13 @@ class TestSchedulerImport:
 
 class TestT1PlanSchedule:
 
-    def test_t1_targets_use_short_long_four_sectors_and_aggressive_steady_full_market(self, monkeypatch):
+    def test_t1_targets_use_short_four_sectors_and_aggressive_steady_full_market(self, monkeypatch):
         import scheduler
 
         monkeypatch.setattr(
             scheduler,
             "T1_PLAN_STRATEGIES",
-            ["短线", "长线", "多因子稳健型", "激进突破型"],
+            ["短线", "多因子稳健型", "激进突破型"],
         )
         monkeypatch.setattr(
             scheduler,
@@ -45,10 +45,6 @@ class TestT1PlanSchedule:
             ("短线", "特斯拉概念"),
             ("短线", "电力"),
             ("短线", "算力租赁"),
-            ("长线", "苹果概念"),
-            ("长线", "特斯拉概念"),
-            ("长线", "电力"),
-            ("长线", "算力租赁"),
             ("多因子稳健型", "全部"),
             ("激进突破型", "全部"),
         ]
@@ -61,7 +57,7 @@ class TestT1PlanSchedule:
             "recommended": [{"symbol": "002001"}],
             "generation_metrics": {"elapsed_seconds": 1.2},
         }
-        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["短线", "长线", "多因子稳健型", "激进突破型"])
+        monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["短线", "多因子稳健型", "激进突破型"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTORS", ["苹果概念", "特斯拉概念", "电力", "算力租赁"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTOR", "苹果概念")
         monkeypatch.setattr("scheduler.T1_PLAN_NUM_STOCKS", 5)
@@ -74,9 +70,8 @@ class TestT1PlanSchedule:
 
         plans = run_t1_plan_preheat()
 
-        assert fake_service.run_t1_plan.call_count == 10
+        assert fake_service.run_t1_plan.call_count == 6
         assert plans["短线:苹果概念"]["recommended"][0]["symbol"] == "002001"
-        assert plans["长线:算力租赁"]["recommended"][0]["symbol"] == "002001"
         assert plans["多因子稳健型:全部"]["recommended"][0]["symbol"] == "002001"
         assert plans["激进突破型:全部"]["recommended"][0]["symbol"] == "002001"
         for call in fake_service.run_t1_plan.call_args_list:

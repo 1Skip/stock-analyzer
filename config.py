@@ -156,30 +156,6 @@ RATING_THRESHOLDS = {
     "偏空信号（强）": 0,
 }
 
-# 长线评分权重（相比短线/标准评分：降低RSI/KDJ权重，提高MA60/MACD趋势权重）
-LONG_TERM_WEIGHTS = {
-    "macd_golden_cross": 20,
-    "macd_bullish": 12,
-    "macd_death_cross": -15,
-    "rsi_oversold_strong": 10,
-    "rsi_oversold": 8,
-    "rsi_oversold_mild": 5,
-    "rsi_overbought_strong": -8,
-    "rsi_overbought": -5,
-    "kdj_golden_cross_strong": 15,
-    "kdj_golden_cross": 10,
-    "kdj_oversold": 8,
-    "boll_bounce": 12,
-    "boll_bullish": 8,
-    "boll_pullback": -10,
-    "boll_bearish": -5,
-    "ma20_above_ma60": 15,
-    "ma20_cross_above_ma60": 15,
-    "ma20_below_ma60": -15,
-    "ma20_uptrend": 8,
-    "ma20_downtrend": -8,
-}
-
 # ============================================================
 # AI 分析配置
 # ============================================================
@@ -212,7 +188,7 @@ T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "true").lower() == "tru
 T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
 _T1_PLAN_STRATEGIES_RAW = os.getenv(
     "T1_PLAN_STRATEGIES",
-    os.getenv("T1_PLAN_STRATEGY", "短线,长线,多因子稳健型,激进突破型"),
+    os.getenv("T1_PLAN_STRATEGY", "短线,多因子稳健型,激进突破型"),
 )
 T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(",") if item.strip()]
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"

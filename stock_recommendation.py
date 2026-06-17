@@ -51,14 +51,6 @@ _SHORT_TERM_WEIGHTS = {
     'ma': ('ma5', 'ma10', 15, 15),
 }
 
-_LONG_TERM_WEIGHTS = {
-    'macd': [("金叉", 20), ("多头", 12), ("死叉", -15)],
-    'rsi': [(30, 10), (40, 8), (50, 5), (70, -8), (60, -5)],
-    'kdj': [("强金叉", 15), ("金叉", 10), ("超卖", 8), ("强死叉", -15), ("死叉", -10), ("超买", -8)],
-    'boll': [("反弹", 12), ("偏多", 8), ("回调", -10), ("偏空", -5)],
-    'ma': ('ma20', 'ma60', 15, 15),
-}
-
 MAX_STRATEGY_MARKET_CAP = 30_000_000_000
 STRATEGY_KLINE_CACHE_DIR = os.path.join(RUNTIME_CACHE_DIR, "strategy_kline_daily")
 POSITIVE_CATALYST_KEYWORDS = [
@@ -950,35 +942,6 @@ class StockRecommender:
         def analyze_one(stock):
             try:
                 analysis = self._analyze_short_term(stock['code'], market='CN')
-                if analysis:
-                    analysis['name'] = stock['name']
-                    return analysis
-            except Exception:
-                pass
-            return None
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {
-                executor.submit(analyze_one, s): s
-                for s in self._get_main_board_popular_cn_stocks(25)
-            }
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
-
-        results.sort(key=lambda x: x['score'], reverse=True)
-        return results[:num_stocks]
-
-    def get_long_term_recommendations(self, num_stocks=10):
-        """
-        获取长线推荐股票（基于1年趋势指标），并发分析加速
-        """
-        results = []
-
-        def analyze_one(stock):
-            try:
-                analysis = self._analyze_long_term(stock['code'], market='CN')
                 if analysis:
                     analysis['name'] = stock['name']
                     return analysis
@@ -1934,92 +1897,6 @@ class StockRecommender:
         self.last_multi_factor_diagnostics = diagnostics
         _emit_progress(progress_callback, "完成", 100, deep_checked=len(stocks), result_count=len(results))
         return results
-
-
-    def get_sector_long_term_recommendations(self, sector_name, num_stocks=5):
-        """
-        获取指定板块的长线龙头股推荐，并发分析加速
-        """
-        if sector_name not in SECTOR_STOCKS:
-            return []
-
-        results = []
-        sector_stocks = self._get_main_board_sector_stocks(sector_name)
-
-        def analyze_one(stock):
-            try:
-                analysis = self._analyze_long_term(stock['code'], market='CN')
-                if analysis:
-                    analysis['name'] = stock['name']
-                    analysis['sector'] = sector_name
-                    return analysis
-            except Exception:
-                pass
-            return None
-
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(analyze_one, s): s for s in sector_stocks}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    results.append(result)
-
-        results.sort(key=lambda x: x['score'], reverse=True)
-        return results[:num_stocks]
-
-    def _analyze_long_term(self, symbol, market='CN'):
-        """
-        长线分析 - 使用1年数据，侧重MA60趋势和MACD趋势，降低RSI/KDJ权重
-        """
-        fetcher = StockDataFetcher()
-        try:
-            data = self._get_strategy_stock_data(symbol, period='1y', interval='1d', market=market, fetcher=fetcher)
-        except Exception as e:
-            print(f"获取股票 {symbol} 长线数据失败: {str(e)}")
-            return None
-
-        if data is None or len(data) < 50:
-            return None
-
-        data = self._merge_realtime_quote(data, fetcher, symbol, market)
-
-        try:
-            df = TechnicalIndicators.calculate_all(data)
-            signals = TechnicalIndicators.get_signals(df)
-        except Exception as e:
-            print(f"股票 {symbol} 长线指标计算失败: {str(e)}")
-            return None
-
-        if 'error' in signals:
-            return None
-
-        latest = df.iloc[-1]
-
-        # 长线评分：使用长线权重 + MA60趋势加成
-        score = _score_from_signals(signals, latest, _LONG_TERM_WEIGHTS)
-
-        # MA60自身趋势（长线核心指标）
-        if 'ma60' in df.columns and len(df) > 20:
-            ma60_now = latest['ma60']
-            ma60_20d_ago = df['ma60'].iloc[-21]
-            if ma60_now > ma60_20d_ago:
-                score += 8
-            else:
-                score -= 8
-
-        score = max(0, min(100, score))
-
-        change_pct = (latest['close'] - data['close'].iloc[-2]) / data['close'].iloc[-2] * 100 if len(data) > 1 else 0.0
-        return {
-            'symbol': symbol,
-            'score': round(score, 1),
-            'rating': _score_rating(score),
-            'signals': signals,
-            'latest_price': latest['close'],
-            'change_pct': round(change_pct, 2),
-            'strategy': '长线',
-            'indicators': self._build_indicators_dict(latest)
-        }
 
 if __name__ == "__main__":
     # 测试代码

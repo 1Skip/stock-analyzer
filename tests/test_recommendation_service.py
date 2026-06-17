@@ -84,6 +84,14 @@ class FakeRecommender:
         self.called.append(("aggressive", num_stocks, bool(progress_callback)))
         return [_stock("002001", "激进突破型")]
 
+    def get_short_term_recommendations(self, num_stocks):
+        self.called.append(("short", num_stocks, False))
+        return [_stock("002003", "短线")]
+
+    def get_sector_short_term_recommendations(self, sector, num_stocks):
+        self.called.append(("sector_short", sector, num_stocks, False))
+        return [_stock("002004", "短线")]
+
     def get_multi_factor_recommendations(self, num_stocks, progress_callback=None):
         self.called.append(("multi", num_stocks, bool(progress_callback)))
         return [_stock("002002", "多因子稳健型")]
@@ -130,6 +138,39 @@ def test_recommendation_service_routes_aggressive_without_changing_strategy():
     assert result["diagnostics"]["strategy"] == "激进突破型"
     assert result["diagnostics"]["alpha_ranker"]["enabled"] is True
     assert result["diagnostics"]["alpha_ranker"]["sorted"] is False
+
+
+def test_recommendation_service_keeps_short_term_available():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("短线", "全部", 5)
+
+    assert recommender.called == [("short", 5, False)]
+    assert result["title"] == "短线推荐"
+    assert result["recommended"][0]["strategy"] == "短线"
+    assert result["diagnostics"]["short_term_learning"]["enabled"] is True
+    assert result["diagnostics"]["short_term_learning"]["status"] == "insufficient_samples"
+
+
+def test_recommendation_service_rejects_long_term_strategy():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    import pytest
+
+    with pytest.raises(ValueError, match="不支持的推荐策略：长线"):
+        service.run("长线", "全部", 5)
+
+    assert recommender.called == []
 
 
 def test_recommendation_display_indicators_use_analysis_page_context():
@@ -254,6 +295,38 @@ def test_recommendation_service_sorts_alpha_only_when_config_enabled(monkeypatch
 
     assert result["recommended"][0]["symbol"] == "002011"
     assert result["diagnostics"]["alpha_ranker"]["sorted"] is True
+
+
+def test_recommendation_service_applies_short_term_learning_without_touching_aggressive(monkeypatch):
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    monkeypatch.setattr(
+        service,
+        "_build_short_term_learning_profile",
+        lambda: {
+            "version": "short_term_learning_v1",
+            "status": "active",
+            "sample_count": 12,
+            "min_samples": 12,
+            "score_threshold": 70,
+            "baseline_avg_1d_return_pct": 0.2,
+            "bucket_stats": [
+                {"score_min": 80, "score_max": 84.9, "sample_count": 12, "avg_1d_return_pct": 1.5, "win_rate_1d_pct": 66.67}
+            ],
+            "note": "测试动态门槛",
+        },
+    )
+
+    short_result = service.run("短线", "全部", 5)
+    aggressive_result = service.run("激进突破型", "全部", 5)
+
+    assert short_result["diagnostics"]["short_term_learning"]["status"] == "active"
+    assert short_result["recommended"][0]["learning_score_threshold"] == 70
+    assert "short_term_learning" not in aggressive_result["diagnostics"]
 
 
 def test_recommendation_service_persists_t1_plan_without_changing_strategy(monkeypatch):

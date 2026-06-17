@@ -572,7 +572,6 @@ def test_recommend_page_limits_sector_options_by_strategy():
     assert _sector_options_for_strategy("激进突破型") == ["全部"]
     assert _sector_options_for_strategy("多因子稳健型") == ["全部"]
     assert _sector_options_for_strategy("短线") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
-    assert _sector_options_for_strategy("长线") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
 
 
 def test_recommend_page_hides_internal_t1_diagnostics():
@@ -595,11 +594,12 @@ def test_recommend_page_groups_plan_review_buttons():
     source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
 
     assert "def _render_strategy_review" in source
+    assert "最近交易日复盘" in source
     assert "刷新最近交易日复盘" in source
     assert "复盘交易日" in source
     assert "latest_strategy_review" in source
     assert "明日进化建议" in source
-    assert "历史计划" in source
+    assert "历史计划统计" in source
     block = source.split('st.button("回看计划表现"', 1)[0].split("col1, col2, col3, col4, col5", 1)[-1]
     assert "with col3:" in block
     history_block = source.split('st.button("统计历史计划"', 1)[0].split('st.button("回看计划表现"', 1)[-1]

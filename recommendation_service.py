@@ -35,6 +35,7 @@ from quality_monitor import (
     summarize_history_outcomes,
 )
 from recommend_ranker import enrich_recommendations_with_alpha
+from short_term_learning import apply_short_term_learning, build_short_term_learning_profile
 from stock_recommendation import StockRecommender
 from trade_plan import enrich_recommendations_with_trade_plan
 
@@ -461,13 +462,6 @@ class RecommendationService:
             else:
                 recommended = self.recommender.get_sector_short_term_recommendations(sector, num_stocks)
                 title = f"{sector} 短线推荐"
-        elif strategy == "长线":
-            if sector == "全部":
-                recommended = self.recommender.get_long_term_recommendations(num_stocks)
-                title = "长线推荐"
-            else:
-                recommended = self.recommender.get_sector_long_term_recommendations(sector, num_stocks)
-                title = f"{sector} 长线推荐"
         elif strategy == "激进突破型":
             if sector == "全部":
                 recommended = self.recommender.get_aggressive_breakout_recommendations(
@@ -499,8 +493,7 @@ class RecommendationService:
                 title = f"{sector} 多因子稳健型"
             diagnostics = self.recommender.last_multi_factor_diagnostics
         else:
-            recommended = self.recommender.get_long_term_recommendations(num_stocks)
-            title = "长线推荐"
+            raise ValueError(f"不支持的推荐策略：{strategy}")
 
         _emit_progress(progress_callback, "策略结果生成", 82, {"result_count": len(recommended or [])})
         _emit_progress(progress_callback, "刷新展示行情", 88, {"result_count": len(recommended or [])})
@@ -518,6 +511,19 @@ class RecommendationService:
                 "enabled": True,
                 "sorted": RECOMMEND_RANKER_SORT,
                 "version": "alpha_v1",
+            }
+        if strategy == "短线":
+            learning_profile = self._build_short_term_learning_profile()
+            recommended = apply_short_term_learning(recommended, learning_profile)
+            diagnostics = dict(diagnostics or {})
+            diagnostics["short_term_learning"] = {
+                "enabled": True,
+                "status": learning_profile.get("status"),
+                "version": learning_profile.get("version"),
+                "sample_count": learning_profile.get("sample_count"),
+                "min_samples": learning_profile.get("min_samples"),
+                "score_threshold": learning_profile.get("score_threshold"),
+                "note": learning_profile.get("note"),
             }
         recommended = attach_recommendation_explanations(
             recommended,
@@ -537,6 +543,14 @@ class RecommendationService:
             "title": title,
             "diagnostics": diagnostics,
         }
+
+    def _build_short_term_learning_profile(self) -> dict[str, Any]:
+        rows = self.list_t1_plan_history(strategy="短线", limit=80)
+        return build_short_term_learning_profile(
+            rows,
+            quote_service=self.quote_service,
+            evaluate_plan_outcomes=evaluate_plan_outcomes,
+        )
 
     def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None, *, enrich_display: bool = True) -> None:
         if not recommended:

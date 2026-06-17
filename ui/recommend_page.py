@@ -87,7 +87,9 @@ def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=Non
 def _sector_options_for_strategy(strategy):
     if strategy in ("激进突破型", "多因子稳健型"):
         return ["全部"]
-    return ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    if strategy == "短线":
+        return ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    return ["全部"]
 
 
 def _request_key(strategy, sector, num_stocks):
@@ -186,7 +188,7 @@ def _render_history_review(history_review):
     if not isinstance(history_review, dict):
         return
     summary = history_review.get("summary") or {}
-    with st.expander("历史计划回看", expanded=False):
+    with st.expander("历史计划统计", expanded=False):
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("历史计划", summary.get("plans", 0))
         col2.metric("回看标的", summary.get("total_items", 0))
@@ -222,9 +224,9 @@ def _render_history_review(history_review):
 def _render_strategy_review(strategy_review):
     if not isinstance(strategy_review, dict):
         return
-    with st.expander("策略复盘", expanded=True):
+    with st.expander("最近交易日复盘", expanded=True):
         if strategy_review.get("status") == "empty":
-            st.info("暂无历史 T+1 计划。先生成并保存几次计划后，这里会展示策略复盘。")
+            st.info("暂无历史 T+1 计划。先生成并保存几次计划后，这里会展示最近交易日复盘。")
             return
         latest_trade_date = strategy_review.get("latest_trade_date") or "--"
         reviewed_at = strategy_review.get("reviewed_at") or "--"
@@ -505,6 +507,16 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                 if penalties:
                     alpha_line += f"｜扣分：{html.escape(penalties)}"
                 st.caption(alpha_line)
+            if stock.get("learning_status"):
+                learning_line = (
+                    f"**短线学习**：{html.escape(str(stock.get('learning_status')))}"
+                    f"｜学习加权 {stock.get('learning_bonus', 0):+.1f}"
+                )
+                if stock.get("learned_alpha_score") is not None:
+                    learning_line += f"｜学习后Alpha {stock.get('learned_alpha_score')}/100"
+                if stock.get("learning_reason"):
+                    learning_line += f"｜{html.escape(str(stock.get('learning_reason')))}"
+                st.caption(learning_line)
             _render_recommendation_profile(stock)
             _render_trade_plan(stock)
 
@@ -625,7 +637,7 @@ def recommended_stocks_page():
     st.markdown(f"# 智能选股推荐 - {strategy}")
     render_scheduler_status()
 
-    strategy_options = ["短线", "长线", "激进突破型", "多因子稳健型"]
+    strategy_options = ["短线", "激进突破型", "多因子稳健型"]
     if strategy not in strategy_options:
         strategy = "短线"
         st.session_state.rec_strategy = strategy
@@ -634,8 +646,6 @@ def recommended_stocks_page():
 
     if strategy == "短线":
         st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选沪深主板短线候选；创业板、科创板、北交所不进入推荐池。")
-    elif strategy == "长线":
-        st.info("基于MA60趋势、MACD趋势等长线指标，筛选沪深主板长线候选；创业板、科创板、北交所不进入推荐池。")
     elif strategy == "激进突破型":
         st.info("纯量价突破策略：市值300亿以下、MA5>MA10>MA20、收盘价创20日新高、成交量大于前5日均量1.2倍；范围为沪深主板+创业板，排除科创板/北交所/ST。")
     else:

@@ -47,25 +47,6 @@ def test_short_term_same_input_same_output_contract(monkeypatch):
     assert _snapshot(result) == [("000002", 95, "B"), ("000001", 80, "A")]
 
 
-def test_long_term_same_input_same_output_contract(monkeypatch):
-    recommender = StockRecommender()
-    calls = []
-    stocks = [_stock("600001", "L1"), _stock("600002", "L2"), _stock("600003", "L3")]
-    scores = {"600001": 68, "600002": 88, "600003": 77}
-    monkeypatch.setattr(recommender, "_get_main_board_popular_cn_stocks", lambda limit: stocks)
-
-    def analyze(code, market="CN"):
-        calls.append((code, market))
-        return _result(code, scores[code])
-
-    monkeypatch.setattr(recommender, "_analyze_long_term", analyze)
-
-    result = recommender.get_long_term_recommendations(2)
-
-    assert sorted(calls) == [("600001", "CN"), ("600002", "CN"), ("600003", "CN")]
-    assert _snapshot(result) == [("600002", 88, "L2"), ("600003", 77, "L3")]
-
-
 def test_aggressive_breakout_same_input_same_output_contract(monkeypatch):
     recommender = StockRecommender()
     stocks = [_stock("300001"), _stock("000001")]

@@ -52,6 +52,6 @@ def test_trade_plan_includes_risk_announcement_invalid_condition():
         }
     }
 
-    plan = build_trade_plan_for_stock(stock, strategy="长线")
+    plan = build_trade_plan_for_stock(stock, strategy="短线")
 
     assert any("减持风险" in item for item in plan["invalid_conditions"])
