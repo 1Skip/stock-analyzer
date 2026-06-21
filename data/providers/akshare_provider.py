@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+from contextlib import contextmanager
 from html import unescape
 from typing import Any
 from urllib.parse import urlparse
@@ -29,6 +31,51 @@ _THS_COMPANY_HEADERS = {
     "Referer": "https://basic.10jqka.com.cn/",
     "Accept-Language": "zh-CN,zh;q=0.9",
 }
+
+
+@contextmanager
+def _without_proxy_env():
+    proxy_keys = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "NO_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+        "no_proxy",
+    )
+    old_values = {key: os.environ.get(key) for key in proxy_keys}
+    old_session_init = requests.sessions.Session.__init__
+
+    def _session_init_without_env(self: requests.Session, *args: Any, **kwargs: Any) -> None:
+        old_session_init(self, *args, **kwargs)
+        self.trust_env = False
+
+    try:
+        for key in proxy_keys:
+            os.environ.pop(key, None)
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+        requests.sessions.Session.__init__ = _session_init_without_env
+        yield
+    finally:
+        requests.sessions.Session.__init__ = old_session_init
+        for key, value in old_values.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _requests_get_without_proxy(*args: Any, **kwargs: Any) -> requests.Response:
+    with _without_proxy_env():
+        return requests.get(*args, **kwargs)
+
+
+def _call_without_proxy_env(func: Any) -> Any:
+    with _without_proxy_env():
+        return func()
 
 
 def _safe_float(value: Any) -> float | None:
@@ -151,7 +198,7 @@ class AkShareProvider:
             return None
         try:
             df = _run_with_timeout(
-                lambda: ak.stock_individual_info_em(symbol=symbol),
+                lambda: _call_without_proxy_env(lambda: ak.stock_individual_info_em(symbol=symbol)),
                 timeout_seconds,
             )
             profile = self._normalize_stock_profile(symbol, df)
@@ -196,7 +243,7 @@ class AkShareProvider:
         last_error: Exception | None = None
         for host in hosts:
             try:
-                response = requests.get(
+                response = _requests_get_without_proxy(
                     f"{host}/api/qt/clist/get",
                     params=params,
                     headers=_HTTP_HEADERS,
@@ -314,7 +361,7 @@ class AkShareProvider:
             return profile
 
     def _fetch_ths_company_industry(self, symbol: str, timeout_seconds: float = 2) -> str | None:
-        response = requests.get(
+        response = _requests_get_without_proxy(
             f"https://basic.10jqka.com.cn/{symbol}/company.html",
             headers=_THS_COMPANY_HEADERS,
             timeout=timeout_seconds,
@@ -331,7 +378,7 @@ class AkShareProvider:
         """腾讯快行情 fallback：至少保证名称、价格、估值和市值可用。"""
         prefix = "sh" if symbol.startswith("6") else "bj" if symbol.startswith(("4", "8")) else "sz"
         try:
-            response = requests.get(
+            response = _requests_get_without_proxy(
                 f"https://qt.gtimg.cn/q={prefix}{symbol}",
                 headers=_HTTP_HEADERS,
                 timeout=timeout_seconds,
@@ -374,7 +421,7 @@ class AkShareProvider:
             return None
         prefix = "sh" if profile.symbol.startswith("6") else "bj" if profile.symbol.startswith(("4", "8")) else "sz"
         try:
-            response = requests.get(
+            response = _requests_get_without_proxy(
                 f"https://qt.gtimg.cn/q={prefix}{profile.symbol}",
                 headers=_HTTP_HEADERS,
                 timeout=timeout_seconds,

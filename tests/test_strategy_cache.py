@@ -59,16 +59,24 @@ def test_get_strategy_stock_data_preserves_source_order():
     data = _df()
 
     class Fetcher:
-        def _get_cn_stock_data_sina_fallback(self, symbol, period):
-            calls.append("sina")
+        def _get_cn_stock_data_mootdx(self, symbol, period):
+            calls.append("mootdx")
             return None
 
         def _get_cn_stock_data_akshare(self, symbol, period):
             calls.append("tencent")
             return data
 
+        def _get_cn_stock_data_ths(self, symbol, period):
+            calls.append("ths")
+            return None
+
         def _get_cn_stock_data_akshare_em(self, symbol, period):
             calls.append("eastmoney")
+            return None
+
+        def _get_cn_stock_data_sina_fallback(self, symbol, period):
+            calls.append("sina")
             return None
 
         def _load_offline_cache(self, symbol):
@@ -78,7 +86,7 @@ def test_get_strategy_stock_data_preserves_source_order():
     result = strategy_cache.get_strategy_stock_data(owner, "000001", fetcher=Fetcher())
 
     assert result is data
-    assert calls == ["sina", "tencent"]
+    assert calls == ["mootdx", "tencent"]
     assert result.attrs["data_source"] == strategy_cache.TENCENT_SOURCE
     assert owner.saved[0][0] == "CN:000001:3mo:1d:2026-06-04"
 
@@ -88,13 +96,19 @@ def test_refresh_strategy_kline_cache_counts_success_and_failure(monkeypatch):
     data = _df()
 
     class Fetcher:
-        def _get_cn_stock_data_sina_fallback(self, symbol, period):
+        def _get_cn_stock_data_mootdx(self, symbol, period):
             return data if symbol == "000001" else None
 
         def _get_cn_stock_data_akshare(self, symbol, period):
             return None
 
+        def _get_cn_stock_data_ths(self, symbol, period):
+            return None
+
         def _get_cn_stock_data_akshare_em(self, symbol, period):
+            return None
+
+        def _get_cn_stock_data_sina_fallback(self, symbol, period):
             return None
 
     monkeypatch.setattr(strategy_cache, "StockDataFetcher", Fetcher)

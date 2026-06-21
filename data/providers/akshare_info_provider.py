@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
+import requests
 
 from data.models import utc_now_iso
 from data.providers.akshare_provider import AKSHARE_AVAILABLE, ak, _brief_error, _safe_float
@@ -15,6 +16,9 @@ from data.runtime import run_with_timeout
 
 
 logger = logging.getLogger(__name__)
+
+_CNINFO_SESSION = requests.Session()
+_CNINFO_SESSION.trust_env = False
 
 
 class AkShareInfoProvider:
@@ -133,11 +137,11 @@ class AkShareInfoProvider:
         return self._try_sources(
             "财务摘要",
             [
+                ("新浪利润表", lambda: ak.stock_financial_report_sina(stock=self._sina_stock_code(symbol), symbol="利润表"), self._normalize_sina_profit_statement),
                 ("东方财富财务摘要", lambda: ak.stock_financial_abstract(symbol=symbol), self._normalize_financial_summary),
                 ("同花顺财务摘要", lambda: ak.stock_financial_abstract_ths(symbol=symbol, indicator="按报告期"), self._normalize_financial_summary),
                 ("同花顺新版财务摘要", lambda: ak.stock_financial_abstract_new_ths(symbol=symbol, indicator="按报告期"), self._normalize_financial_summary),
                 ("东方财富财务指标", lambda: ak.stock_financial_analysis_indicator_em(symbol=em_symbol, indicator="按报告期"), self._normalize_financial_indicator_em),
-                ("新浪利润表", lambda: ak.stock_financial_report_sina(stock=self._sina_stock_code(symbol), symbol="利润表"), self._normalize_sina_profit_statement),
             ],
             timeout_seconds,
         )
@@ -303,6 +307,11 @@ class AkShareInfoProvider:
             "公告",
             [
                 (
+                    "巨潮资讯公告",
+                    lambda: self._fetch_cninfo_announcements(symbol, begin_date, end_date, limit=limit),
+                    lambda df: self._normalize_announcements(df, limit=limit, source="巨潮资讯公告"),
+                ),
+                (
                     "东方财富个股公告",
                     lambda: ak.stock_individual_notice_report(
                         security=symbol,
@@ -338,6 +347,50 @@ class AkShareInfoProvider:
         except Exception as exc:
             logger.info("获取个股公告失败 symbol=%s error=%s", symbol, _brief_error(exc))
             return []
+
+    @staticmethod
+    def _fetch_cninfo_announcements(symbol: str, begin_date: str, end_date: str, limit: int = 5) -> pd.DataFrame:
+        plate = "sh" if str(symbol).startswith("6") else "sz"
+        response = _CNINFO_SESSION.post(
+            "https://www.cninfo.com.cn/new/hisAnnouncement/query",
+            data={
+                "stock": str(symbol).zfill(6),
+                "tabName": "fulltext",
+                "pageSize": max(int(limit or 5), 5),
+                "pageNum": 1,
+                "column": "sse" if plate == "sh" else "szse",
+                "category": "",
+                "plate": plate,
+                "seDate": f"{begin_date}~{end_date}",
+                "searchkey": "",
+                "secid": "",
+                "sortName": "",
+                "sortType": "",
+                "isHLtitle": "true",
+            },
+            headers={
+                "User-Agent": "Mozilla/5.0",
+                "Referer": "https://www.cninfo.com.cn/new/disclosure/stock",
+            },
+            timeout=8,
+        )
+        if response.status_code != 200:
+            return pd.DataFrame()
+        announcements = (response.json() or {}).get("announcements") or []
+        rows = []
+        for item in announcements:
+            title = item.get("announcementTitle") or item.get("title")
+            if not title:
+                continue
+            adjunct_url = str(item.get("adjunctUrl") or "")
+            url = f"https://static.cninfo.com.cn/{adjunct_url}" if adjunct_url and not adjunct_url.startswith("http") else adjunct_url
+            rows.append({
+                "公告标题": str(title).replace("<em>", "").replace("</em>", ""),
+                "公告日期": str(item.get("announcementTime") or item.get("announcementDate") or ""),
+                "公告类型": str(item.get("categoryName") or ""),
+                "公告链接": url,
+            })
+        return pd.DataFrame(rows)
 
     def get_sector_attribution(self, symbol: str, timeout_seconds: float = 4) -> dict[str, Any]:
         errors = []

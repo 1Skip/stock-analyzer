@@ -11,7 +11,15 @@ from quality_monitor import build_hot_data_status
 _HOT_SECTION_LABELS = {
     "gainers": "个股涨幅榜",
     "losers": "个股跌幅榜",
+    "hot_concepts": "热门概念板块",
+    "hot_sectors": "热门行业板块",
+    "hot_indices": "热门指数板块",
+    "board_statistics_all": "板块统计-全部",
+    "board_statistics_industry": "板块统计-行业",
+    "board_statistics_concept": "板块统计-概念",
 }
+
+HOT_STOCKS_DATA_VERSION = "hot_board_statistics_ths_filtered_v2"
 
 
 @st.cache_data(ttl=CACHE_TTL_HOT_STOCKS, show_spinner=False)
@@ -28,8 +36,14 @@ def fetch_hot_stocks(market, progress_callback=None):
         tasks = {
             'gainers': lambda: recommender.get_top_gainers_cn(limit=10),
             'losers': lambda: recommender.get_top_losers_cn(limit=10),
+            'hot_concepts': lambda: recommender.get_hot_concepts_cn(limit=20),
+            'hot_sectors': lambda: recommender.get_hot_sectors_cn(limit=20),
+            'hot_indices': lambda: recommender.get_hot_indices_cn(limit=20),
+            'board_statistics_all': lambda: recommender.get_board_statistics_cn(category="全部", sort_by="涨幅", limit=30),
+            'board_statistics_industry': lambda: recommender.get_board_statistics_cn(category="行业", sort_by="涨幅", limit=30),
+            'board_statistics_concept': lambda: recommender.get_board_statistics_cn(category="概念", sort_by="涨幅", limit=30),
         }
-        return _run_hot_tasks(tasks, max_workers=2, progress_callback=progress_callback)
+        return _run_hot_tasks(tasks, max_workers=6, progress_callback=progress_callback)
     elif market == "HK":
         _emit_progress(progress_callback, "获取热门港股", 30)
         hot = recommender.get_hot_stocks_hk(limit=20)
@@ -116,6 +130,11 @@ def hot_stocks_page():
         st.session_state.hot_data_loaded = False
     if 'hot_data' not in st.session_state:
         st.session_state.hot_data = None
+    if st.session_state.get('hot_data_version') != HOT_STOCKS_DATA_VERSION:
+        st.session_state.hot_data_loaded = False
+        st.session_state.hot_data = None
+        st.session_state.hot_data_status = None
+        st.session_state.hot_data_version = HOT_STOCKS_DATA_VERSION
 
     col1, col2 = st.columns([1, 4])
     with col1:
@@ -139,6 +158,7 @@ def hot_stocks_page():
         progress.update("整理展示数据", 92)
         st.session_state.hot_data_loaded = True
         st.session_state.hot_data = data
+        st.session_state.hot_data_version = HOT_STOCKS_DATA_VERSION
         st.session_state.hot_data_status = build_hot_data_status(data)
         progress.complete("完成")
         loading_panel.empty()
@@ -163,8 +183,33 @@ def hot_stocks_page():
     if market == "CN":
         gainers = data.get('gainers', [])
         losers = data.get('losers', [])
+        hot_concepts = data.get('hot_concepts', [])
+        hot_sectors = data.get('hot_sectors', [])
+        hot_indices = data.get('hot_indices', [])
+        board_statistics_all = data.get('board_statistics_all', [])
+        board_statistics_industry = data.get('board_statistics_industry', [])
+        board_statistics_concept = data.get('board_statistics_concept', [])
 
         st.caption("涨跌排行用于观察全市场个股涨跌幅，保留创业板、科创板、北交所；智能推荐和推荐计划才仅限对应策略股票池。")
+
+        st.subheader("热门板块")
+        concept_tab, industry_tab, index_tab = st.tabs(["概念板块", "行业板块", "指数板块"])
+        with concept_tab:
+            _render_board_table(hot_concepts, ["排名", "板块", "涨跌幅", "热度", "热度排名变化", "标签", "数据源"], "暂无热门概念板块数据")
+        with industry_tab:
+            _render_board_table(hot_sectors, ["排名", "板块", "涨跌幅", "热度", "热度排名变化", "标签", "数据源"], "暂无热门行业板块数据")
+        with index_tab:
+            _render_board_table(hot_indices, ["排名", "板块", "涨跌幅", "热度", "热度排名变化", "数据源"], "暂无热门指数板块数据")
+
+        st.subheader("板块统计")
+        all_tab, stat_industry_tab, stat_concept_tab = st.tabs(["全部", "行业", "概念"])
+        statistic_columns = ["板块", "涨跌幅", "涨速", "量比", "涨停数", "总成交额(亿)", "换手率", "代码", "数据源"]
+        with all_tab:
+            _render_board_table(board_statistics_all, statistic_columns, "暂无板块统计-全部数据")
+        with stat_industry_tab:
+            _render_board_table(board_statistics_industry, statistic_columns, "暂无板块统计-行业数据")
+        with stat_concept_tab:
+            _render_board_table(board_statistics_concept, statistic_columns, "暂无板块统计-概念数据")
 
         st.subheader("个股涨幅榜")
         df_gainers = pd.DataFrame(gainers)
@@ -252,3 +297,15 @@ def hot_stocks_page():
             st.dataframe(df_losers, width="stretch")
         else:
             st.info("暂无跌幅榜数据")
+
+
+def _render_board_table(rows, preferred_columns, empty_message):
+    df = pd.DataFrame(rows or [])
+    if df.empty:
+        st.info(empty_message)
+        return
+    columns = [column for column in preferred_columns if column in df.columns]
+    if columns:
+        df = df[columns]
+    df = df.fillna("")
+    st.dataframe(df, width="stretch")

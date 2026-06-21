@@ -54,7 +54,7 @@ def apply_short_term_learning(
     recommended: list[dict[str, Any]] | None,
     profile: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    """Attach learning fields and filter only when real backtest data is sufficient."""
+    """Attach learning fields and use real backtest data as ranking aid, not hard filter."""
     items = [
         dict(item)
         for item in (recommended or [])
@@ -81,10 +81,12 @@ def apply_short_term_learning(
         item["learned_alpha_score"] = learned_alpha
         item["learning_reason"] = _learning_reason(profile, bucket, bonus)
         item["learning_score_threshold"] = threshold if active else None
-        if active and score is not None and threshold is not None and score < threshold:
-            item["learning_filtered"] = True
-            item["learning_filter_reason"] = f"真实回测动态门槛 score >= {threshold}，当前 {score:.1f}。"
-            continue
+        below_threshold = active and score is not None and threshold is not None and score < threshold
+        item["learning_below_threshold"] = bool(below_threshold)
+        item["learning_threshold_note"] = (
+            f"真实回测参考线 score >= {threshold}，当前 {score:.1f}；仅影响排序，不剔除。"
+            if below_threshold else ""
+        )
         item["learning_filtered"] = False
         learned.append(item)
     if active:

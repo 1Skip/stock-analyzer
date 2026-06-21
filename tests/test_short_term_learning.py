@@ -78,7 +78,7 @@ def test_short_term_learning_stays_observational_when_samples_are_insufficient()
     assert result[0]["learning_bonus"] == 0.0
 
 
-def test_short_term_learning_filters_and_sorts_only_when_profile_is_active():
+def test_short_term_learning_keeps_low_score_items_and_sorts_when_profile_is_active():
     profile = {
         "version": "short_term_learning_v1",
         "status": "active",
@@ -99,10 +99,12 @@ def test_short_term_learning_filters_and_sorts_only_when_profile_is_active():
         profile,
     )
 
-    assert [item["symbol"] for item in result] == ["B", "A"]
+    assert [item["symbol"] for item in result] == ["LOW", "B", "A"]
     assert all(item["learning_filtered"] is False for item in result)
     by_symbol = {item["symbol"]: item for item in result}
     assert by_symbol["A"]["learning_bonus"] > by_symbol["B"]["learning_bonus"]
+    assert by_symbol["LOW"]["learning_below_threshold"] is True
+    assert "仅影响排序，不剔除" in by_symbol["LOW"]["learning_threshold_note"]
 
 
 def test_short_term_learning_excludes_star_market_as_experiment_pool_guard():

@@ -675,7 +675,7 @@ class TestStockInfoService:
 
         result = provider.get_financial_summary("002609")
 
-        assert result["source"] == "同花顺财务摘要"
+        assert result["source"] == "东方财富财务摘要"
         assert result["metrics"]["每股收益"] == 0.32
 
     def test_normalize_fund_flow_summary(self):
@@ -1038,6 +1038,42 @@ class TestStockInfoService:
         assert result["annual_dividend_per_share"] == pytest.approx(0.05)
         assert "非最近一期" in result["note"]
 
+    def test_financial_summary_prefers_sina_profit_statement(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            return pd.DataFrame([{"any": "value"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+        monkeypatch.setattr(
+            provider,
+            "_normalize_sina_profit_statement",
+            lambda df: {"status": "ok", "source": "新浪利润表", "metrics": {"归母净利润": 1000000}},
+        )
+
+        result = provider.get_financial_summary("002609")
+
+        assert result["source"] == "新浪利润表"
+        assert calls == [0]
+
+    def test_announcements_prefers_cninfo_before_eastmoney(self, monkeypatch):
+        provider = AkShareInfoProvider()
+        calls = []
+
+        def fake_run(func, timeout_seconds):
+            calls.append(len(calls))
+            return pd.DataFrame([{"公告标题": "巨潮公告", "公告日期": "2026-06-20", "公告链接": "https://example.com/a"}])
+
+        monkeypatch.setattr("data.providers.akshare_info_provider.run_with_timeout", fake_run)
+
+        result = provider.get_announcements("002609")
+
+        assert result[0]["source"] == "巨潮资讯公告"
+        assert result[0]["title"] == "巨潮公告"
+        assert calls == [0]
+
     def test_normalize_eps_consensus_empty_has_status_from_public_method(self, monkeypatch):
         provider = AkShareInfoProvider()
 
@@ -1227,7 +1263,7 @@ class TestStockInfoService:
 
         def fake_run(func, timeout_seconds):
             calls.append(len(calls))
-            if len(calls) == 1:
+            if len(calls) in (1, 2):
                 return pd.DataFrame()
             return pd.DataFrame([{"代码": "002609", "公告标题": "风险提示公告", "公告日期": "2026-05-14"}])
 

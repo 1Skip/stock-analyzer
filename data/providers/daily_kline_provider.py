@@ -164,6 +164,56 @@ class AkshareDailyKlineProvider:
         return df
 
 
+class MootdxDailyKlineProvider:
+    """Fetch A-share daily K-line from Tongdaxin servers through mootdx."""
+
+    source = "\u901a\u8fbe\u4fe1mootdx"
+
+    def __init__(self, quotes_factory: Any | None = None):
+        self.quotes_factory = quotes_factory
+
+    def fetch(self, symbol: str, period: str, *, adjust: str = "") -> pd.DataFrame | None:
+        if adjust:
+            return None
+        try:
+            factory = self.quotes_factory
+            if factory is None:
+                from mootdx.quotes import Quotes
+
+                factory = Quotes.factory
+            client = factory(market="std", timeout=5)
+            try:
+                df = client.bars(symbol=str(symbol), frequency=9, offset=800)
+            finally:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            return None
+        if df is None or getattr(df, "empty", True) or len(df) < 10:
+            return None
+        date_col = "datetime" if "datetime" in df.columns else "date" if "date" in df.columns else None
+        if date_col is None:
+            return None
+        df = df.rename(columns={"vol": "volume"})
+        for required in ("open", "high", "low", "close"):
+            if required not in df.columns:
+                return None
+        if "volume" not in df.columns:
+            df["volume"] = 0
+        df["date"] = pd.to_datetime(df[date_col], errors="coerce")
+        df.set_index("date", inplace=True)
+        df = _numeric_ohlcv(df[["open", "high", "low", "close", "volume"]].copy())
+        cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=_days(period))
+        df = df[df.index >= cutoff]
+        if len(df) < 10:
+            return None
+        df.attrs["adjust_method"] = "\u4e0d\u590d\u6743\uff08mootdx\uff09"
+        df.attrs["data_provider"] = self.source
+        df.attrs["volume_unit"] = "share"
+        return df
+
+
 class SinaDailyKlineProvider:
     """Fetch Sina daily K-lines for A-share and US stocks."""
 

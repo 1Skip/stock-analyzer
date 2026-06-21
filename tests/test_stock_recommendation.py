@@ -10,9 +10,12 @@ import json
 # ============================================================
 
 @pytest.fixture
-def recommender():
+def recommender(tmp_path):
+    from data.cache import JsonFileCache
     from stock_recommendation import StockRecommender
-    return StockRecommender()
+    item = StockRecommender()
+    item._board_ranking_cache = JsonFileCache("board_rankings_test", 86400, cache_dir=tmp_path)
+    return item
 
 
 @pytest.fixture
@@ -301,48 +304,206 @@ class TestGetTopLosersCN:
 
 class TestGetHotSectorsCN:
 
+    def test_ths_hotlist_sector_board_used_before_wencai(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_ths_hotlist_sectors", 86400, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            recommender,
+            "_get_hot_sectors_ths_hotlist",
+            lambda limit=30: [{"板块": "半导体", "热度": 20734.5, "涨跌幅": 2.29, "数据源": "同花顺热门行业板块"}],
+        )
+        monkeypatch.setattr(
+            recommender,
+            "_get_hot_sectors_wencai",
+            lambda limit=30: exec('raise AssertionError("wencai source should not run")'),
+        )
+
+        result = recommender.get_hot_sectors_cn(limit=5)
+
+        assert result[0]["板块"] == "半导体"
+        assert result[0]["热度"] == 20734.5
+        assert result[0]["数据源"] == "同花顺热门行业板块"
+
+    def test_wencai_sector_board_used_before_public_pages(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_wencai_sectors", 86400, cache_dir=tmp_path)
+        monkeypatch.setenv("WENCAI_COOKIE", "test-cookie")
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_hotlist", lambda limit=30: [])
+
+        def fake_wencai(query, source, limit=30):
+            assert "行业板块" in query
+            return [{"板块": "机器人", "涨跌幅": 4.2, "领涨股": "测试股份", "数据源": source}]
+
+        monkeypatch.setattr(recommender, "_get_hot_boards_wencai", fake_wencai)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda *args, **kwargs: exec('raise AssertionError("public source should not run")'),
+        )
+
+        result = recommender.get_hot_sectors_cn(limit=5)
+
+        assert result[0]["板块"] == "机器人"
+        assert result[0]["数据源"] == "问财行业热榜"
+
+    def test_wencai_board_skips_without_cookie(self, recommender, monkeypatch):
+        monkeypatch.delenv("WENCAI_COOKIE", raising=False)
+        monkeypatch.delenv("IWENCAI_COOKIE", raising=False)
+
+        assert recommender._get_hot_sectors_wencai(limit=5) == []
+
+    def test_normalize_wencai_board_ranking(self, recommender):
+        df = pd.DataFrame([
+            {"板块名称": "PCB概念", "涨跌幅": "3.5%", "领涨股": "胜宏科技", "主力净流入": "2.1亿"},
+            {"板块名称": "机器人", "涨跌幅": "4.2%", "领涨股": "测试股份", "成交额": "100000000"},
+        ])
+
+        result = recommender._normalize_wencai_board_ranking(df, source="问财概念热榜")
+
+        assert [row["板块"] for row in result] == ["机器人", "PCB概念"]
+        assert result[0]["涨跌幅"] == 4.2
+        assert result[0]["数据源"] == "问财概念热榜"
+
+    def test_normalize_wencai_board_ranking_with_index_dynamic_columns(self, recommender):
+        df = pd.DataFrame([
+            {
+                "指数简称": "牙科医疗",
+                "指数@涨跌幅:前复权[20260618]": 3.1694,
+                "指数@成交额[20260618]": 27824566000,
+            },
+            {
+                "指数简称": "稀土",
+                "指数@涨跌幅:前复权[20260618]": 6.7269,
+                "指数@成交额[20260618]": 112000000000,
+            },
+        ])
+
+        result = recommender._normalize_wencai_board_ranking(df, source="问财行业热榜")
+
+        assert [row["板块"] for row in result] == ["稀土", "牙科医疗"]
+        assert result[0]["涨跌幅"] == 6.73
+        assert result[0]["总成交额(亿)"] == 1120
+
+    def test_normalize_ths_hot_plate_item(self, recommender):
+        result = recommender._normalize_ths_hot_plate_item(
+            {
+                "name": "PCB概念",
+                "rise_and_fall": 1.4188,
+                "rate": "24803.5",
+                "order": 2,
+                "hot_rank_chg": 1,
+                "code": "885959",
+                "market_id": 48,
+                "tag": "11家涨停",
+            },
+            category="概念",
+            source="同花顺热门概念板块",
+        )
+
+        assert result["板块"] == "PCB概念"
+        assert result["涨跌幅"] == 1.42
+        assert result["热度"] == 24803.5
+        assert result["排名"] == 2
+        assert result["类别"] == "概念"
+
     def test_returns_list(self, recommender, monkeypatch):
         mock_resp = _make_mock_response(_mock_sector_html())
-        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda url, headers=None, timeout=4: mock_resp,
+        )
         result = recommender.get_hot_sectors_cn(limit=10)
         assert isinstance(result, list)
         assert len(result) > 0
 
     def test_each_sector_has_fields(self, recommender, monkeypatch):
         mock_resp = _make_mock_response(_mock_sector_html())
-        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda url, headers=None, timeout=4: mock_resp,
+        )
         result = recommender.get_hot_sectors_cn(limit=5)
         if result:
             s = result[0]
             for key in ['板块', '涨跌幅', '领涨股', '上涨家数', '下跌家数']:
                 assert key in s
 
-    def test_request_failure_returns_empty(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.requests.get',
-                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+    def test_request_failure_marks_unavailable_without_cache(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_empty_sectors", 1, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda *args, **kwargs: exec('raise Exception("fail")'),
+        )
         monkeypatch.setattr('stock_recommendation.ak', None)
         result = recommender.get_hot_sectors_cn()
         assert result == []
+        assert recommender.last_board_ranking_diagnostics["sectors"]["status"] == "unavailable"
 
-    def test_request_failure_falls_back_to_eastmoney_board(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.requests.get',
-                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+    def test_request_failure_falls_back_to_eastmoney_board(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
 
-        class FakeAk:
-            @staticmethod
-            def stock_board_industry_name_em():
-                return pd.DataFrame([{"板块名称": "电力行业", "涨跌幅": 2.1, "领涨股票": "上海电力"}])
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_eastmoney_sectors", 86400, cache_dir=tmp_path)
 
-            @staticmethod
-            def stock_board_industry_name_ths():
-                return pd.DataFrame()
+        def fake_get(url, **kwargs):
+            if "push2.eastmoney.com" in url:
+                return _make_mock_response("", json_data={
+                    "data": {
+                        "diff": [
+                            {"f14": "电力行业", "f3": 2.1, "f128": "上海电力"}
+                        ]
+                    }
+                })
+            raise Exception("fail")
 
-        monkeypatch.setattr('stock_recommendation.ak', FakeAk)
+        monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
 
         result = recommender.get_hot_sectors_cn(limit=5)
 
         assert result[0]["板块"] == "电力行业"
         assert result[0]["数据源"] == "东方财富行业板块"
+
+    def test_request_failure_falls_back_to_sina_industry_board(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_sina_sectors", 86400, cache_dir=tmp_path)
+
+        def fake_get(url, **kwargs):
+            if "newSinaHy.php" in url:
+                return _make_mock_response(_mock_sina_industry_payload())
+            raise Exception("fail")
+
+        monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
+        monkeypatch.setattr('stock_recommendation.ak', None)
+
+        result = recommender.get_hot_sectors_cn(limit=5)
+
+        assert result[0]["板块"] == "电子器件"
+        assert result[0]["涨跌幅"] == 1.9
+        assert result[0]["领涨股"] == "测试科技"
+        assert result[0]["数据源"] == "新浪财经行业板块"
+
+    def test_hot_sector_uses_recent_success_cache_when_sources_unavailable(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_cache_sectors", 86400, cache_dir=tmp_path)
+        recommender._board_ranking_cache.set(
+            "sectors",
+            [{"板块": "PCB", "涨跌幅": 2.2, "领涨股": "测试股", "数据源": "东方财富行业板块"}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda *args, **kwargs: exec('raise Exception("network down")'),
+        )
+        monkeypatch.setattr('stock_recommendation.ak', None)
+
+        result = recommender.get_hot_sectors_cn(limit=5)
+
+        assert result[0]["板块"] == "PCB"
+        assert "缓存" in result[0]["数据源"]
+        assert recommender.last_board_ranking_diagnostics["sectors"]["status"] == "cache"
 
 
 # ============================================================
@@ -351,48 +512,263 @@ class TestGetHotSectorsCN:
 
 class TestGetHotConceptsCN:
 
+    def test_ths_hotlist_concept_board_used_before_wencai(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_ths_hotlist_concepts", 86400, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            recommender,
+            "_get_hot_concepts_ths_hotlist",
+            lambda limit=30: [{"板块": "PCB概念", "热度": 24803.5, "涨跌幅": 1.42, "数据源": "同花顺热门概念板块"}],
+        )
+        monkeypatch.setattr(
+            recommender,
+            "_get_hot_concepts_wencai",
+            lambda limit=30: exec('raise AssertionError("wencai source should not run")'),
+        )
+
+        result = recommender.get_hot_concepts_cn(limit=5)
+
+        assert result[0]["板块"] == "PCB概念"
+        assert result[0]["热度"] == 24803.5
+        assert result[0]["数据源"] == "同花顺热门概念板块"
+
     def test_returns_list(self, recommender, monkeypatch):
         mock_resp = _make_mock_response(_mock_concept_html())
-        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda url, headers=None, timeout=4: mock_resp,
+        )
         result = recommender.get_hot_concepts_cn(limit=10)
         assert isinstance(result, list)
         assert len(result) > 0
 
     def test_each_concept_has_fields(self, recommender, monkeypatch):
         mock_resp = _make_mock_response(_mock_concept_html())
-        monkeypatch.setattr('stock_recommendation.requests.get', lambda url, headers=None, timeout=10: mock_resp)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda url, headers=None, timeout=4: mock_resp,
+        )
         result = recommender.get_hot_concepts_cn(limit=5)
         if result:
             s = result[0]
             for key in ['板块', '涨跌幅', '领涨股', '净流入(亿)']:
                 assert key in s
 
-    def test_request_failure_returns_empty(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.requests.get',
-                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+    def test_request_failure_marks_unavailable_without_cache(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_empty_concepts_legacy", 1, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda *args, **kwargs: exec('raise Exception("fail")'),
+        )
         monkeypatch.setattr('stock_recommendation.ak', None)
         result = recommender.get_hot_concepts_cn()
         assert result == []
+        assert recommender.last_board_ranking_diagnostics["concepts"]["status"] == "unavailable"
 
-    def test_request_failure_falls_back_to_eastmoney_concept_board(self, recommender, monkeypatch):
-        monkeypatch.setattr('stock_recommendation.requests.get',
-                            lambda url, headers=None, timeout=10: exec('raise Exception("fail")'))
+    def test_request_failure_falls_back_to_eastmoney_concept_board(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
 
-        class FakeAk:
-            @staticmethod
-            def stock_board_concept_name_em():
-                return pd.DataFrame([{"板块名称": "算力租赁", "涨跌幅": 3.2, "领涨股票": "测试股"}])
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_eastmoney_concepts", 86400, cache_dir=tmp_path)
 
-            @staticmethod
-            def stock_board_concept_name_ths():
-                return pd.DataFrame()
+        def fake_get(url, **kwargs):
+            if "push2.eastmoney.com" in url:
+                return _make_mock_response("", json_data={
+                    "data": {
+                        "diff": [
+                            {"f14": "算力租赁", "f3": 3.2, "f128": "测试股"}
+                        ]
+                    }
+                })
+            raise Exception("fail")
 
-        monkeypatch.setattr('stock_recommendation.ak', FakeAk)
+        monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
 
         result = recommender.get_hot_concepts_cn(limit=5)
 
         assert result[0]["板块"] == "算力租赁"
         assert result[0]["数据源"] == "东方财富概念板块"
+
+    def test_hot_concept_marks_unavailable_when_sources_and_cache_missing(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_empty", 1, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            'stock_recommendation.hot_stocks._SINA_SESSION.get',
+            lambda *args, **kwargs: exec('raise Exception("network down")'),
+        )
+        monkeypatch.setattr('stock_recommendation.ak', None)
+
+        result = recommender.get_hot_concepts_cn(limit=5)
+
+        assert result == []
+        assert recommender.last_board_ranking_diagnostics["concepts"]["status"] == "unavailable"
+
+    def test_short_term_hot_boards_interleave_concepts_and_sectors(self, recommender, monkeypatch):
+        monkeypatch.setattr(
+            recommender,
+            "get_hot_concepts_cn",
+            lambda limit=10: [{"板块": "存储芯片"}, {"板块": "PCB概念"}, {"板块": "共封装光学(CPO)"}],
+        )
+        monkeypatch.setattr(
+            recommender,
+            "get_hot_sectors_cn",
+            lambda limit=10: [{"板块": "半导体"}, {"板块": "证券"}, {"板块": "银行"}],
+        )
+
+        result = recommender._get_short_term_hot_board_rows(limit=4)
+
+        assert [row["name"] for row in result] == ["存储芯片", "半导体", "PCB概念", "证券"]
+
+
+class TestGetHotIndicesCN:
+
+    def test_get_hot_indices_uses_ths_hotlist(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_ths_hotlist_indices", 86400, cache_dir=tmp_path)
+        monkeypatch.setattr(
+            recommender,
+            "_get_hot_indices_ths_hotlist",
+            lambda limit=30: [{"板块": "人工智能", "热度": 1727.5, "涨跌幅": 5.23, "数据源": "同花顺热门指数板块"}],
+        )
+
+        result = recommender.get_hot_indices_cn(limit=5)
+
+        assert result[0]["板块"] == "人工智能"
+        assert result[0]["热度"] == 1727.5
+        assert result[0]["数据源"] == "同花顺热门指数板块"
+
+
+class TestBoardStatisticsCN:
+
+    def test_normalize_wencai_board_statistics(self, recommender):
+        df = pd.DataFrame([
+            {
+                "指数代码": "881121",
+                "指数简称": "半导体",
+                "指数@涨跌幅:前复权[20260621]": 2.29,
+                "指数@成交额[20260621]": 112000000000,
+                "指数@换手率[20260621]": 3.21,
+            },
+            {
+                "指数代码": "885959",
+                "指数简称": "PCB概念",
+                "指数@涨跌幅:前复权[20260621]": 1.42,
+                "指数@成交额[20260621]": 78000000000,
+            },
+        ])
+
+        result = recommender._normalize_wencai_board_statistics(
+            df,
+            category="全部",
+            sort_by="涨幅",
+            source="同花顺板块统计-全部",
+        )
+
+        assert [row["板块"] for row in result] == ["半导体", "PCB概念"]
+        assert result[0]["代码"] == "881121"
+        assert result[0]["类别"] == "全部"
+        assert result[0]["涨跌幅"] == 2.29
+        assert result[0]["总成交额(亿)"] == 1120
+
+    def test_normalize_wencai_board_statistics_filters_to_ths_level_names(self, recommender):
+        df = pd.DataFrame([
+            {"指数代码": "884282.TI", "指数简称": "钨", "指数@涨跌幅:前复权[20260621]": 8.17},
+            {"指数代码": "881167.TI", "指数简称": "非金属材料", "指数@涨跌幅:前复权[20260621]": 4.99},
+            {"指数代码": "881114.TI", "指数简称": "金属新材料", "指数@涨跌幅:前复权[20260621]": 2.45},
+        ])
+
+        result = recommender._normalize_wencai_board_statistics(
+            df,
+            category="行业",
+            sort_by="涨幅",
+            source="同花顺板块统计-行业",
+            allowed_names={"非金属材料", "金属新材料"},
+        )
+
+        assert [row["板块"] for row in result] == ["非金属材料", "金属新材料"]
+
+    def test_normalize_wencai_board_statistics_requires_official_names(self, recommender):
+        df = pd.DataFrame([
+            {"指数代码": "884282.TI", "指数简称": "钨", "指数@涨跌幅:前复权[20260621]": 8.17},
+            {"指数代码": "884283.TI", "指数简称": "稀土", "指数@涨跌幅:前复权[20260621]": 6.12},
+        ])
+
+        result = recommender._normalize_wencai_board_statistics(
+            df,
+            category="行业",
+            sort_by="涨幅",
+            source="同花顺板块统计-行业",
+            allowed_names=set(),
+        )
+
+        assert result == []
+
+    def test_get_ths_board_statistics_name_set_uses_cache_on_fetch_failure(self, recommender, monkeypatch):
+        import stock_recommendation
+
+        recommender._board_ranking_cache.set("board_statistics_ths_names_v1_行业", ["半导体", "非金属材料"])
+        monkeypatch.setattr(stock_recommendation, "ak", object())
+        monkeypatch.setattr(
+            stock_recommendation.hot_stocks,
+            "_call_without_proxy_env",
+            lambda func: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+
+        result = recommender._get_ths_board_statistics_name_set("行业")
+
+        assert result == {"半导体", "非金属材料"}
+
+    def test_get_ths_board_statistics_name_set_uses_board_code_map_cache(self, recommender, monkeypatch):
+        import stock_recommendation
+
+        recommender._board_ranking_cache.set(
+            "ths_board_code_map:concept",
+            [{"name": "PCB概念", "code": "885959"}, {"name": "存储芯片", "code": "308928"}],
+        )
+        monkeypatch.setattr(stock_recommendation, "ak", object())
+        monkeypatch.setattr(
+            stock_recommendation.hot_stocks,
+            "_call_without_proxy_env",
+            lambda func: (_ for _ in ()).throw(RuntimeError("offline")),
+        )
+
+        result = recommender._get_ths_board_statistics_name_set("概念")
+
+        assert result == {"PCB概念", "存储芯片"}
+
+    def test_get_board_statistics_builds_wencai_query(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_statistics", 86400, cache_dir=tmp_path)
+        monkeypatch.setattr(recommender, "_get_ths_board_statistics_name_set", lambda category: {"半导体"})
+
+        def fake_wencai(query, source, limit=30, normalizer=None):
+            assert query == "板块统计 行业 按涨幅排名"
+            assert source == "同花顺板块统计-行业"
+            assert callable(normalizer)
+            return [{"板块": "半导体", "涨跌幅": 2.29, "类别": "行业", "数据源": source}]
+
+        monkeypatch.setattr(recommender, "_get_hot_boards_wencai", fake_wencai)
+
+        result = recommender.get_board_statistics_cn(category="industry", sort_by="涨幅", limit=5)
+
+        assert result[0]["板块"] == "半导体"
+        assert result[0]["类别"] == "行业"
+
+    def test_get_board_statistics_does_not_use_old_unfiltered_cache(self, recommender, monkeypatch, tmp_path):
+        from data.cache import JsonFileCache
+
+        recommender._board_ranking_cache = JsonFileCache("board_rankings_test_statistics_version", 86400, cache_dir=tmp_path)
+        recommender._board_ranking_cache.set("board_statistics_行业", [{"板块": "钨", "类别": "行业"}])
+        monkeypatch.setattr(recommender, "_get_ths_board_statistics_name_set", lambda category: set())
+
+        result = recommender.get_board_statistics_cn(category="行业", sort_by="涨幅", limit=5)
+
+        assert result == []
 
 
 # ============================================================
@@ -638,22 +1014,215 @@ class TestGetShortTermRecommendations:
             return _mock_short_analysis(code)
 
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', mock_short)
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [
+                {'code': '300750', 'name': '宁德时代'},
+                {'code': '688981', 'name': '中芯国际'},
+                {'code': '002938', 'name': '鹏鼎控股'},
+            ],
+        )
         result = recommender.get_short_term_recommendations(num_stocks=5)
-        assert analyzed == ['000001', '600519']
-        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
-
+        assert '000001' not in analyzed
+        assert '300750' not in analyzed
+        assert '688981' not in analyzed
+        assert analyzed == ['002938']
+        assert all(not r['symbol'].startswith(('300', '301', '688', '8')) for r in result)
     def test_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
                             lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [{'code': '002938', 'name': '鹏鼎控股'}],
+        )
         result = recommender.get_short_term_recommendations(num_stocks=5)
         assert isinstance(result, list)
 
     def test_sorted_descending(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
                             lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [
+                {'code': '002938', 'name': '鹏鼎控股'},
+                {'code': '300750', 'name': '宁德时代'},
+            ],
+        )
         result = recommender.get_short_term_recommendations(num_stocks=5)
         if len(result) >= 2:
             assert result[0]['score'] >= result[-1]['score']
+
+    def test_all_candidate_pool_uses_hot_boards_not_financial_head_pool(self, recommender, monkeypatch):
+        pool = [
+            {'code': '000001', 'name': '平安银行'},
+            {'code': '600030', 'name': '中信证券'},
+        ]
+        monkeypatch.setattr('stock_recommendation.get_popular_cn_stocks', lambda: pool)
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [
+                {'code': '002938', 'name': '鹏鼎控股'},
+                {'code': '688981', 'name': '中芯国际'},
+            ],
+        )
+        result = recommender._get_short_term_all_candidate_stocks()
+        codes = [item['code'] for item in result]
+        assert '000001' not in codes
+        assert '600030' not in codes
+        assert '002938' in codes
+        assert '688981' not in codes
+        assert all(item['short_term_sectors'] for item in result)
+
+    def test_board_constituents_use_timeout_guard(self, recommender, monkeypatch):
+        calls = []
+
+        def fake_timeout(fetcher, timeout_seconds):
+            calls.append(timeout_seconds)
+            raise TimeoutError("slow board source")
+
+        monkeypatch.setattr('stock_recommendation.run_with_timeout', fake_timeout)
+
+        result = recommender._get_board_constituent_stocks('PCB')
+
+        assert result == []
+        assert calls
+        assert calls == [8, 8, 3, 3]
+
+    def test_all_candidate_pool_falls_back_to_hot_board_leader(self, recommender, monkeypatch):
+        class DummyFetcher:
+            def resolve_stock_input(self, text, market="CN"):
+                assert text == '鹏鼎控股'
+                return ('002938', '鹏鼎控股')
+
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': '鹏鼎控股'}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [],
+        )
+        monkeypatch.setattr('stock_recommendation.StockDataFetcher', lambda: DummyFetcher())
+
+        result = recommender._get_short_term_all_candidate_stocks()
+
+        assert result == [{'code': '002938', 'name': '鹏鼎控股', 'short_term_sectors': ['PCB']}]
+
+    def test_all_requires_stock_own_sector_to_be_hot(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [{'code': '002938', 'name': '鹏鼎控股'}] if board == 'PCB' else [],
+        )
+
+        result = recommender.get_short_term_recommendations(num_stocks=5)
+
+        assert [item['symbol'] for item in result] == ['002938']
+        assert result[0]['sector'] == 'PCB'
+
+    def test_all_requires_pullback_reversal_pattern(self, recommender, monkeypatch):
+        failed = _mock_short_analysis('002938')
+        failed['strategy_checks']['二板以上涨幅'] = True
+        failed['strategy_checks']['回调天数'] = True
+        failed['strategy_checks']['回调幅度'] = False
+        failed['strategy_checks']['放量反包/涨停板'] = True
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN', include_all_pattern=False: failed.copy())
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [{'code': '002938', 'name': '鹏鼎控股'}],
+        )
+
+        assert recommender.get_short_term_recommendations(num_stocks=5) == []
+
+    def test_short_term_all_pattern_passes_after_surge_pullback_and_volume_reversal(self, recommender):
+        dates = pd.date_range("2026-01-01", periods=16, freq="B")
+        close = [10, 10.4, 10.8, 11.5, 12.0, 12.6, 13.2, 12.8, 12.3, 12.0, 11.9, 12.4, 12.7, 12.9, 12.5, 13.1]
+        data = pd.DataFrame({
+            "open": [v - 0.15 for v in close],
+            "high": [v + 0.2 for v in close],
+            "low": [v - 0.3 for v in close],
+            "close": close,
+            "volume": [1000, 1100, 1200, 1300, 1400, 1500, 1600, 1200, 1100, 1050, 1000, 1100, 1150, 1200, 1250, 2600],
+        }, index=dates)
+        data.iloc[-1, data.columns.get_loc("open")] = 12.4
+        data.iloc[-1, data.columns.get_loc("high")] = 13.3
+        data.iloc[-2, data.columns.get_loc("high")] = 12.8
+
+        checks, details = recommender._evaluate_short_term_all_pattern(data, symbol="002938")
+
+        assert checks["二板以上涨幅"] is True
+        assert checks["回调天数"] is True
+        assert checks["回调幅度"] is True
+        assert checks["放量反包/涨停板"] is True
+        assert "涨幅" in details["二板以上涨幅"]
+        assert "放量反包" in details["放量反包/涨停板"]
+
+    def test_short_term_volume_requires_5d_ratio(self, recommender):
+        dates = pd.date_range("2026-01-01", periods=25, freq="B")
+        data = pd.DataFrame({
+            "open": [10.0] * 25,
+            "high": [10.5] * 25,
+            "low": [9.8] * 25,
+            "close": [10.2] * 25,
+            "volume": [2000] * 15 + [1000] * 9 + [1150],
+            "rsi": [50] * 25,
+        }, index=dates)
+        signals = {"macd": "多头趋势", "kdj": "中性", "boll": "中轨上方，偏多"}
+
+        checks, details = recommender._evaluate_short_term_technical_filters(data, signals)
+
+        assert checks["成交量"] is True
+        assert "5日量比 1.15" in details["成交量"]
+        assert "20日量比" not in details["成交量"]
+
+    def test_auxiliary_context_does_not_block_when_missing(self, recommender, monkeypatch):
+        analysis = _mock_short_analysis('002938')
+        analysis['strategy_checks'].update({
+            '基本面/估值可用': False,
+            '财报/盈利确认': False,
+            '资金流确认': False,
+            '消息面催化': False,
+        })
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': analysis.copy())
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board: [{'code': '002938', 'name': '鹏鼎控股'}],
+        )
+
+        result = recommender.get_short_term_recommendations(num_stocks=5)
+
+        assert [item['symbol'] for item in result] == ['002938']
 
 
 class TestStrategyRecommendations:
@@ -692,7 +1261,7 @@ class TestStrategyRecommendations:
         assert pattern["conditions"]["突破20日新高"] is True
         assert pattern["conditions"]["明显放量"] is True
 
-    def test_strategy_stock_data_uses_sina_then_tencent_before_eastmoney(self, recommender, monkeypatch):
+    def test_strategy_stock_data_uses_mootdx_then_tencent_before_eastmoney(self, recommender, monkeypatch):
         from data_fetcher import StockDataFetcher
 
         calls = []
@@ -704,8 +1273,8 @@ class TestStrategyRecommendations:
             'volume': np.full(20, 1000000),
         }, index=pd.date_range('2026-01-01', periods=20, freq='B'))
 
-        def fail_sina(self, symbol, period, **kwargs):
-            calls.append("sina")
+        def fail_mootdx(self, symbol, period, **kwargs):
+            calls.append("mootdx")
             return None
 
         def ok_tencent(self, symbol, period, **kwargs):
@@ -716,7 +1285,7 @@ class TestStrategyRecommendations:
             calls.append("eastmoney")
             return None
 
-        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_sina_fallback", fail_sina)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_mootdx", fail_mootdx)
         monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare", ok_tencent)
         monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_akshare_em", fail_eastmoney)
         monkeypatch.setattr(recommender, "_load_strategy_kline_cache", lambda cache_key: None)
@@ -726,7 +1295,7 @@ class TestStrategyRecommendations:
 
         pd.testing.assert_frame_equal(result, data)
         assert result.attrs["data_source"] == "腾讯财经"
-        assert calls == ["sina", "tencent"]
+        assert calls == ["mootdx", "tencent"]
 
     def test_realtime_quote_does_not_append_weekend_fake_bar(self, recommender, monkeypatch):
         dates = pd.date_range('2026-05-13', periods=3, freq='B')
@@ -1550,7 +2119,6 @@ class TestStrategyRecommendations:
 # ============================================================
 # TestGetSectorShortTerm
 # ============================================================
-
 class TestGetSectorShortTerm:
 
     def test_invalid_sector_returns_empty(self, recommender):
@@ -1560,19 +2128,82 @@ class TestGetSectorShortTerm:
     def test_valid_sector_returns_list(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
                             lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
+            lambda self: ['苹果概念'],
+        )
         result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=3)
         assert isinstance(result, list)
 
-    def test_includes_sector_name(self, recommender, monkeypatch):
+    def test_removed_short_term_sectors_return_empty(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
                             lambda self, code, market='CN': _mock_short_analysis(code))
-        result = recommender.get_sector_short_term_recommendations('电力', num_stocks=5)
-        if result:
-            assert result[0]['sector'] == '电力'
+        assert recommender.get_sector_short_term_recommendations('电力', num_stocks=5) == []
+        assert recommender.get_sector_short_term_recommendations('算力租赁', num_stocks=5) == []
 
-    def test_filters_non_main_board_sector_stocks(self, recommender, monkeypatch):
+    def test_hot_board_is_auxiliary_for_allowed_sector(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
+            lambda self: ['PCB'],
+        )
+        result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=3)
+        assert result
+        assert all(item["strategy_checks"]["热门板块"] is False for item in result)
+
+    def test_us_catalyst_is_auxiliary_for_apple_tesla_sector(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
+            lambda self: [],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_us_catalyst',
+            lambda self, sector: {
+                'available': True,
+                'symbol': 'AAPL',
+                'name': '苹果',
+                'delta': 4,
+                'detail': '苹果(AAPL) 近一交易日上涨 2.50%，美股联动偏利好',
+            },
+        )
+
+        result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=3)
+
+        assert result
+        assert result[0]['score'] == min(100, _mock_short_analysis(result[0]['symbol'])['score'] + 4)
+        assert result[0]['strategy_checks']['美股消息催化'] is True
+        assert 'AAPL' in result[0]['strategy_details']['美股消息催化']
+
+    def test_missing_us_catalyst_does_not_block_sector_result(self, recommender, monkeypatch):
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': _mock_short_analysis(code))
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
+            lambda self: [],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_us_catalyst',
+            lambda self, sector: {
+                'available': False,
+                'symbol': 'TSLA',
+                'name': '特斯拉',
+                'delta': 0,
+                'detail': '特斯拉(TSLA) 美股行情获取失败',
+            },
+        )
+
+        result = recommender.get_sector_short_term_recommendations('特斯拉概念', num_stocks=3)
+
+        assert result
+        assert result[0]['strategy_checks']['美股消息催化'] is False
+        assert '获取失败' in result[0]['strategy_details']['美股消息催化']
+
+    def test_filters_unrecommendable_board_sector_stocks(self, recommender, monkeypatch):
         sector_pool = {
-            '测试板块': [
+            '苹果概念': [
                 {'code': '300750', 'name': '宁德时代'},
                 {'code': '688981', 'name': '中芯国际'},
                 {'code': '000001', 'name': '平安银行'},
@@ -1587,9 +2218,13 @@ class TestGetSectorShortTerm:
             return _mock_short_analysis(code)
 
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', mock_short)
-        result = recommender.get_sector_short_term_recommendations('测试板块', num_stocks=5)
-        assert analyzed == ['000001', '600519']
-        assert all(not r['symbol'].startswith(('300', '688', '8')) for r in result)
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
+            lambda self: ['苹果概念'],
+        )
+        result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=5)
+        assert analyzed == ['300750', '000001', '600519']
+        assert all(not r['symbol'].startswith(('688', '8')) for r in result)
 
 
 # ============================================================
@@ -1731,15 +2366,19 @@ def _mock_ths_ranking_html():
 
 
 class MockResponse:
-    def __init__(self, html, status_code=200, encoding='utf-8'):
+    def __init__(self, html, status_code=200, encoding='utf-8', json_data=None):
         self.text = html
         self.status_code = status_code
         self.encoding = encoding
+        self._json_data = json_data
+
+    def json(self):
+        return self._json_data or {}
 
 
-def _make_mock_response(html, status_code=200):
+def _make_mock_response(html, status_code=200, json_data=None):
     """创建一个模拟的 requests.Response"""
-    return MockResponse(html, status_code)
+    return MockResponse(html, status_code, json_data=json_data)
 
 
 def _mock_sector_html():
@@ -1768,6 +2407,15 @@ def _mock_concept_html():
     for i, (name, change, lead, lead_price, lead_change, net) in enumerate(data, 1):
         rows_html += f'<tr><td>{i}</td><td>{name}</td><td>1000</td><td>{change}%</td><td>100</td><td>100</td><td>{net}</td><td>30</td><td>{lead}</td><td>{lead_change}%</td><td>{lead_price}</td></tr>'
     return f'<html><body><table><tr><th>序号</th><th>行业</th><th>行业指数</th><th>涨跌幅</th><th>主力资金(亿)</th><th>最大资金(亿)</th><th>净流入(亿)</th><th>公司数目</th><th>领涨股</th><th>涨跌幅</th><th>当前价(元)</th></tr>{rows_html}</table></body></html>'
+
+
+def _mock_sina_industry_payload():
+    return (
+        'var S_Finance_bankuai_sinaindustry = {'
+        '"new_dzqj":"new_dzqj,电子器件,152,33.27,0.62,1.90,15234516016,342978292636,sz300319,20.017,27.760,4.630,测试科技",'
+        '"new_blhy":"new_blhy,玻璃行业,19,22.00,-0.43,-1.94,1629824817,35915185654,sh600184,5.812,28.220,1.550,光电股份"'
+        '};'
+    )
 
 
 def _make_mock_hk_ticker(symbol):
@@ -1905,6 +2553,19 @@ def _mock_short_analysis(code):
         'latest_price': 10.0 + code_int * 0.1,
         'change_pct': round(1.5 + code_int * 0.1, 2),
         'strategy': '短线',
+        'strategy_checks': {
+            '成交量': True,
+            'MACD': True,
+            'RSI': True,
+            'KDJ': False,
+            'BOLL': False,
+            '技术命中数': 3,
+            '二板以上涨幅': True,
+            '回调天数': True,
+            '回调幅度': True,
+            '放量反包/涨停板': True,
+        },
+        'strategy_details': {},
         'indicators': {},
     }
 
@@ -1939,7 +2600,6 @@ class TestGetTopGainersLosersHK:
         result = recommender.get_top_losers_hk(limit=3)
         assert len(result) <= 3
 
-
 # ============================================================
 # TestGetTopGainersLosersUS
 # ============================================================
@@ -1964,6 +2624,3 @@ class TestGetTopGainersLosersUS:
         monkeypatch.setattr('stock_recommendation.yf.Ticker', _make_mock_us_ticker)
         result = recommender.get_top_gainers_us(limit=3)
         assert len(result) <= 3
-
-
-# ============================================================

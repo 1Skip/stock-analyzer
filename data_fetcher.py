@@ -26,6 +26,7 @@ from difflib import SequenceMatcher
 from threading import Lock
 from data.providers.daily_kline_provider import (
     AkshareDailyKlineProvider,
+    MootdxDailyKlineProvider,
     SinaDailyKlineProvider,
     ThsDailyKlineProvider,
     is_request_error,
@@ -119,6 +120,7 @@ class StockDataFetcher:
 
     # 数据源健康状态缓存
     _health_status = {
+        'mootdx': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'ths': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'akshare_em': {'healthy': True, 'last_check': None, 'fail_count': 0},
         'akshare': {'healthy': True, 'last_check': None, 'fail_count': 0},
@@ -429,9 +431,10 @@ class StockDataFetcher:
             if market == "CN":
                 # A股数据获取：始终构建完整回退链，按用户偏好排序
                 all_sources = [
+                    ('mootdx', self._get_cn_stock_data_mootdx, '通达信mootdx'),
+                    ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('ths', self._get_cn_stock_data_ths, '同花顺'),
                     ('akshare_em', self._get_cn_stock_data_akshare_em, '东方财富'),
-                    ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('sina', self._get_cn_stock_data_sina_fallback, '新浪财经'),
                 ]
                 # yfinance 对 A 股数据不稳定，仅作最后兜底（不暴露为可选偏好）
@@ -483,6 +486,7 @@ class StockDataFetcher:
                                 )
                                 continue
                             data_source = {
+                                'mootdx': '通达信mootdx',
                                 'ths': '同花顺',
                                 'akshare_em': '东方财富',
                                 'akshare': '腾讯财经',
@@ -499,6 +503,7 @@ class StockDataFetcher:
                 if result is None and stale_result is not None:
                     result = stale_result
                     data_source = {
+                        'mootdx': '通达信mootdx',
                         'ths': '同花顺',
                         'akshare_em': '东方财富',
                         'akshare': '腾讯财经',
@@ -594,6 +599,13 @@ class StockDataFetcher:
             return ThsDailyKlineProvider(_session).fetch(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
             print(f"同花顺日K 获取失败 {symbol}: {str(e)}")
+        return None
+
+    def _get_cn_stock_data_mootdx(self, symbol, period, **kwargs):
+        try:
+            return MootdxDailyKlineProvider().fetch(symbol, period, adjust=kwargs.get("adjust") or "")
+        except Exception as e:
+            print(f"mootdx日K 获取失败 {symbol}: {str(e)}")
         return None
 
     def _get_cn_stock_data_akshare_em(self, symbol, period, **kwargs):

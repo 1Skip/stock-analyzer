@@ -571,7 +571,17 @@ def test_recommend_page_limits_sector_options_by_strategy():
 
     assert _sector_options_for_strategy("激进突破型") == ["全部"]
     assert _sector_options_for_strategy("多因子稳健型") == ["全部"]
-    assert _sector_options_for_strategy("短线") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+    assert _sector_options_for_strategy("短线") == ["全部", "苹果概念", "特斯拉概念"]
+
+
+def test_recommend_page_skips_empty_t1_cache_autoload():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _has_recommendations" in source
+    assert "and _has_recommendations(latest_result)" in source
+    assert "读取到的 T+1 推荐计划缓存为空，已跳过展示" in source
 
 
 def test_recommend_page_hides_internal_t1_diagnostics():
@@ -1224,6 +1234,20 @@ def test_recommend_page_renders_trade_plan_from_recommendation_result():
     assert 'with st.expander("买卖点计划"' in source
     assert '"买入观察区"' in source
     assert '"止损线"' in source
+
+
+def test_recommend_page_displays_enhanced_short_term_factors():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _render_strategy_checks" in source
+    assert "def _strategy_check_detail" in source
+    assert "DIF {_fmt_hit_number" in source
+    assert "RSI6 {_fmt_hit_number" in source
+    assert "K {_fmt_hit_number" in source
+    assert "details.get(label)" in source
+    assert "st.metric(label, \"通过\" if passed else \"缺失/未通过\")" not in source
 
 
 def test_decision_dashboard_has_no_alphaseeker_name():

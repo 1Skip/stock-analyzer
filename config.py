@@ -194,7 +194,7 @@ T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(","
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
 _T1_PLAN_SECTORS_RAW = os.getenv(
     "T1_PLAN_SECTORS",
-    os.getenv("T1_PLAN_SECTOR", "苹果概念,特斯拉概念,电力,算力租赁"),
+    os.getenv("T1_PLAN_SECTOR", "苹果概念,特斯拉概念"),
 )
 T1_PLAN_SECTORS = [item.strip() for item in _T1_PLAN_SECTORS_RAW.split(",") if item.strip()]
 T1_PLAN_SECTOR = T1_PLAN_SECTORS[0] if T1_PLAN_SECTORS else "全部"

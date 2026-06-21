@@ -41,6 +41,7 @@ from trade_plan import enrich_recommendations_with_trade_plan
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
+SELECTION_DATA_VERSION = "short_term_hot_board_constituents_v2"
 logger = logging.getLogger(__name__)
 DISPLAY_ENRICHMENT_TIMEOUT_SECONDS = 6
 
@@ -155,6 +156,7 @@ class RecommendationService:
         result["strategy"] = strategy
         result["sector"] = sector
         result["num_stocks"] = num_stocks
+        result["selection_data_version"] = SELECTION_DATA_VERSION
         self.result_cache.set(cache_key, result)
         return result
 
@@ -218,6 +220,8 @@ class RecommendationService:
         if not isinstance(cached, dict):
             return None
         cached = dict(cached)
+        if str(strategy or "") == "短线" and cached.get("selection_data_version") != SELECTION_DATA_VERSION:
+            return None
         recommended = cached.get("recommended")
         if isinstance(recommended, list):
             self._refresh_display_profiles(recommended)
@@ -462,6 +466,7 @@ class RecommendationService:
             else:
                 recommended = self.recommender.get_sector_short_term_recommendations(sector, num_stocks)
                 title = f"{sector} 短线推荐"
+            diagnostics = getattr(self.recommender, "last_short_term_diagnostics", {})
         elif strategy == "激进突破型":
             if sector == "全部":
                 recommended = self.recommender.get_aggressive_breakout_recommendations(

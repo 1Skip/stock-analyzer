@@ -405,16 +405,28 @@ def _call_without_proxy_env(func: Any) -> Any:
         "HTTP_PROXY",
         "HTTPS_PROXY",
         "ALL_PROXY",
+        "NO_PROXY",
         "http_proxy",
         "https_proxy",
         "all_proxy",
+        "no_proxy",
     )
     old_values = {key: os.environ.get(key) for key in proxy_keys}
+    old_session_init = requests.sessions.Session.__init__
+
+    def _session_init_without_env(self: requests.Session, *args: Any, **kwargs: Any) -> None:
+        old_session_init(self, *args, **kwargs)
+        self.trust_env = False
+
     try:
         for key in proxy_keys:
             os.environ.pop(key, None)
+        os.environ["NO_PROXY"] = "*"
+        os.environ["no_proxy"] = "*"
+        requests.sessions.Session.__init__ = _session_init_without_env
         return func()
     finally:
+        requests.sessions.Session.__init__ = old_session_init
         for key, value in old_values.items():
             if value is None:
                 os.environ.pop(key, None)

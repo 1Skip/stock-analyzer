@@ -5,11 +5,15 @@ pandas>=2.2
 numpy>=2.1
 requests>=2.31
 akshare>=1.14
+pywencai>=0.13.1
 beautifulsoup4>=4.12
 MyTT>=2.9
 litellm>=1.80
 matplotlib>=3.8
 schedule>=1.2
+
+# 可选增强：mootdx 可作为通达信 K 线源，但 mootdx 0.11.x 依赖 httpx<0.26，
+# 与 litellm 当前 httpx==0.28.1 约束冲突；需要时请单独隔离环境安装。
 
 # 测试（开发环境）
 pytest>=8.0

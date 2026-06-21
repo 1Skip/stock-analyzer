@@ -4,6 +4,7 @@ import pandas as pd
 
 from data.providers.daily_kline_provider import (
     AkshareDailyKlineProvider,
+    MootdxDailyKlineProvider,
     SinaDailyKlineProvider,
     ThsDailyKlineProvider,
 )
@@ -65,6 +66,44 @@ def test_akshare_daily_provider_normalizes_eastmoney_columns():
     assert result.attrs["adjust_method"] == "前复权"
     assert result.attrs["volume_unit"] == "hand"
     assert result["close"].iloc[0] == 10.2
+
+
+def test_mootdx_daily_provider_normalizes_bars():
+    class Client:
+        def __init__(self):
+            self.closed = False
+
+        def bars(self, symbol, frequency, offset):
+            assert symbol == "000001"
+            assert frequency == 9
+            return pd.DataFrame(
+                {
+                    "datetime": [row["date"] for row in _rows()],
+                    "open": [row["open"] for row in _rows()],
+                    "high": [row["high"] for row in _rows()],
+                    "low": [row["low"] for row in _rows()],
+                    "close": [row["close"] for row in _rows()],
+                    "vol": [row["volume"] for row in _rows()],
+                }
+            )
+
+        def close(self):
+            self.closed = True
+
+    client = Client()
+
+    def factory(market="std", timeout=5):
+        assert market == "std"
+        assert timeout == 5
+        return client
+
+    result = MootdxDailyKlineProvider(quotes_factory=factory).fetch("000001", "2y")
+
+    assert result is not None
+    assert result.attrs["data_provider"] == "通达信mootdx"
+    assert result.attrs["volume_unit"] == "share"
+    assert result["close"].iloc[-1] == 21.2
+    assert client.closed is True
 
 
 def test_sina_daily_provider_parses_cn_json():

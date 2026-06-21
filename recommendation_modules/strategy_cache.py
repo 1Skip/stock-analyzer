@@ -17,6 +17,8 @@ STRATEGY_KLINE_CACHE_DIR = os.path.join(RUNTIME_CACHE_DIR, "strategy_kline_daily
 LOCAL_CACHE_SOURCE = "\u7b56\u7565K\u7ebf\u672c\u5730\u7f13\u5b58"
 OFFLINE_CACHE_SOURCE = "\u79bb\u7ebf\u7f13\u5b58"
 SINA_SOURCE = "\u65b0\u6d6a\u8d22\u7ecf"
+MOOTDX_SOURCE = "\u901a\u8fbe\u4fe1mootdx"
+THS_SOURCE = "\u540c\u82b1\u987a"
 TENCENT_SOURCE = "\u817e\u8baf\u8d22\u7ecf"
 EASTMONEY_SOURCE = "\u4e1c\u65b9\u8d22\u5bcc"
 _ORIGINAL_GET_STOCK_DATA = StockDataFetcher.get_stock_data
@@ -93,9 +95,11 @@ def _cache_key(owner: StrategyCacheOwner, market: str, symbol: str, period: str,
 
 def _cn_sources(fetcher: StockDataFetcher) -> list[tuple[str, Callable[[str, str], Any]]]:
     return [
-        (SINA_SOURCE, fetcher._get_cn_stock_data_sina_fallback),
+        (MOOTDX_SOURCE, fetcher._get_cn_stock_data_mootdx),
         (TENCENT_SOURCE, fetcher._get_cn_stock_data_akshare),
+        (THS_SOURCE, fetcher._get_cn_stock_data_ths),
         (EASTMONEY_SOURCE, fetcher._get_cn_stock_data_akshare_em),
+        (SINA_SOURCE, fetcher._get_cn_stock_data_sina_fallback),
     ]
 
 

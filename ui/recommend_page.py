@@ -1,7 +1,7 @@
 ﻿"""智能推荐页面 — 多策略智能选股推荐"""
 import html
 import streamlit as st
-from recommendation_service import RecommendationService
+from recommendation_service import RecommendationService, SELECTION_DATA_VERSION
 from ui.scheduler_status import render_scheduler_status
 from ui.loading import render_status_loading, status_loading
 
@@ -88,7 +88,7 @@ def _sector_options_for_strategy(strategy):
     if strategy in ("激进突破型", "多因子稳健型"):
         return ["全部"]
     if strategy == "短线":
-        return ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
+        return ["全部", "苹果概念", "特斯拉概念"]
     return ["全部"]
 
 
@@ -110,7 +110,13 @@ def _result_matches_request(result, request_key):
     if not isinstance(result, dict):
         return False
     result_key = _request_key(result.get("strategy"), result.get("sector"), result.get("num_stocks"))
+    if str(result.get("strategy") or "") == "短线" and result.get("selection_data_version") != SELECTION_DATA_VERSION:
+        return False
     return result_key == request_key
+
+
+def _has_recommendations(result):
+    return bool(isinstance(result, dict) and result.get("recommended"))
 
 
 def _render_t1_plan_meta(result):
@@ -361,6 +367,25 @@ def _render_aggressive_diagnostics(diagnostics):
     st.caption("激进突破型按全市场沪深主板 + 创业板扫描：先做量价突破，再对技术命中股检查市值 < 300 亿。")
 
 
+def _render_short_term_diagnostics(diagnostics):
+    if not diagnostics:
+        return
+    st.markdown("**筛选诊断**")
+    col1, col2, col3, col4, col5 = st.columns(5)
+    col1.metric("热门板块", diagnostics.get("hot_boards", 0))
+    col2.metric("候选池", diagnostics.get("raw_pool", 0))
+    col3.metric("已分析", diagnostics.get("analyzed", 0))
+    col4.metric("技术通过", diagnostics.get("technical_passed", 0))
+    pattern_passed = diagnostics.get("pattern_passed")
+    col5.metric("最终命中", diagnostics.get("result_count", 0))
+    if pattern_passed is not None:
+        st.caption(f"全部短线形态通过：{pattern_passed} 只。")
+    failures = diagnostics.get("failures") or {}
+    if failures:
+        top_failures = sorted(failures.items(), key=lambda item: item[1], reverse=True)[:8]
+        st.caption("主要卡点：" + "；".join(f"{html.escape(str(reason))} {count}只" for reason, count in top_failures))
+
+
 _MULTI_FACTOR_REMOVED_CHECKS = {
     "个股资金流入",
     "消息/公告/研报催化",
@@ -463,6 +488,79 @@ def _render_trade_plan(stock):
             st.caption(html.escape(str(plan["data_basis"])))
 
 
+def _fmt_hit_number(value, precision=2):
+    try:
+        if value is None or value == "":
+            return "--"
+        number = float(value)
+        if number != number:
+            return "--"
+        return f"{number:.{precision}f}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def _strategy_check_detail(label, stock, details):
+    ind = stock.get("indicators") if isinstance(stock.get("indicators"), dict) else {}
+    sig = stock.get("signals") if isinstance(stock.get("signals"), dict) else {}
+    if label == "成交量":
+        if details.get(label):
+            return html.escape(str(details[label]))
+        return "近一日成交量需满足5日量比>=1.10；当前量能请结合下方成交量/K线图复核。"
+    if label == "MACD":
+        return (
+            f"{html.escape(str(sig.get('macd') or '--'))}；"
+            f"DIF {_fmt_hit_number(ind.get('macd'))} / DEA {_fmt_hit_number(ind.get('macd_signal'))} / "
+            f"柱 {_fmt_hit_number(ind.get('macd_hist'))}"
+        )
+    if label == "RSI":
+        return (
+            f"{html.escape(str(sig.get('rsi') or '--'))}；"
+            f"RSI6 {_fmt_hit_number(ind.get('rsi_6', ind.get('rsi')))} / "
+            f"RSI12 {_fmt_hit_number(ind.get('rsi_12'))} / RSI24 {_fmt_hit_number(ind.get('rsi_24'))}；"
+            "短线主筛区间为 25-70"
+        )
+    if label == "KDJ":
+        return (
+            f"{html.escape(str(sig.get('kdj') or '--'))}；"
+            f"K {_fmt_hit_number(ind.get('kdj_k'))} / D {_fmt_hit_number(ind.get('kdj_d'))} / "
+            f"J {_fmt_hit_number(ind.get('kdj_j'))}"
+        )
+    if label == "BOLL":
+        return (
+            f"{html.escape(str(sig.get('boll') or '--'))}；"
+            f"现价 {_fmt_hit_number(stock.get('latest_price'))} / 上轨 {_fmt_hit_number(ind.get('boll_upper'))} / "
+            f"中轨 {_fmt_hit_number(ind.get('boll_mid'))} / 下轨 {_fmt_hit_number(ind.get('boll_lower'))}"
+        )
+    if label == "技术命中数":
+        if details.get(label):
+            return html.escape(str(details[label]))
+        return "成交量、MACD、RSI、KDJ、BOLL 五项中至少命中 3 项，才进入短线候选。"
+    if details.get(label):
+        return html.escape(str(details[label]))
+    return "该项暂无更细返回，按策略结果展示。"
+
+
+def _render_strategy_checks(stock):
+    checks = stock.get("strategy_checks") if isinstance(stock.get("strategy_checks"), dict) else {}
+    if not checks:
+        return
+    details = stock.get("strategy_details") if isinstance(stock.get("strategy_details"), dict) else {}
+    st.markdown("**策略命中**")
+    primary_order = ["成交量", "MACD", "RSI", "KDJ", "BOLL", "技术命中数"]
+    ordered = [key for key in primary_order if key in checks]
+    ordered.extend(key for key in checks if key not in ordered)
+    lines = []
+    for label in ordered:
+        value = checks.get(label)
+        status = f"{int(value or 0)}/5" if label == "技术命中数" else ("命中" if value else "未命中")
+        lines.append(
+            f"- **{html.escape(str(label))}**：{status}。"
+            f"{_strategy_check_detail(label, stock, details)}"
+        )
+    st.markdown("\n".join(lines))
+
+
 def display_recommendation_list(recommended, strategy_name, diagnostics=None):
     """显示推荐列表"""
     if not recommended:
@@ -473,6 +571,9 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
         elif "激进突破型" in strategy_name:
             _render_aggressive_diagnostics(diagnostics or {})
             st.info("激进突破型采用全市场沪深主板 + 创业板扫描，若暂无结果，上方诊断会显示是技术突破不足还是市值过滤未通过。")
+        elif "短线" in strategy_name:
+            _render_short_term_diagnostics(diagnostics or {})
+            st.info("短线先看热门板块候选池与成交量、MACD、RSI、KDJ、BOLL；全部还会检查二板以上、回调天数、回调幅度、放量反包/涨停板。上方诊断会显示具体卡点。")
         else:
             st.info("可能原因：\n1. 数据获取失败（网络问题）\n2. 股票分析返回None（数据不足）\n3. 请检查日志输出")
         return
@@ -551,20 +652,7 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
                     if note:
                         st.caption(note)
 
-            if stock.get("strategy_checks"):
-                checks = stock.get("strategy_checks") or {}
-                details = stock.get("strategy_details") or {}
-                st.markdown("**策略命中**")
-                check_cols = st.columns(min(5, max(1, len(checks))))
-                for idx, (label, passed) in enumerate(checks.items()):
-                    with check_cols[idx % len(check_cols)]:
-                        st.metric(label, "通过" if passed else "缺失/未通过")
-                detail_lines = []
-                for key in ["买入观察", "卖出纪律", "市值过滤", "技术说明", "财务确认", "连涨3日", "主力净流入趋势", "15日涨停", "风险排除"]:
-                    if details.get(key):
-                        detail_lines.append(f"- **{key}**：{html.escape(str(details[key]))}")
-                if detail_lines:
-                    st.markdown("\n".join(detail_lines))
+            _render_strategy_checks(stock)
 
             ind = stock["indicators"]
             sig = stock["signals"]
@@ -704,10 +792,16 @@ def recommended_stocks_page():
         st.session_state.rec_entry_check = None
     if not st.session_state.rec_results and not st.session_state.rec_is_running:
         latest_result = service.latest_t1_plan(strategy, sector, num_stocks)
-        if latest_result and _result_matches_request(latest_result, current_request_key):
+        if (
+            latest_result
+            and _result_matches_request(latest_result, current_request_key)
+            and _has_recommendations(latest_result)
+        ):
             st.session_state.rec_results = latest_result
             st.session_state.rec_data_loaded = True
             pass
+        elif latest_result and _result_matches_request(latest_result, current_request_key):
+            st.session_state.rec_last_error = "读取到的 T+1 推荐计划缓存为空，已跳过展示；请点击“生成 T+1 推荐计划”重新扫描。"
 
     col1, col2, col3, col4, col5 = st.columns([1, 1.35, 1.05, 1.05, 1.05])
     with col1:
