@@ -26,11 +26,11 @@ def score_recommendation_alpha(stock: dict[str, Any], *, strategy: str = "", sec
     penalties: list[str] = []
 
     strategy_score = _safe_float(stock.get("score"))
-    components["strategy"] = _component_from_strategy_score(strategy_score, reasons, penalties)
-    components["trend"] = _score_trend(stock, reasons, penalties)
+    components["strategy"] = _component_from_strategy_score(strategy_score, reasons, penalties, strategy=strategy)
+    components["trend"] = _score_trend(stock, reasons, penalties, strategy=strategy)
     components["volume"] = _score_volume(stock, reasons, penalties)
     components["capital"] = _score_capital(stock, reasons, penalties)
-    components["sector"] = _score_sector(stock, sector, reasons)
+    components["sector"] = _score_sector(stock, sector, reasons, strategy=strategy)
     components["fundamental"] = _score_fundamental(stock, reasons, penalties)
     components["resonance"] = _score_resonance(stock, strategy, reasons)
     components["risk"] = _score_risk(stock, penalties)
@@ -47,10 +47,30 @@ def score_recommendation_alpha(stock: dict[str, Any], *, strategy: str = "", sec
     }
 
 
-def _component_from_strategy_score(score: float | None, reasons: list[str], penalties: list[str]) -> int:
+def _component_from_strategy_score(score: float | None, reasons: list[str], penalties: list[str], strategy: str = "") -> int:
     if score is None:
         penalties.append("策略原始分缺失")
         return 0
+    if strategy == "短线":
+        if score >= 95:
+            reasons.append("策略原始分强")
+            return 14
+        if score >= 85:
+            reasons.append("策略原始分较强")
+            return 10
+        if score >= 75:
+            reasons.append("策略原始分较高")
+            return 6
+        if score >= 65:
+            reasons.append("策略原始分达标")
+            return 2
+        if score >= 55:
+            return 0
+        if score >= 45:
+            penalties.append("策略原始分偏弱")
+            return -4
+        penalties.append("策略原始分偏弱")
+        return -8
     if score >= 85:
         reasons.append("策略原始分强")
         return 12
@@ -64,7 +84,7 @@ def _component_from_strategy_score(score: float | None, reasons: list[str], pena
     return -8
 
 
-def _score_trend(stock: dict[str, Any], reasons: list[str], penalties: list[str]) -> int:
+def _score_trend(stock: dict[str, Any], reasons: list[str], penalties: list[str], strategy: str = "") -> int:
     indicators = stock.get("indicators") if isinstance(stock.get("indicators"), dict) else {}
     signals = stock.get("signals") if isinstance(stock.get("signals"), dict) else {}
     score = 0
@@ -82,7 +102,14 @@ def _score_trend(stock: dict[str, Any], reasons: list[str], penalties: list[str]
         score += 7
         reasons.append("均线多头排列")
     elif price is not None and ma20 is not None:
-        if price >= ma20:
+        if strategy == "短线":
+            if price >= ma20:
+                score += 2
+                reasons.append("价格站上MA20")
+            else:
+                score -= 2
+                penalties.append("短线跌破MA20，观察修复")
+        elif price >= ma20:
             score += 4
             reasons.append("价格站上MA20")
         else:
@@ -141,7 +168,7 @@ def _score_capital(stock: dict[str, Any], reasons: list[str], penalties: list[st
     return max(-12, min(12, score))
 
 
-def _score_sector(stock: dict[str, Any], sector: str, reasons: list[str]) -> int:
+def _score_sector(stock: dict[str, Any], sector: str, reasons: list[str], strategy: str = "") -> int:
     extended = stock.get("extended_info") if isinstance(stock.get("extended_info"), dict) else {}
     attribution = extended.get("sector_attribution") or extended.get("attribution") or {}
     industry = attribution.get("industry") if isinstance(attribution, dict) else {}
@@ -161,6 +188,9 @@ def _score_sector(stock: dict[str, Any], sector: str, reasons: list[str]) -> int
         reasons.append("概念联动")
     if sector and sector != "全部":
         score += 2
+    if not score and strategy == "短线" and sector == "全部":
+        score = 4
+        reasons.append("热门板块成分股")
     return max(0, min(10, score))
 
 

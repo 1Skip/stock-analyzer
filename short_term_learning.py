@@ -3,10 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
+from data.cache import JsonFileCache
+
 
 MIN_COMPLETED_SAMPLES = 12
 SCORE_BUCKET_SIZE = 5
 MAX_LEARNING_BONUS = 6.0
+
+_OUTCOME_CACHE = JsonFileCache("short_term_learning_outcomes", 86400 * 365)
 
 
 def build_short_term_learning_profile(
@@ -107,7 +111,14 @@ def _collect_completed_short_term_samples(rows: list[dict[str, Any]] | None, quo
         plan = row.get("plan") if isinstance(row, dict) else None
         if not isinstance(plan, dict) or plan.get("strategy") != "短线":
             continue
+        plan_key = f"{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
+        cached = _OUTCOME_CACHE.get(plan_key)
+        if cached is not None and isinstance(cached, list):
+            for sample in cached:
+                samples.append(dict(sample))
+            continue
         outcome = evaluate_plan_outcomes(plan, quote_service=quote_service, horizons=(1,))
+        plan_samples: list[dict[str, Any]] = []
         for item in outcome.get("items") or []:
             if item.get("status") != "completed":
                 continue
@@ -118,15 +129,17 @@ def _collect_completed_short_term_samples(rows: list[dict[str, Any]] | None, quo
             score = _safe_float(stock.get("score")) if isinstance(stock, dict) else None
             if score is None:
                 continue
-            samples.append({
+            sample = {
                 "symbol": item.get("symbol"),
                 "score": score,
                 "return_1d": return_1d,
                 "sector": plan.get("sector") or "全部",
-            })
+            }
+            plan_samples.append(sample)
+            samples.append(sample)
+        if plan_samples:
+            _OUTCOME_CACHE.set(plan_key, plan_samples)
     return samples
-
-
 def _bucket_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     buckets: dict[int, list[float]] = {}
     for sample in samples:

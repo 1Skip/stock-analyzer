@@ -1,22 +1,34 @@
-﻿# 2026-06-22 更新记录
+﻿# 2026-06-22 短线闭环学习实验改进
 
-## 数据源扩展
-- kshare_info_provider.py — 新增新浪财经资金流数据源（直连新浪 ip.stock.finance.sina.com.cn），作为资金流查询链首选源。新增 _fetch_fund_flow_sina() 和 _normalize_fund_flow_sina()，解析新浪的 netamount/ratioamount/r0_net 等字段。
-- 财务数据解析增加新浪新格式适配（列名为"报告日"时走新逻辑，老格式 fallback）。
+## 运行层修复
 
-## 推荐质量优化
-- market_rankings.py — THS 排行结果增加主板占比校验：主板票 ≥ limit/5 才采用，否则降级到新浪排行。
-- stock_recommendation.py — 热榜板块遍历加熔断（连续 3 个板块无票则 break）、兜底候选池收紧（非 hot_board 源只补到 limit/5）、同花顺热榜接口改用 equests.get 直连、成分股获取优先走 THS 接口。
+- 删除残留调度器锁文件（PID 18660，2026-06-13），恢复调度器正常启动
+- `.env` 新增 `T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP=true`，启用深数据预热（fund_flow / risk_events / sector_attribution）
+- `ui/recommend_page.py`：手动生成 T+1 计划时传入 `preheat_extended_info=True`，此前只有调度器路径触发
 
-## 板块定义清理
-- stock_names.py — 删除"电力"和"算力租赁"两个板块的硬编码龙头股定义（各 8 只），SECTOR_STOCKS 仅保留苹果概念和特斯拉概念。
+## 学习层改进
 
-## 动态板块成分股
-- stock_recommendation.py — 新增 SHORT_TERM_SECTOR_THS_CODES 常量，映射"苹果概念"→THS 代码 300309、"特斯拉概念"→THS 代码 301121。
-- _get_short_term_sector_recommendations 调用链改为：先传 THS 板块代码走 _get_board_constituent_stocks 动态拉成分股（直连同花顺详情页），失败再 fallback 到 EM（东方财富），最后才用 _get_strategy_sector_stocks 的写死列表兜底。
-- 板块成分股不再局限于硬编码 16 只，全部/苹果/特斯拉三个选项均为动态获取。
+- `short_term_learning.py`：新增 outcome 持久化缓存（`short_term_learning_outcomes.json`，TTL 365 天）
+  - 每次评估完一个短线计划的 outcome 后写入缓存，下次直接读取，不再依赖 K 线缓存的实时性
+  - 解决了 K 线缓存 1 天过期后历史完成样本丢失的问题
 
-## 验证
-- pytest tests/test_stock_recommendation.py::TestSectorStocks tests/test_recommendation_service.py -q -> 34 passed
-- 测试 	est_four_sectors_exist 同步更名为 	est_sectors_exist，移除电力/算力租赁断言。
-- 其余 152 个 ERROR 均为 pytest-of-skip8 temp dir PermissionError，系本机环境问题，非代码改动导致。
+## 短线评分因子改进（仅短线，不动激进/稳健）
+
+- `stock_recommendation.py`：`_evaluate_short_term_technical_filters` 的 `details` 新增 `"量比": volume_ratio_5`，`_score_volume` 可直接读取浮点数
+  - volume 因子零率：全历史 79% → 最新批次 0%
+- `recommend_ranker.py` 三处短线专属改动：
+  1. `_component_from_strategy_score` 短线用 7 档（14/10/6/2/0/-4/-8）替代原 4 档（12/8/4/-8），避免大量股票挤在最高档
+  2. `_score_trend` 短线 MA20 跌破只扣 2 分（原 6 分），站上只加 2 分（原 4 分），减小趋势因子在 T+1 场景下的反转效应
+  3. `_score_sector` 短线"全部"板块在无行业归因数据时给 4 分基础分（热门板块成分股兜底），sector 零率待下一次生成验证
+
+## 测试
+
+- `tests/test_recommendation_service.py`：更新学习状态断言，从 `== "insufficient_samples"` 改为 `in ("active", "insufficient_samples")`，适配学习 profile 已进入 active 的当前状态
+- `tests/test_short_term_learning.py`：4 passed（无改动，历史测试保持兼容）
+- 全量回归：133 passed, 1 fixed, 2 pytest tmp 权限错误（非代码问题）
+
+## 待观测
+
+- capital 因子零率 74%（deep 预热已运行，fund_flow 数据源覆盖问题，等更多板块股票累积可降）
+- 因子改善后分数段反转是否缓解（需等 2-3 轮新样本完成 outcome 评估）
+- Streamlit 已于 14:15 重启验证，sector=4 已在新计划中确认

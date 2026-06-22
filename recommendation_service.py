@@ -1,4 +1,4 @@
-"""Recommendation service shared by UI, reports, and push workflows."""
+﻿"""Recommendation service shared by UI, reports, and push workflows."""
 from __future__ import annotations
 
 import concurrent.futures

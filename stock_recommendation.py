@@ -2149,6 +2149,7 @@ class StockRecommender:
         }
         checks["技术命中数"] = sum(1 for key in ("成交量", "MACD", "RSI", "KDJ", "BOLL") if checks.get(key))
         details = {
+            "量比": volume_ratio_5,
             "成交量": (
                 f"最新成交量 {latest_volume:.0f} / 前5日均量 {prev_volume_avg_5:.0f} / "
                 f"5日量比 {volume_ratio_5:.2f}，阈值 >= {SHORT_TERM_VOLUME_RATIO_5D:.2f}"

@@ -81,6 +81,7 @@ def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=Non
         sector,
         num_stocks,
         progress_callback=progress_callback,
+        preheat_extended_info=True,
     )
 
 
