@@ -28,8 +28,13 @@ def get_market_ranking(
 ) -> list[dict[str, Any]]:
     ranking = owner._get_market_ranking_ths(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
     if ranking:
-        return ranking
-    return owner._get_market_ranking_sina(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
+        main_count = sum(1 for r in ranking if str(r.get("浠ｇ爜", "").strip().zfill(6)).startswith(("600", "601", "603", "605", "000", "001", "002", "003")))
+        if main_count >= max(1, limit // 5):
+            return ranking
+    sina_ranking = owner._get_market_ranking_sina(sort_asc=sort_asc, limit=limit, enrich_sector=enrich_sector)
+    if sina_ranking:
+        return sina_ranking
+    return ranking
 
 
 def _change_pct(item: dict[str, Any]) -> Any:

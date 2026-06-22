@@ -68,6 +68,12 @@ SHORT_TERM_ALLOWED_SECTORS = ("\u82f9\u679c\u6982\u5ff5", "\u7279\u65af\u62c9\u6
 SHORT_TERM_BOARD_CONSTITUENT_TIMEOUT_SECONDS = 3
 BOARD_RANKING_FETCH_TIMEOUT_SECONDS = 4
 SHORT_TERM_HOT_BOARD_LIMIT = 12
+
+# 板块短线龙头股对应的 THS（同花顺）板块代码
+SHORT_TERM_SECTOR_THS_CODES = {
+    "苹果概念": {"code": "300309", "category": "概念"},
+    "特斯拉概念": {"code": "301121", "category": "概念"},
+}
 SHORT_TERM_HOT_BOARD_BONUS = 5
 WENCAI_BOARD_RANKING_TIMEOUT_SECONDS = 8
 WENCAI_COOKIE_ENV_KEYS = ("WENCAI_COOKIE", "IWENCAI_COOKIE")
@@ -1204,6 +1210,8 @@ class StockRecommender:
         hot_boards = [row["name"] for row in hot_board_rows]
         leaders_by_board = {row["name"]: row.get("leader") for row in hot_board_rows if row.get("leader")}
         meta_by_board = {row["name"]: row for row in hot_board_rows}
+        consecutive_empty = 0
+        MAX_CONSECUTIVE_EMPTY = 3
         for board_name in hot_boards:
             board_meta = meta_by_board.get(board_name) or {}
             try:
@@ -1217,6 +1225,12 @@ class StockRecommender:
             if not board_stocks:
                 leader = self._resolve_stock_name(leaders_by_board.get(board_name))
                 board_stocks = [leader] if leader else []
+                if not board_stocks:
+                    consecutive_empty += 1
+                    if consecutive_empty >= MAX_CONSECUTIVE_EMPTY:
+                        break
+                else:
+                    consecutive_empty = 0
             for stock in board_stocks:
                 code = str(stock.get("code") or "")
                 name = str(stock.get("name") or "")
@@ -1231,7 +1245,10 @@ class StockRecommender:
                 break
         if not merged:
             for stock in self._get_short_term_ranking_fallback_candidates(hot_board_rows, limit=limit or 80):
-                merged.setdefault(stock["code"], stock)
+                if stock.get("short_term_source") == "hot_board":
+                    merged.setdefault(stock["code"], stock)
+                elif len(merged) < (limit or 80) // 5:
+                    merged.setdefault(stock["code"], stock)
         candidates = list(merged.values())
         return candidates[:limit] if limit else candidates
 
@@ -1241,7 +1258,7 @@ class StockRecommender:
         results = []
         seen = set()
         try:
-            ranking = self._get_market_ranking(sort_asc=False, limit=max(limit * 2, 80), enrich_sector=True)
+            ranking = self._get_market_ranking(sort_asc=False, limit=max(limit * 5, 200), enrich_sector=True)
         except Exception:
             ranking = []
         for item in ranking or []:
@@ -1481,7 +1498,7 @@ class StockRecommender:
             while len(results) < limit and page <= 10:
                 url = f'https://q.10jqka.com.cn/index/index/board/all/field/zdf/order/{order}/page/{page}/ajax/1/'
                 resp = hot_stocks._call_without_proxy_env(
-                    lambda url=url: hot_stocks._SINA_SESSION.get(url, params=None, headers=headers, timeout=10)
+                    lambda url=url: requests.get(url, params=None, headers=headers, timeout=10)
                 )
                 if resp.status_code != 200:
                     break
@@ -1831,7 +1848,12 @@ class StockRecommender:
             return []
 
         results = []
-        sector_stocks = self._get_strategy_sector_stocks(sector_name)
+        ths_info = SHORT_TERM_SECTOR_THS_CODES.get(sector_name, {})
+        sector_stocks = self._get_board_constituent_stocks(
+            sector_name,
+            board_code=ths_info.get("code"),
+            board_category=ths_info.get("category"),
+        ) or self._get_strategy_sector_stocks(sector_name)
         us_catalyst = self._get_short_term_us_catalyst(sector_name)
         diagnostics = {
             "strategy": "短线",

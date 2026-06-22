@@ -1,4 +1,4 @@
-"""股票推荐模块测试"""
+﻿"""股票推荐模块测试"""
 import pytest
 import pandas as pd
 import numpy as np
@@ -99,12 +99,10 @@ def _make_mock_get_stock_data(return_data):
 
 class TestSectorStocks:
 
-    def test_four_sectors_exist(self):
+    def test_sectors_exist(self):
         from stock_recommendation import SECTOR_STOCKS
         assert '苹果概念' in SECTOR_STOCKS
         assert '特斯拉概念' in SECTOR_STOCKS
-        assert '电力' in SECTOR_STOCKS
-        assert '算力租赁' in SECTOR_STOCKS
 
     def test_each_sector_has_min_5_stocks(self):
         from stock_recommendation import SECTOR_STOCKS

@@ -151,6 +151,7 @@ class AkShareInfoProvider:
         return self._try_sources(
             "资金流",
             [
+                ("新浪财经资金流(直连)", lambda: self._fetch_fund_flow_sina(symbol), self._normalize_fund_flow_sina),
                 ("东方财富个股资金流", lambda: ak.stock_individual_fund_flow(stock=symbol, market=market), self._normalize_fund_flow_summary),
                 ("东方财富主力资金流", lambda: ak.stock_main_fund_flow(symbol="全部股票"), lambda df: self._normalize_main_fund_flow(symbol, df)),
                 ("东方财富即时资金流", lambda: ak.stock_fund_flow_individual(symbol="即时"), lambda df: self._normalize_fund_flow_snapshot(symbol, df)),
@@ -507,6 +508,28 @@ class AkShareInfoProvider:
         if df is None or df.empty:
             return {}
         rows = df.copy()
+        # Handle new Sina format: rows are periods, columns are items
+        if "报告日" in rows.columns:
+            latest_row = rows.iloc[0]
+            latest_period = str(latest_row["报告日"])
+            metrics = {}
+            rev = _safe_float(latest_row.get("营业总收入"))
+            if rev is not None:
+                metrics["营业总收入"] = rev
+            profit = _safe_float(latest_row.get("归属于母公司所有者的净利润"))
+            if profit is not None:
+                metrics["归母净利润"] = profit
+            history = []
+            for _, row in rows.head(8).iterrows():
+                entry = {"period": str(row["报告日"])}
+                for k, col in [("营业总收入", "营业总收入"), ("归母净利润", "归属于母公司所有者的净利润")]:
+                    v = _safe_float(row.get(col))
+                    if v is not None:
+                        entry[k] = v
+                if len(entry) > 1:
+                    history.append(entry)
+            return {"period": latest_period, "metrics": metrics, "history": history} if metrics else {}
+        # Old format fallback: period columns
         period_columns = [col for col in rows.columns if str(col).isdigit() and len(str(col)) >= 6]
         if not period_columns:
             period_columns = [col for col in rows.columns if str(col) not in {"报表日期", "项目", "指标"}]
@@ -623,6 +646,40 @@ class AkShareInfoProvider:
             "main_net_inflow": _safe_float(self._first_value(row, ["主力净流入", "净额", "资金净流入"])),
             "main_net_inflow_ratio": _safe_float(self._first_value(row, ["主力净占比", "净占比", "资金净占比"])),
             "source_note": "即时资金流快照；口径不同于历史资金流",
+        }
+        return result if self._has_fund_flow_value(result) else {}
+
+    def _fetch_fund_flow_sina(self, symbol):
+        import requests as _req
+        prefix = "sh" if symbol.startswith("6") else "sz"
+        url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/MoneyFlow.ssl_qsfx_zjlrqs"
+        try:
+            r = _req.get(url, params={"daima": f"{prefix}{symbol}"}, timeout=5, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            })
+            if r.status_code != 200:
+                return []
+            r.encoding = "gbk"
+            return r.json()
+        except Exception:
+            return []
+
+    def _normalize_fund_flow_sina(self, items):
+        if not isinstance(items, list) or not items:
+            return {}
+        recent = items[:5]
+        main_net = _safe_float(items[0].get("netamount"))
+        ratio_raw = _safe_float(items[0].get("ratioamount"))
+        super_large = _safe_float(items[0].get("r0_net"))
+        large_net = (main_net or 0) - (super_large or 0) if main_net is not None and super_large is not None else None
+        five_day = sum(_safe_float(d.get("netamount")) or 0 for d in recent)
+        result = {
+            "date": str(items[0].get("opendate", "")),
+            "main_net_inflow": main_net,
+            "main_net_inflow_ratio": round(ratio_raw * 100, 2) if ratio_raw is not None else None,
+            "super_large_net_inflow": super_large,
+            "large_net_inflow": large_net,
+            "five_day_main_net_inflow": five_day if five_day != 0 else None,
         }
         return result if self._has_fund_flow_value(result) else {}
 
