@@ -31,9 +31,16 @@ def _snapshot(items):
 def test_short_term_same_input_same_output_contract(monkeypatch):
     recommender = StockRecommender()
     calls = []
-    stocks = [_stock("000001", "A"), _stock("000002", "B"), _stock("000003", "C")]
+    stocks = [
+        {**_stock("000001", "A"), "short_term_sectors": ["苹果概念"]},
+        {**_stock("000002", "B"), "short_term_sectors": ["苹果概念"]},
+        {**_stock("000003", "C"), "short_term_sectors": ["特斯拉概念"]},
+    ]
     scores = {"000001": 80, "000002": 95, "000003": 70}
-    monkeypatch.setattr(recommender, "_get_main_board_popular_cn_stocks", lambda limit: stocks)
+    monkeypatch.setattr(recommender, "_get_short_term_all_candidate_stocks", lambda limit: stocks)
+    monkeypatch.setattr(recommender, "_get_short_term_hot_board_rows", lambda limit: [])
+    monkeypatch.setattr(recommender, "_short_term_technical_filter_passes", lambda analysis: True)
+    monkeypatch.setattr(recommender, "_short_term_all_pattern_filter_passes", lambda analysis: True)
 
     def analyze(code, market="CN"):
         calls.append((code, market))
