@@ -23,7 +23,7 @@ Use this skill whenever working in this `stock_analyzer` repository.
 - Recommendation buy/sell points use post-close daily K data, BOLL, MA, support/resistance, ATR/buffer, and risk fields. Do not introduce intraday real-time chase, support-break, or pause-entry recalculation unless the user changes the red line.
 - A-share individual analysis indicators, K line, and volume chart must use `1y` qfq daily K data. Real-time quote may be used only for latest-price display, minute chart, or execution check, not merged into daily K indicators.
 - Recommendation-page displayed MACD/KDJ/BOLL/MA must reuse the same daily-K indicator口径 as individual analysis; do not special-case one stock.
-- For current recommendation UI: short/long strategies can show `全部, 苹果概念, 特斯拉概念, 电力, 算力租赁`; aggressive breakthrough and multi-factor steady only show/use `全部` for T+1 plan generation.
+- For current recommendation UI: short strategy can show `全部, 苹果概念, 特斯拉概念`; aggressive breakthrough and multi-factor steady only show/use `全部` for T+1 plan generation.
 - Never commit `.env`, `watchlist.json`, webhook URLs, tokens, API keys, GitHub secrets, or local credentials.
 
 ## Verification Discipline

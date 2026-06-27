@@ -88,6 +88,10 @@ class FakeRecommender:
         self.called.append(("short", num_stocks, False))
         return [_stock("002003", "短线")]
 
+    def get_classic_short_term_recommendations(self, num_stocks):
+        self.called.append(("classic_short", num_stocks, False))
+        return [_stock("002005", "短线经典版")]
+
     def get_sector_short_term_recommendations(self, sector, num_stocks):
         self.called.append(("sector_short", sector, num_stocks, False))
         return [_stock("002004", "短线")]
@@ -155,6 +159,22 @@ def test_recommendation_service_keeps_short_term_available():
     assert result["recommended"][0]["strategy"] == "短线"
     assert result["diagnostics"]["short_term_learning"]["enabled"] is True
     assert result["diagnostics"]["short_term_learning"]["status"] in ("active", "insufficient_samples")
+
+
+def test_recommendation_service_routes_classic_short_term_without_pattern_filters():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("短线经典版", "全部", 5)
+
+    assert recommender.called == [("classic_short", 5, False)]
+    assert result["title"] == "短线经典版推荐"
+    assert result["recommended"][0]["strategy"] == "短线经典版"
+    assert result["diagnostics"]["short_term_learning"]["enabled"] is True
 
 
 def test_recommendation_service_rejects_long_term_strategy():
@@ -307,8 +327,9 @@ def test_recommendation_service_applies_short_term_learning_without_touching_agg
     monkeypatch.setattr(
         service,
         "_build_short_term_learning_profile",
-        lambda: {
+        lambda strategy="短线": {
             "version": "short_term_learning_v1",
+            "strategy": strategy,
             "status": "active",
             "sample_count": 12,
             "min_samples": 12,

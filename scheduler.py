@@ -406,7 +406,7 @@ def _iter_t1_plan_targets() -> list[tuple[str, str]]:
         strategy_text = str(strategy or "").strip()
         if not strategy_text:
             continue
-        strategy_sectors = sectors if strategy_text == "短线" else ["全部"]
+        strategy_sectors = sectors if strategy_text in ("短线", "短线经典版") else ["全部"]
         for sector in strategy_sectors:
             sector_text = str(sector or "全部").strip() or "全部"
             target = (strategy_text, sector_text)

@@ -496,7 +496,7 @@ class StockDataFetcher:
                             result_source_name = source_name
                             break
                     except Exception as e:
-                        print(f"{source_name} 获取失败: {str(e)}")
+                        logger.info("%s 获取失败: %s", source_name, e)
                 else:
                     result = None
 
@@ -553,7 +553,7 @@ class StockDataFetcher:
                         offline_mode = True
 
             if result is None or (isinstance(result, pd.DataFrame) and result.empty):
-                print(f"未找到股票 {symbol} 的数据")
+                logger.info("未找到股票 %s 的数据", symbol)
                 return None
 
             if isinstance(result, pd.DataFrame):
@@ -591,21 +591,21 @@ class StockDataFetcher:
         try:
             return SinaDailyKlineProvider(_session).fetch_us(symbol, period)
         except Exception as e:
-            print(f"新浪美股历史数据获取失败 {symbol}: {str(e)}")
+            logger.info("新浪美股历史数据获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_ths(self, symbol, period, **kwargs):
         try:
             return ThsDailyKlineProvider(_session).fetch(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
-            print(f"同花顺日K 获取失败 {symbol}: {str(e)}")
+            logger.info("同花顺日K获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_mootdx(self, symbol, period, **kwargs):
         try:
             return MootdxDailyKlineProvider().fetch(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
-            print(f"mootdx日K 获取失败 {symbol}: {str(e)}")
+            logger.info("mootdx日K获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_akshare_em(self, symbol, period, **kwargs):
@@ -614,7 +614,7 @@ class StockDataFetcher:
         try:
             return AkshareDailyKlineProvider(ak).fetch_eastmoney(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
-            print(f"AKShare(东方财富) 获取失败 {symbol}: {str(e)}")
+            logger.info("AKShare(东方财富)获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_akshare(self, symbol, period, **kwargs):
@@ -623,7 +623,7 @@ class StockDataFetcher:
         try:
             return AkshareDailyKlineProvider(ak).fetch_tencent(symbol, period, adjust=kwargs.get("adjust") or "")
         except Exception as e:
-            print(f"AKShare 获取失败 {symbol}: {str(e)}")
+            logger.info("AKShare获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_sina_fallback(self, symbol, period, **kwargs):
@@ -631,18 +631,18 @@ class StockDataFetcher:
             return SinaDailyKlineProvider(_session).fetch_cn(symbol, period)
         except Exception as e:
             if is_timeout_error(e):
-                print(f"新浪财经请求超时 {symbol}")
+                logger.info("新浪财经请求超时 symbol=%s", symbol)
             elif is_request_error(e):
-                print(f"新浪财经网络错误 {symbol}: {str(e)}")
+                logger.info("新浪财经网络错误 symbol=%s error=%s", symbol, e)
             else:
-                print(f"新浪财经失败 {symbol}: {str(e)}")
+                logger.info("新浪财经失败 symbol=%s error=%s", symbol, e)
         return None
 
     def _get_cn_stock_data_yfinance(self, symbol, period, **kwargs):
         try:
             return YahooKlineProvider(yf).fetch_cn_with_retry(symbol, period)
         except Exception as e:
-            print(f"yfinance 获取失败 {symbol}: {str(e)}")
+            logger.info("yfinance获取失败 symbol=%s error=%s", symbol, e)
         return None
 
     def get_stock_info(self, symbol, market="US"):
@@ -1010,8 +1010,8 @@ class StockDataFetcher:
                 if quote:
                     return quote
 
-        except Exception as e:
-            print(f"获取实时行情失败 {symbol}: {str(e)}")
+        except Exception:
+            logger.warning("获取实时行情失败 symbol=%s market=%s", symbol, market, exc_info=True)
         return None
 
     def get_batch_realtime_quotes(self, symbols, market="CN"):
@@ -1056,6 +1056,7 @@ class StockDataFetcher:
                         'change_pct': round((price / prev_close - 1) * 100, 2),
                     }
             except Exception:
+                logger.debug("新浪行情解析失败 symbol=%s", symbol, exc_info=True)
                 return None
             return None
 
@@ -1096,7 +1097,7 @@ class StockDataFetcher:
                     if parsed:
                         return symbol, parsed
             except Exception:
-                pass
+                logger.debug("新浪行情单只补拉失败 symbol=%s", symbol, exc_info=True)
             return symbol, None
 
         chunks = [symbols[i:i + 80] for i in range(0, len(symbols), 80)]
@@ -1106,7 +1107,7 @@ class StockDataFetcher:
                 try:
                     result.update(future.result(timeout=5) or {})
                 except Exception:
-                    pass
+                    logger.debug("新浪行情分片结果读取失败 symbols=%s", futures[future], exc_info=True)
         missing_symbols = [symbol for symbol in symbols if symbol not in result]
         if missing_symbols:
             with _cf.ThreadPoolExecutor(max_workers=10) as executor:
@@ -1117,7 +1118,7 @@ class StockDataFetcher:
                         if data is not None:
                             result[symbol] = data
                     except Exception:
-                        pass
+                        logger.debug("新浪行情单只补拉结果读取失败 symbol=%s", futures[future], exc_info=True)
         return result
 
     def get_index_realtime(self, symbol):
@@ -1145,8 +1146,8 @@ class StockDataFetcher:
                                 'change_pct': float(row['涨跌幅']),
                                 'prev_close': float(row['昨收']),
                             }
-                except Exception as e:
-                    print(f"AKShare指数行情失败 {symbol}: {e}")
+                except Exception:
+                    logger.info("AKShare指数行情失败 symbol=%s", symbol, exc_info=True)
 
             # yfinance
             try:
@@ -1154,10 +1155,10 @@ class StockDataFetcher:
                 if quote:
                     return quote
             except Exception:
-                pass
+                logger.debug("Yahoo指数行情失败 symbol=%s", symbol, exc_info=True)
 
-        except Exception as e:
-            print(f"获取指数行情失败 {symbol}: {e}")
+        except Exception:
+            logger.warning("获取指数行情失败 symbol=%s", symbol, exc_info=True)
         return None
 
     def _get_index_realtime_sina(self, symbol, timeout=2):
@@ -1165,6 +1166,7 @@ class StockDataFetcher:
         try:
             return SinaIndexRealtimeProvider(_session).fetch_quote(symbol, timeout=timeout)
         except Exception:
+            logger.debug("新浪指数行情失败 symbol=%s", symbol, exc_info=True)
             return None
 
 
@@ -1184,8 +1186,8 @@ class StockDataFetcher:
                 cls._index_spot_cache = future.result(timeout=8)
             cls._index_spot_cache_time = now
             return cls._index_spot_cache
-        except Exception as e:
-            print(f"AKShare指数快照失败: {e}")
+        except Exception:
+            logger.info("AKShare指数快照失败", exc_info=True)
             return None
 
     def _get_sina_realtime(self, symbol, market):

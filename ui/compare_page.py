@@ -281,16 +281,21 @@ def resolve_compare_inputs(raw_inputs, market, limit=5):
             match = resolve_cached_stock_input(query, market)
             if not match:
                 reason = err or _u(r'\u672a\u627e\u5230\u5339\u914d\u80a1\u7968')
+                unrecognized_prefix = _u(r'\u8df3\u8fc7\u65e0\u6cd5\u8bc6\u522b\u7684\u8f93\u5165\u300c')
+                unrecognized_separator = _u(r'\u300d\uff1a')
+                unrecognized_hint = _u(r'\uff1b\u8bf7\u68c0\u67e5\u7b80\u79f0\u662f\u5426\u6709\u9519\u5b57\u6216\u987a\u5e8f\u98a0\u5012\uff0c\u4e5f\u53ef\u76f4\u63a5\u8f93\u51656\u4f4d\u4ee3\u7801\u3002')
                 warnings.append(
-                    f"{_u(r'\u8df3\u8fc7\u65e0\u6cd5\u8bc6\u522b\u7684\u8f93\u5165\u300c')}{query}"
-                    f"{_u(r'\u300d\uff1a')}{reason}"
-                    f"{_u(r'\uff1b\u8bf7\u68c0\u67e5\u7b80\u79f0\u662f\u5426\u6709\u9519\u5b57\u6216\u987a\u5e8f\u98a0\u5012\uff0c\u4e5f\u53ef\u76f4\u63a5\u8f93\u51656\u4f4d\u4ee3\u7801\u3002')}"
+                    f"{unrecognized_prefix}{query}"
+                    f"{unrecognized_separator}{reason}"
+                    f"{unrecognized_hint}"
                 )
                 continue
             symbol, name = match
 
         if symbol in seen:
-            warnings.append(f"{_u(r'\u8df3\u8fc7\u91cd\u590d\u80a1\u7968\u300c')}{query}{_u(r'\u300d\uff1a\u5df2\u52a0\u5165')} {symbol}")
+            duplicate_prefix = _u(r'\u8df3\u8fc7\u91cd\u590d\u80a1\u7968\u300c')
+            duplicate_suffix = _u(r'\u300d\uff1a\u5df2\u52a0\u5165')
+            warnings.append(f"{duplicate_prefix}{query}{duplicate_suffix} {symbol}")
             continue
 
         seen.add(symbol)

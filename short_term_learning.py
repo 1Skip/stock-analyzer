@@ -18,12 +18,19 @@ def build_short_term_learning_profile(
     *,
     quote_service: Any,
     evaluate_plan_outcomes: Any,
+    strategy: str = "短线",
 ) -> dict[str, Any]:
-    """Build a read-only short-term learning profile from completed outcomes."""
-    samples = _collect_completed_short_term_samples(rows, quote_service, evaluate_plan_outcomes)
+    """Build a read-only strategy-specific learning profile from completed outcomes."""
+    strategy = str(strategy or "短线")
+    samples = _collect_completed_short_term_samples(
+        rows,
+        quote_service,
+        evaluate_plan_outcomes,
+        strategy=strategy,
+    )
     profile: dict[str, Any] = {
         "version": "short_term_learning_v1",
-        "strategy": "短线",
+        "strategy": strategy,
         "sample_count": len(samples),
         "min_samples": MIN_COMPLETED_SAMPLES,
         "status": "insufficient_samples",
@@ -31,7 +38,7 @@ def build_short_term_learning_profile(
         "bucket_stats": [],
         "baseline_avg_1d_return_pct": None,
         "baseline_win_rate_1d_pct": None,
-        "note": "短线真实回测完成样本不足，暂不启用动态评分门槛。",
+        "note": f"{strategy}真实回测完成样本不足，暂不启用动态评分门槛。",
     }
     if not samples:
         return profile
@@ -46,11 +53,14 @@ def build_short_term_learning_profile(
 
     threshold = _choose_score_threshold(bucket_stats)
     if threshold is None:
-        profile["note"] = "短线真实回测样本已积累，但未发现优于基准的稳定分数段，暂不启用动态评分门槛。"
+        profile["note"] = (
+            f"{strategy}真实回测样本已积累，但未发现优于基准的稳定分数段，"
+            "暂不启用动态评分门槛。"
+        )
         return profile
     profile["status"] = "active"
     profile["score_threshold"] = threshold
-    profile["note"] = f"短线动态门槛来自真实 T+1 历史回测：score >= {threshold}。"
+    profile["note"] = f"{strategy}动态门槛来自真实 T+1 历史回测：score >= {threshold}。"
     return profile
 
 
@@ -80,6 +90,7 @@ def apply_short_term_learning(
         if learned_alpha is not None:
             learned_alpha = round(max(0.0, min(100.0, learned_alpha + bonus)), 1)
         item["learning_profile_version"] = profile.get("version") or "short_term_learning_v1"
+        item["learning_strategy"] = profile.get("strategy")
         item["learning_status"] = profile.get("status") or "insufficient_samples"
         item["learning_bonus"] = bonus
         item["learned_alpha_score"] = learned_alpha
@@ -105,13 +116,20 @@ def apply_short_term_learning(
     return learned
 
 
-def _collect_completed_short_term_samples(rows: list[dict[str, Any]] | None, quote_service: Any, evaluate_plan_outcomes: Any) -> list[dict[str, Any]]:
+def _collect_completed_short_term_samples(
+    rows: list[dict[str, Any]] | None,
+    quote_service: Any,
+    evaluate_plan_outcomes: Any,
+    *,
+    strategy: str = "短线",
+) -> list[dict[str, Any]]:
     samples: list[dict[str, Any]] = []
+    strategy = str(strategy or "短线")
     for row in rows or []:
         plan = row.get("plan") if isinstance(row, dict) else None
-        if not isinstance(plan, dict) or plan.get("strategy") != "短线":
+        if not isinstance(plan, dict) or str(plan.get("strategy") or "") != strategy:
             continue
-        plan_key = f"{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
+        plan_key = f"{strategy}:{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
         cached = _OUTCOME_CACHE.get(plan_key)
         if cached is not None and isinstance(cached, list):
             for sample in cached:
@@ -134,12 +152,15 @@ def _collect_completed_short_term_samples(rows: list[dict[str, Any]] | None, quo
                 "score": score,
                 "return_1d": return_1d,
                 "sector": plan.get("sector") or "全部",
+                "strategy": strategy,
             }
             plan_samples.append(sample)
             samples.append(sample)
         if plan_samples:
             _OUTCOME_CACHE.set(plan_key, plan_samples)
     return samples
+
+
 def _bucket_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     buckets: dict[int, list[float]] = {}
     for sample in samples:
@@ -186,12 +207,12 @@ def _learning_bonus(bucket: dict[str, Any] | None, baseline: float) -> float:
 
 def _learning_reason(profile: dict[str, Any], bucket: dict[str, Any] | None, bonus: float) -> str:
     if profile.get("status") != "active":
-        return str(profile.get("note") or "短线真实回测样本不足，暂不启用动态学习。")
+        return str(profile.get("note") or "真实回测样本不足，暂不启用动态学习。")
     if not bucket:
         return "当前分数段暂无足够真实回测样本，学习加权为 0。"
     direction = "加分" if bonus > 0 else "扣分" if bonus < 0 else "中性"
     return (
-        f"真实回测分数段 {bucket.get('score_min')}-{bucket.get('score_max')}："
+        f"真实回测分数段 {bucket.get('score_min')}-{bucket.get('score_max')}，"
         f"{bucket.get('sample_count')} 个样本，1日均收益 {bucket.get('avg_1d_return_pct')}%，"
         f"胜率 {bucket.get('win_rate_1d_pct')}%，学习{direction} {bonus:+.1f}。"
     )

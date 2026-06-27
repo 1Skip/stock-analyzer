@@ -88,6 +88,8 @@ def _run_recommendation_task(strategy, sector, num_stocks, progress_callback=Non
 def _sector_options_for_strategy(strategy):
     if strategy in ("激进突破型", "多因子稳健型"):
         return ["全部"]
+    if strategy == "短线经典版":
+        return ["全部"]
     if strategy == "短线":
         return ["全部", "苹果概念", "特斯拉概念"]
     return ["全部"]
@@ -111,7 +113,7 @@ def _result_matches_request(result, request_key):
     if not isinstance(result, dict):
         return False
     result_key = _request_key(result.get("strategy"), result.get("sector"), result.get("num_stocks"))
-    if str(result.get("strategy") or "") == "短线" and result.get("selection_data_version") != SELECTION_DATA_VERSION:
+    if str(result.get("strategy") or "") in ("短线", "短线经典版") and result.get("selection_data_version") != SELECTION_DATA_VERSION:
         return False
     return result_key == request_key
 
@@ -572,6 +574,9 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
         elif "激进突破型" in strategy_name:
             _render_aggressive_diagnostics(diagnostics or {})
             st.info("激进突破型采用全市场沪深主板 + 创业板扫描，若暂无结果，上方诊断会显示是技术突破不足还是市值过滤未通过。")
+        elif "短线经典版" in strategy_name:
+            _render_short_term_diagnostics(diagnostics or {})
+            st.info("短线经典版先看热门板块候选池与成交量、MACD、RSI、KDJ、BOLL，不检查二板以上、回调天数、回调幅度、放量反包/涨停板四项形态硬过滤。上方诊断会显示具体卡点。")
         elif "短线" in strategy_name:
             _render_short_term_diagnostics(diagnostics or {})
             st.info("短线先看热门板块候选池与成交量、MACD、RSI、KDJ、BOLL；全部还会检查二板以上、回调天数、回调幅度、放量反包/涨停板。上方诊断会显示具体卡点。")
@@ -726,7 +731,7 @@ def recommended_stocks_page():
     st.markdown(f"# 智能选股推荐 - {strategy}")
     render_scheduler_status()
 
-    strategy_options = ["短线", "激进突破型", "多因子稳健型"]
+    strategy_options = ["短线", "短线经典版", "激进突破型", "多因子稳健型"]
     if strategy not in strategy_options:
         strategy = "短线"
         st.session_state.rec_strategy = strategy
@@ -735,6 +740,8 @@ def recommended_stocks_page():
 
     if strategy == "短线":
         st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选沪深主板短线候选；创业板、科创板、北交所不进入推荐池。")
+    elif strategy == "短线经典版":
+        st.info("经典短线：沿用短线热门板块候选池与成交量、MACD、RSI、KDJ、BOLL 技术过滤，不启用二板以上、2-8天回调、回撤不超50%、放量反包/涨停板四项形态硬过滤。")
     elif strategy == "激进突破型":
         st.info("纯量价突破策略：市值300亿以下、MA5>MA10>MA20、收盘价创20日新高、成交量大于前5日均量1.2倍；范围为沪深主板+创业板，排除科创板/北交所/ST。")
     else:

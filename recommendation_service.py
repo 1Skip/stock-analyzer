@@ -220,7 +220,7 @@ class RecommendationService:
         if not isinstance(cached, dict):
             return None
         cached = dict(cached)
-        if str(strategy or "") == "短线" and cached.get("selection_data_version") != SELECTION_DATA_VERSION:
+        if str(strategy or "") in ("短线", "短线经典版") and cached.get("selection_data_version") != SELECTION_DATA_VERSION:
             return None
         recommended = cached.get("recommended")
         if isinstance(recommended, list):
@@ -467,6 +467,12 @@ class RecommendationService:
                 recommended = self.recommender.get_sector_short_term_recommendations(sector, num_stocks)
                 title = f"{sector} 短线推荐"
             diagnostics = getattr(self.recommender, "last_short_term_diagnostics", {})
+        elif strategy == "短线经典版":
+            if sector != "全部":
+                raise ValueError("短线经典版仅支持全部板块")
+            recommended = self.recommender.get_classic_short_term_recommendations(num_stocks)
+            title = "短线经典版推荐"
+            diagnostics = getattr(self.recommender, "last_short_term_diagnostics", {})
         elif strategy == "激进突破型":
             if sector == "全部":
                 recommended = self.recommender.get_aggressive_breakout_recommendations(
@@ -517,12 +523,13 @@ class RecommendationService:
                 "sorted": RECOMMEND_RANKER_SORT,
                 "version": "alpha_v1",
             }
-        if strategy == "短线":
-            learning_profile = self._build_short_term_learning_profile()
+        if strategy in ("短线", "短线经典版"):
+            learning_profile = self._build_short_term_learning_profile(strategy)
             recommended = apply_short_term_learning(recommended, learning_profile)
             diagnostics = dict(diagnostics or {})
             diagnostics["short_term_learning"] = {
                 "enabled": True,
+                "strategy": learning_profile.get("strategy"),
                 "status": learning_profile.get("status"),
                 "version": learning_profile.get("version"),
                 "sample_count": learning_profile.get("sample_count"),
@@ -549,12 +556,14 @@ class RecommendationService:
             "diagnostics": diagnostics,
         }
 
-    def _build_short_term_learning_profile(self) -> dict[str, Any]:
-        rows = self.list_t1_plan_history(strategy="短线", limit=80)
+    def _build_short_term_learning_profile(self, strategy: str = "短线") -> dict[str, Any]:
+        strategy = str(strategy or "短线")
+        rows = self.list_t1_plan_history(strategy=strategy, limit=80)
         return build_short_term_learning_profile(
             rows,
             quote_service=self.quote_service,
             evaluate_plan_outcomes=evaluate_plan_outcomes,
+            strategy=strategy,
         )
 
     def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None, *, enrich_display: bool = True) -> None:

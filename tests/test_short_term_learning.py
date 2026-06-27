@@ -47,6 +47,49 @@ def test_short_term_learning_uses_real_completed_outcomes_for_threshold():
     assert profile["score_threshold"] == 70.0
 
 
+def test_short_term_learning_keeps_classic_short_term_samples_separate():
+    rows = [
+        _row(_plan(72 + (idx % 3), symbol=f"002{idx:03d}", strategy="短线经典版"))
+        for idx in range(12)
+    ]
+    rows.extend(
+        _row(_plan(90, symbol=f"003{idx:03d}", strategy="短线"))
+        for idx in range(3)
+    )
+
+    def fake_outcomes(plan, *, quote_service, horizons):
+        stock = plan["recommended"][0]
+        return {
+            "items": [
+                {
+                    "symbol": stock["symbol"],
+                    "status": "completed",
+                    "returns": {"1d": 1.5},
+                }
+            ]
+        }
+
+    classic_profile = build_short_term_learning_profile(
+        rows,
+        quote_service=object(),
+        evaluate_plan_outcomes=fake_outcomes,
+        strategy="短线经典版",
+    )
+    short_profile = build_short_term_learning_profile(
+        rows,
+        quote_service=object(),
+        evaluate_plan_outcomes=fake_outcomes,
+        strategy="短线",
+    )
+
+    assert classic_profile["strategy"] == "短线经典版"
+    assert classic_profile["status"] == "active"
+    assert classic_profile["sample_count"] == 12
+    assert short_profile["strategy"] == "短线"
+    assert short_profile["status"] == "insufficient_samples"
+    assert short_profile["sample_count"] == 3
+
+
 def test_short_term_learning_stays_observational_when_samples_are_insufficient():
     rows = [_row(_plan(90, symbol=f"002{idx:03d}")) for idx in range(3)]
 

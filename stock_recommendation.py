@@ -13,6 +13,7 @@ import sys
 import math
 import io
 import inspect
+import logging
 from urllib.parse import quote
 try:
     import akshare as ak
@@ -22,6 +23,8 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import warnings
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 # 导入热门股票列表
 from data_fetcher import StockDataFetcher, get_popular_cn_stocks, POPULAR_US_STOCKS, POPULAR_HK_STOCKS
@@ -173,6 +176,15 @@ def _metric_value(metrics, aliases):
                 if numeric is not None:
                     return numeric
     return None
+
+
+def _log_short_term_skip(symbol, reason, **details):
+    logger.debug(
+        "短线分析跳过 symbol=%s reason=%s details=%s",
+        symbol,
+        reason,
+        {key: value for key, value in details.items() if value is not None},
+    )
 
 
 def _recent_items(items, days=2):
@@ -495,8 +507,8 @@ class StockRecommender:
                 if page > 10:  # 安全上限
                     break
             return sectors[:limit]
-        except Exception as e:
-            print(f"获取行业板块排行失败: {e}")
+        except Exception:
+            logger.warning("获取行业板块排行失败", exc_info=True)
             return sectors if sectors else []
 
     def get_hot_concepts_cn(self, limit=30):
@@ -579,8 +591,8 @@ class StockRecommender:
             # 按涨跌幅降序排列（资金流向页默认按主力资金排序）
             concepts.sort(key=lambda x: x['涨跌幅'], reverse=True)
             return concepts[:limit]
-        except Exception as e:
-            print(f"获取概念板块排行失败: {e}")
+        except Exception:
+            logger.warning("获取概念板块排行失败", exc_info=True)
             return concepts if concepts else []
 
     def get_hot_indices_cn(self, limit=30):
@@ -1833,6 +1845,77 @@ class StockRecommender:
         self.last_short_term_diagnostics = diagnostics
         return results[:num_stocks]
 
+    def get_classic_short_term_recommendations(self, num_stocks=10):
+        """
+        获取经典短线推荐股票：沿用短线技术/评分逻辑，但不执行
+        “二板以上涨幅、回调天数、回调幅度、放量反包/涨停板”四项形态过滤。
+        """
+        results = []
+        candidates = self._get_short_term_all_candidate_stocks(80)
+        diagnostics = {
+            "strategy": "短线经典版",
+            "sector": "全部",
+            "hot_boards": len(self._get_short_term_hot_board_rows(limit=SHORT_TERM_HOT_BOARD_LIMIT)),
+            "raw_pool": len(candidates),
+            "analyzed": 0,
+            "technical_passed": 0,
+            "pattern_passed": None,
+            "result_count": 0,
+            "failures": {},
+            "removed_filters": ["二板以上涨幅", "回调天数", "回调幅度", "放量反包/涨停板"],
+        }
+
+        def record_failure(reason):
+            failures = diagnostics.setdefault("failures", {})
+            failures[reason] = failures.get(reason, 0) + 1
+
+        def analyze_one(stock):
+            try:
+                analysis = self._analyze_short_term(stock['code'], market='CN')
+                candidate_sectors = stock.get("short_term_sectors") or []
+                if not analysis:
+                    return None, "K线/指标数据不足", False
+                if not candidate_sectors:
+                    return None, "未匹配热门板块成分股", False
+                if not self._short_term_technical_filter_passes(analysis):
+                    hit_count = (analysis.get("strategy_checks") or {}).get("技术命中数")
+                    return None, f"技术命中不足({hit_count or 0}/5)", False
+                analysis['name'] = stock['name']
+                analysis['sector'] = "、".join(candidate_sectors)
+                analysis['strategy'] = "短线经典版"
+                hot_board_matched = stock.get("short_term_source") != "market_ranking_fallback"
+                checks = analysis.setdefault("strategy_checks", {})
+                checks["热门板块"] = hot_board_matched
+                checks["形态过滤"] = "未启用"
+                details = analysis.setdefault("strategy_details", {})
+                details["形态过滤"] = "经典短线不要求二板以上、2-8天回调、回撤不超50%、放量反包/涨停板"
+                if hot_board_matched:
+                    details["热门板块"] = analysis['sector']
+                else:
+                    details["热门板块"] = (
+                        f"同花顺板块成分股源暂不可用，使用真实涨幅榜兜底；个股所属板块：{analysis['sector']}"
+                    )
+                return analysis, None, True
+            except Exception as exc:
+                return None, f"分析异常:{str(exc)[:40]}", False
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, s): s for s in candidates}
+            for future in as_completed(futures):
+                result, failure, technical_passed = future.result()
+                diagnostics["analyzed"] += 1
+                if technical_passed:
+                    diagnostics["technical_passed"] += 1
+                if result:
+                    results.append(result)
+                elif failure:
+                    record_failure(failure)
+
+        results.sort(key=lambda x: x['score'], reverse=True)
+        diagnostics["result_count"] = len(results[:num_stocks])
+        self.last_short_term_diagnostics = diagnostics
+        return results[:num_stocks]
+
     def get_sector_short_term_recommendations(self, sector_name, num_stocks=5):
         """
         获取指定板块的短线龙头股推荐，并发分析加速
@@ -2002,16 +2085,16 @@ class StockRecommender:
         fetcher = StockDataFetcher()
         try:
             data = self._get_strategy_stock_data(symbol, period='1y', interval='1d', market=market, fetcher=fetcher)
-        except Exception as e:
-            print(f"获取股票 {symbol} 数据失败: {str(e)}")
+        except Exception:
+            logger.debug("获取股票数据失败 symbol=%s market=%s", symbol, market, exc_info=True)
             return None
 
         if data is None:
-            print(f"股票 {symbol} 数据为None")
+            _log_short_term_skip(symbol, "数据为空", market=market)
             return None
 
         if len(data) < 10:
-            print(f"股票 {symbol} 数据不足: {len(data)} 天")
+            _log_short_term_skip(symbol, "数据不足", market=market, rows=len(data))
             return None
 
         data = self._merge_realtime_quote(data, fetcher, symbol, market)
@@ -2019,12 +2102,12 @@ class StockRecommender:
         try:
             df = TechnicalIndicators.calculate_all(data)
             signals = TechnicalIndicators.get_signals(df)
-        except Exception as e:
-            print(f"股票 {symbol} 计算指标失败: {str(e)}")
+        except Exception:
+            logger.debug("股票计算指标失败 symbol=%s market=%s", symbol, market, exc_info=True)
             return None
 
         if 'error' in signals:
-            print(f"股票 {symbol} 信号错误: {signals['error']}")
+            _log_short_term_skip(symbol, "信号错误", market=market, error=signals.get("error"))
             return None
 
         latest = df.iloc[-1]

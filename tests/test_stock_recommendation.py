@@ -1158,6 +1158,29 @@ class TestGetShortTermRecommendations:
 
         assert recommender.get_short_term_recommendations(num_stocks=5) == []
 
+    def test_classic_short_term_skips_pullback_reversal_pattern(self, recommender, monkeypatch):
+        failed = _mock_short_analysis('002938')
+        failed['strategy_checks']['二板以上涨幅'] = True
+        failed['strategy_checks']['回调天数'] = True
+        failed['strategy_checks']['回调幅度'] = False
+        failed['strategy_checks']['放量反包/涨停板'] = True
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
+                            lambda self, code, market='CN': failed.copy())
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
+            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board, board_code=None, board_category=None: [{'code': '002938', 'name': '鹏鼎控股'}],
+        )
+
+        result = recommender.get_classic_short_term_recommendations(num_stocks=5)
+
+        assert [item['symbol'] for item in result] == ['002938']
+        assert result[0]['strategy'] == '短线经典版'
+        assert result[0]['strategy_checks']['形态过滤'] == '未启用'
+
     def test_short_term_all_pattern_passes_after_surge_pullback_and_volume_reversal(self, recommender):
         dates = pd.date_range("2026-01-01", periods=16, freq="B")
         close = [10, 10.4, 10.8, 11.5, 12.0, 12.6, 13.2, 12.8, 12.3, 12.0, 11.9, 12.4, 12.7, 12.9, 12.5, 13.1]
@@ -2219,6 +2242,10 @@ class TestGetSectorShortTerm:
         monkeypatch.setattr(
             'stock_recommendation.StockRecommender._get_short_term_hot_board_list',
             lambda self: ['苹果概念'],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board_name, board_code=None, board_category=None: [],
         )
         result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=5)
         assert analyzed == ['300750', '000001', '600519']

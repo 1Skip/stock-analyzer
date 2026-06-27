@@ -572,6 +572,7 @@ def test_recommend_page_limits_sector_options_by_strategy():
     assert _sector_options_for_strategy("激进突破型") == ["全部"]
     assert _sector_options_for_strategy("多因子稳健型") == ["全部"]
     assert _sector_options_for_strategy("短线") == ["全部", "苹果概念", "特斯拉概念"]
+    assert _sector_options_for_strategy("短线经典版") == ["全部"]
 
 
 def test_recommend_page_skips_empty_t1_cache_autoload():
