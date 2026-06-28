@@ -11,6 +11,9 @@ class FakeCache:
     def set(self, key, value):
         self.store[key] = value
 
+    def delete(self, key):
+        return self.store.pop(key, None) is not None
+
 
 class FakeQuoteService:
     def get_batch_realtime_quotes(self, symbols, market="CN"):
@@ -393,7 +396,238 @@ def test_t1_plan_history_is_saved_and_read_only():
     assert history[0]["recommended_symbols"] == [plan["recommended"][0]["symbol"]]
     assert review["summary"]["plans"] == 1
     assert review["summary"]["completed_items"] == 1
+    item = review["reviews"][0]["outcome"]["items"][0]
+    assert item["entry_price"] == 10.5
+    assert item["exit_dates"]["1d"] == "2099-05-18"
+    assert item["exit_closes"]["1d"] == 10.0
+    assert item["returns"]["1d"] == -4.76
     assert recommender.called == [("multi", 5, False)]
+
+
+def test_manual_trade_outcome_records_success_rate_without_rerunning_strategy():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    saved = service.record_manual_trade_outcome(
+        plan,
+        plan["recommended"][0]["symbol"],
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date="2026-06-03",
+        sell_price=11,
+    )
+    review = service.evaluate_manual_trade_success_rate(strategy="多因子稳健型", sector="全部")
+
+    assert saved["success"] is True
+    assert saved["record"]["return_pct"] == 10
+    assert review["summary"]["records"] == 1
+    assert review["summary"]["success_rate_pct"] == 100
+    assert review["records"][0]["source"] == "manual_trade_record"
+    assert recommender.called == [("multi", 5, False)]
+
+
+def test_manual_trade_outcome_keeps_holding_records_out_of_success_rate():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    saved = service.record_manual_trade_outcome(
+        plan,
+        plan["recommended"][0]["symbol"],
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date=None,
+        sell_price=None,
+        is_holding=True,
+    )
+    review = service.evaluate_manual_trade_success_rate(strategy="多因子稳健型", sector="全部")
+
+    assert saved["success"] is True
+    assert saved["record"]["status"] == "holding"
+    assert saved["record"]["return_pct"] is None
+    assert review["summary"]["total_records"] == 1
+    assert review["summary"]["closed_records"] == 0
+    assert review["summary"]["holding_count"] == 1
+    assert review["summary"]["success_rate_pct"] is None
+
+
+def test_manual_trade_outcome_rounds_prices_to_two_decimals():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    saved = service.record_manual_trade_outcome(
+        plan,
+        plan["recommended"][0]["symbol"],
+        buy_date="2026-06-01",
+        buy_price=10.126,
+        sell_date="2026-06-03",
+        sell_price=11.987,
+    )
+
+    assert saved["success"] is True
+    assert saved["record"]["buy_price"] == 10.13
+    assert saved["record"]["sell_price"] == 11.99
+    assert saved["record"]["return_pct"] == 18.36
+
+
+def test_manual_trade_review_without_filters_returns_all_records():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.manual_trade_cache = FakeCache()
+    base_plan = {
+        "generated_at": "2026-06-01T15:45:00",
+        "strategy": "手工补录",
+        "sector": "手工录入",
+        "recommended": [{"symbol": "000001", "name": "平安银行"}],
+    }
+    other_plan = {
+        "generated_at": "2026-06-02T15:45:00",
+        "strategy": "多因子稳健型",
+        "sector": "全部",
+        "recommended": [{"symbol": "000002", "name": "万科A"}],
+    }
+
+    service.record_manual_trade_outcome(
+        base_plan,
+        "000001",
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date="2026-06-03",
+        sell_price=11,
+    )
+    service.record_manual_trade_outcome(
+        other_plan,
+        "000002",
+        buy_date="2026-06-02",
+        buy_price=20,
+        sell_date=None,
+        sell_price=None,
+        is_holding=True,
+    )
+
+    review = service.evaluate_manual_trade_success_rate()
+    filtered = service.evaluate_manual_trade_success_rate(strategy="手工补录", sector="手工录入")
+
+    assert review["summary"]["total_records"] == 2
+    assert review["summary"]["closed_records"] == 1
+    assert review["summary"]["holding_count"] == 1
+    assert {row["symbol"] for row in review["records"]} == {"000001", "000002"}
+    assert filtered["summary"]["total_records"] == 1
+    assert filtered["records"][0]["symbol"] == "000001"
+
+
+def test_manual_trade_record_can_be_deleted_by_record_key():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    saved = service.record_manual_trade_outcome(
+        plan,
+        plan["recommended"][0]["symbol"],
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date="2026-06-03",
+        sell_price=11,
+    )
+    before = service.evaluate_manual_trade_success_rate()
+    deleted = service.delete_manual_trade_record(saved["record_key"])
+    after = service.evaluate_manual_trade_success_rate()
+    deleted_again = service.delete_manual_trade_record(saved["record_key"])
+
+    assert before["summary"]["total_records"] == 1
+    assert deleted["success"] is True
+    assert after["summary"]["total_records"] == 0
+    assert deleted_again["success"] is False
+
+
+def test_manual_trade_outcome_alerts_when_samples_are_enough():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    symbol = plan["recommended"][0]["symbol"]
+    for index in range(30):
+        service.record_manual_trade_outcome(
+            plan,
+            symbol,
+            buy_date=f"2026-06-{(index % 20) + 1:02d}",
+            buy_price=10 + index * 0.01,
+            sell_date=f"2026-07-{(index % 20) + 1:02d}",
+            sell_price=11 + index * 0.01,
+            note=str(index),
+        )
+
+    review = service.evaluate_manual_trade_success_rate(strategy="多因子稳健型", sector="全部")
+    readiness = review["summary"]["learning_readiness"]
+
+    assert readiness["ready"] is True
+    assert readiness["global_closed_records"] == 30
+    assert readiness["scoped_closed_records"] == 30
+    assert "实盘样本已达到提醒门槛" in readiness["message"]
+
+
+def test_manual_trade_outcome_rejects_non_recommended_symbol():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    result = service.record_manual_trade_outcome(
+        plan,
+        "999999",
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date="2026-06-03",
+        sell_price=11,
+    )
+
+    assert result["success"] is False
+    assert service.evaluate_manual_trade_success_rate()["summary"]["records"] == 0
 
 
 def test_strategy_review_summarizes_history_without_rerunning_strategy():

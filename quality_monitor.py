@@ -170,6 +170,164 @@ def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[st
     }
 
 
+def save_manual_trade_record(
+    trade_cache: Any,
+    plan: dict[str, Any] | None,
+    stock: dict[str, Any] | None,
+    *,
+    buy_date: Any,
+    buy_price: Any,
+    sell_date: Any,
+    sell_price: Any,
+    is_holding: bool = False,
+    note: str = "",
+) -> dict[str, Any]:
+    """Persist a user-entered trade outcome for an already recommended stock."""
+    if not isinstance(plan, dict):
+        return {"success": False, "message": "暂无推荐计划，无法记录成交结果。"}
+    if not isinstance(stock, dict):
+        return {"success": False, "message": "请选择推荐列表中的股票。"}
+    symbol = str(stock.get("symbol") or "").strip()
+    if not symbol:
+        return {"success": False, "message": "推荐股票缺少代码，无法记录。"}
+    buy = _safe_float(buy_price)
+    buy_date_text = _date_text(buy_date)
+    if buy is None or buy <= 0:
+        return {"success": False, "message": "买入价必须大于 0。"}
+    if not buy_date_text:
+        return {"success": False, "message": "买入时间不能为空。"}
+    buy = round(buy, 2)
+
+    sell = None
+    sell_date_text = None
+    return_pct = None
+    if not is_holding:
+        sell = _safe_float(sell_price)
+        sell_date_text = _date_text(sell_date)
+        if sell is None or sell <= 0:
+            return {"success": False, "message": "卖出价必须大于 0；如果还没卖出，请勾选继续持有。"}
+        if not sell_date_text:
+            return {"success": False, "message": "卖出时间不能为空；如果还没卖出，请勾选继续持有。"}
+        if sell_date_text < buy_date_text:
+            return {"success": False, "message": "卖出时间不能早于买入时间。"}
+        sell = round(sell, 2)
+        return_pct = round((sell / buy - 1) * 100, 2)
+
+    record = {
+        "recorded_at": datetime.now().isoformat(timespec="seconds"),
+        "plan_key": plan.get("history_key") or _history_key(plan),
+        "generated_at": plan.get("generated_at"),
+        "generated_trade_date": plan.get("generated_trade_date"),
+        "plan_for_trade_date": plan.get("plan_for_trade_date"),
+        "strategy": plan.get("strategy"),
+        "sector": plan.get("sector"),
+        "num_stocks": plan.get("num_stocks"),
+        "symbol": symbol,
+        "name": stock.get("name") or symbol,
+        "score": stock.get("score"),
+        "rating": stock.get("rating"),
+        "recommend_price": stock.get("latest_price") or stock.get("price"),
+        "buy_date": buy_date_text,
+        "buy_price": buy,
+        "sell_date": sell_date_text,
+        "sell_price": sell,
+        "return_pct": return_pct,
+        "is_success": return_pct > 0 if return_pct is not None else None,
+        "is_holding": bool(is_holding),
+        "status": "holding" if is_holding else "closed",
+        "note": str(note or "").strip()[:200],
+        "source": "manual_trade_record",
+    }
+    key = _manual_trade_key(record)
+    trade_cache.set(key, record)
+    return {"success": True, "message": "成交结果已记录。", "record": record, "record_key": key}
+
+
+def list_manual_trade_records(
+    trade_cache: Any,
+    *,
+    strategy: str | None = None,
+    sector: str | None = None,
+    symbol: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """Read user-entered trade outcomes, newest first."""
+    payload = _read_cache_payload(trade_cache)
+    rows = []
+    symbol_text = str(symbol or "").strip()
+    for key, item in payload.items():
+        value = item.get("value") if isinstance(item, dict) else None
+        if not isinstance(value, dict):
+            continue
+        if strategy and value.get("strategy") != strategy:
+            continue
+        if sector and value.get("sector") != sector:
+            continue
+        if symbol_text and str(value.get("symbol") or "").strip() != symbol_text:
+            continue
+        row = dict(value)
+        row["record_key"] = key
+        rows.append(row)
+    rows.sort(key=lambda row: str(row.get("recorded_at") or ""), reverse=True)
+    return rows[: max(1, int(limit or 200))]
+
+
+def summarize_manual_trade_records(records: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Summarize manually entered recommendation outcomes."""
+    rows = records or []
+    closed_rows = [row for row in rows if not row.get("is_holding")]
+    holding_count = len(rows) - len(closed_rows)
+    returns = [_safe_float(row.get("return_pct")) for row in closed_rows]
+    returns = [value for value in returns if value is not None]
+    success_count = sum(1 for value in returns if value > 0)
+    loss_count = sum(1 for value in returns if value <= 0)
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        strategy = row.get("strategy") or "--"
+        sector = row.get("sector") or "--"
+        key = f"{strategy}:{sector}"
+        bucket = buckets.setdefault(
+            key,
+            {
+                "strategy": strategy,
+                "sector": sector,
+                "records": 0,
+                "success_count": 0,
+                "holding_count": 0,
+                "returns": [],
+            },
+        )
+        if row.get("is_holding"):
+            bucket["holding_count"] += 1
+            continue
+        value = _safe_float(row.get("return_pct"))
+        if value is None:
+            continue
+        bucket["records"] += 1
+        bucket["success_count"] += 1 if value > 0 else 0
+        bucket["returns"].append(value)
+    by_strategy = []
+    for bucket in buckets.values():
+        bucket_returns = bucket.pop("returns")
+        bucket["avg_return_pct"] = _avg(bucket_returns)
+        bucket["success_rate_pct"] = _win_rate(bucket_returns)
+        by_strategy.append(bucket)
+    by_strategy.sort(key=lambda item: (str(item["strategy"]), str(item["sector"])))
+    return {
+        "total_records": len(rows),
+        "records": len(returns),
+        "closed_records": len(returns),
+        "holding_count": holding_count,
+        "success_count": success_count,
+        "loss_count": loss_count,
+        "success_rate_pct": _win_rate(returns),
+        "avg_return_pct": _avg(returns),
+        "best_return_pct": round(max(returns), 2) if returns else None,
+        "worst_return_pct": round(min(returns), 2) if returns else None,
+        "by_strategy": by_strategy,
+    }
+
+
 def run_data_source_health_check(quote_service: Any | None = None, info_service: Any | None = None) -> dict[str, Any]:
     """Run explicit, user-triggered data checks with timing and no strategy side effects."""
     checked_at = datetime.now().isoformat(timespec="seconds")
@@ -477,13 +635,21 @@ def _evaluate_stock_outcome(
         return {**base, "status": "pending", "reason": "等待未来交易日数据"}
 
     returns: dict[str, float | None] = {}
+    exit_dates: dict[str, str | None] = {}
+    exit_closes: dict[str, float | None] = {}
     for horizon in horizons:
+        key = f"{horizon}d"
         if len(future) < horizon:
-            returns[f"{horizon}d"] = None
+            returns[key] = None
+            exit_dates[key] = None
+            exit_closes[key] = None
             continue
-        close = _safe_float(future.iloc[horizon - 1][close_col])
-        returns[f"{horizon}d"] = round((close / entry_price - 1) * 100, 2) if close is not None else None
-    return {**base, "status": "completed", "returns": returns}
+        exit_row = future.iloc[horizon - 1]
+        close = _safe_float(exit_row[close_col])
+        exit_dates[key] = str(exit_row.get("_date") or "")[:10] or None
+        exit_closes[key] = round(close, 2) if close is not None else None
+        returns[key] = round((close / entry_price - 1) * 100, 2) if close is not None else None
+    return {**base, "status": "completed", "returns": returns, "exit_dates": exit_dates, "exit_closes": exit_closes}
 
 
 def _cache_file_summary(cache_dir: Path) -> list[dict[str, Any]]:
@@ -510,6 +676,21 @@ def _history_key(plan: dict[str, Any]) -> str:
     num_stocks = str(plan.get("num_stocks") or 0)
     raw = f"{generated}:{strategy}:{sector}:{num_stocks}"
     return "".join(ch if ch.isalnum() or ch in "_.:-" else "_" for ch in raw)
+
+
+def _manual_trade_key(record: dict[str, Any]) -> str:
+    raw = ":".join(
+        str(record.get(key) or "")
+        for key in ("plan_key", "symbol", "buy_date", "buy_price", "sell_date", "sell_price")
+    )
+    return "".join(ch if ch.isalnum() or ch in "_.:-" else "_" for ch in raw)
+
+
+def _date_text(value: Any) -> str:
+    if hasattr(value, "isoformat"):
+        return str(value.isoformat())[:10]
+    text = str(value or "").strip()
+    return text[:10]
 
 
 def _read_cache_payload(cache: Any) -> dict[str, Any]:

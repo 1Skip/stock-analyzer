@@ -1,9 +1,12 @@
 ﻿"""智能推荐页面 — 多策略智能选股推荐"""
 import html
+from datetime import date, datetime
+
 import streamlit as st
 from recommendation_service import RecommendationService, SELECTION_DATA_VERSION
 from ui.scheduler_status import render_scheduler_status
 from ui.loading import render_status_loading, status_loading
+from ui.stock_search import suggest_stock_inputs
 
 
 def _format_progress_message(strategy, sector, stage, metrics):
@@ -160,50 +163,26 @@ def _render_entry_check(entry_check):
         st.dataframe(rows, width="stretch", hide_index=True)
 
 
-def _render_outcome_review(outcome_review):
-    if not isinstance(outcome_review, dict):
+def _render_manual_trade_review(trade_review, service=None):
+    if not isinstance(trade_review, dict):
         return
-    status = outcome_review.get("status")
-    if status in ("no_plan", "empty"):
-        st.info("暂无可回看的 T+1 计划。")
-        return
-    summary = outcome_review.get("summary") or {}
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("回看标的", summary.get("total", 0))
-    col2.metric("已完成", summary.get("completed", 0))
-    col3.metric("待数据", summary.get("pending", 0))
-    avg_1d = summary.get("avg_1d_return_pct")
-    win_1d = summary.get("win_rate_1d_pct")
-    col4.metric("1日均收益", f"{avg_1d:+.2f}%" if avg_1d is not None else "--")
-    st.caption(f"1日胜率：{win_1d:.2f}%" if win_1d is not None else "1日胜率：等待后续K线")
-    rows = []
-    for item in outcome_review.get("items") or []:
-        returns = item.get("returns") or {}
-        rows.append({
-            "代码": item.get("symbol"),
-            "名称": item.get("name"),
-            "状态": item.get("status"),
-            "计划价": item.get("entry_price"),
-            "1日": _format_return(returns.get("1d")),
-            "5日": _format_return(returns.get("5d")),
-            "20日": _format_return(returns.get("20d")),
-            "说明": item.get("reason", ""),
-        })
-    if rows:
-        st.dataframe(rows, width="stretch", hide_index=True)
-
-
-def _render_history_review(history_review):
-    if not isinstance(history_review, dict):
-        return
-    summary = history_review.get("summary") or {}
-    with st.expander("历史计划统计", expanded=False):
+    summary = trade_review.get("summary") or {}
+    with st.expander("手工成交成功率", expanded=True):
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("历史计划", summary.get("plans", 0))
-        col2.metric("回看标的", summary.get("total_items", 0))
-        col3.metric("已完成", summary.get("completed_items", 0))
-        avg_1d = summary.get("avg_1d_return_pct")
-        col4.metric("1日均收益", _format_return(avg_1d))
+        col1.metric("已记录", summary.get("total_records", summary.get("records", 0)))
+        success_rate = summary.get("success_rate_pct")
+        avg_return = summary.get("avg_return_pct")
+        col2.metric("成功率", f"{success_rate:.2f}%" if success_rate is not None else "--")
+        col3.metric("平均收益", _format_return(avg_return))
+        col4.metric(
+            "已结/持有",
+            f"{summary.get('closed_records', summary.get('records', 0))} / {summary.get('holding_count', 0)}",
+        )
+        readiness = summary.get("learning_readiness") or {}
+        if readiness.get("ready"):
+            st.success(readiness.get("message") or "实盘样本已达到提醒门槛，可以评估是否接入实盘反馈学习层。")
+        elif readiness:
+            st.caption(readiness.get("message") or "实盘样本继续积累，达到门槛后会自动提醒。")
         by_strategy = summary.get("by_strategy") or []
         if by_strategy:
             st.dataframe(
@@ -211,84 +190,265 @@ def _render_history_review(history_review):
                     {
                         "策略": item.get("strategy"),
                         "板块": item.get("sector"),
-                        "计划数": item.get("plans"),
-                        "标的数": item.get("total"),
-                        "已完成": item.get("completed"),
-                        "1日均收益": _format_return(item.get("avg_1d_return_pct")),
-                        "1日胜率": _format_return(item.get("win_rate_1d_pct")),
+                        "记录数": item.get("records"),
+                        "成功数": item.get("success_count"),
+                        "持有中": item.get("holding_count", 0),
+                        "成功率": _format_return(item.get("success_rate_pct")),
+                        "平均收益": _format_return(item.get("avg_return_pct")),
                     }
                     for item in by_strategy
                 ],
                 width="stretch",
                 hide_index=True,
             )
-        history = history_review.get("history") or []
-        if history:
-            st.caption("最近计划：" + "；".join(
-                f"{item.get('generated_at', '--')} {item.get('strategy', '--')} {item.get('recommended_count', 0)}只"
-                for item in history[:5]
-            ))
+        records = trade_review.get("records") or []
+        if records:
+            st.dataframe(_manual_trade_record_rows(records[:50]), width="stretch", hide_index=True)
+            if service is not None:
+                with st.expander("删除手工成交记录", expanded=False):
+                    for index, row in enumerate(records[:50]):
+                        col_info, col_action = st.columns([5, 1])
+                        with col_info:
+                            st.caption(_manual_trade_delete_label(row))
+                        with col_action:
+                            if st.button("删除", key=f"manual_trade_delete_{row.get('record_key') or index}"):
+                                result = service.delete_manual_trade_record(row.get("record_key"))
+                                if result.get("success"):
+                                    st.success(result.get("message") or "成交记录已删除。")
+                                    st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
+                                    st.rerun()
+                                else:
+                                    st.error(result.get("message") or "删除失败。")
 
 
-def _render_strategy_review(strategy_review):
-    if not isinstance(strategy_review, dict):
-        return
-    with st.expander("最近交易日复盘", expanded=True):
-        if strategy_review.get("status") == "empty":
-            st.info("暂无历史 T+1 计划。先生成并保存几次计划后，这里会展示最近交易日复盘。")
+def _render_manual_trade_form(current_plan, service, strategy, sector, history_rows=None):
+    plan_options = _manual_trade_plan_options(current_plan, history_rows or [])
+    with st.expander("录入推荐股实际买卖结果", expanded=False):
+        query = st.text_input(
+            "股票代码或名称",
+            value="",
+            key="manual_trade_stock_query",
+            on_change=_queue_manual_trade_search,
+            args=(plan_options,),
+        )
+        if st.button("搜索推荐记录", type="secondary"):
+            _queue_manual_trade_search(plan_options)
+        matches = st.session_state.get("manual_trade_matches") or []
+        search_attempted = bool(st.session_state.get("manual_trade_search_attempted"))
+        if str(st.session_state.get("manual_trade_query") or "").strip() != str(query or "").strip():
+            matches = []
+            search_attempted = False
+        if search_attempted and not matches and str(query or "").strip():
+            st.warning("没有识别到这只股票，请输入正确的股票代码或名称。")
+        selected_match = matches[0] if matches else None
+        if selected_match:
+            st.caption(f"已找到推荐记录：{selected_match['label']}")
+        is_holding = st.checkbox(
+            "还在持有，暂不填写卖出时间和卖出价",
+            value=False,
+            key="manual_trade_is_holding",
+        )
+        with st.form("manual_trade_record_form", clear_on_submit=False):
+            col1, col2 = st.columns(2)
+            with col1:
+                buy_date = st.date_input("买入时间", value=date.today())
+                buy_price = st.number_input("买入价位", min_value=0.01, value=0.01, step=0.01, format="%.2f")
+            with col2:
+                sell_date = st.date_input("卖出时间", value=date.today(), disabled=is_holding)
+                sell_price = st.number_input(
+                    "卖出价位",
+                    min_value=0.01,
+                    value=0.01,
+                    step=0.01,
+                    format="%.2f",
+                    disabled=is_holding,
+            )
+            submitted = st.form_submit_button("保存成交结果")
+        if submitted:
+            if not selected_match:
+                st.error("请先搜索并选中一只股票，再保存成交结果。")
+                return
+            plan = selected_match["plan"]
+            selected_stock = selected_match["stock"]
+            selected_symbol = str(selected_stock.get("symbol") or "").strip()
+            result = service.record_manual_trade_outcome(
+                plan,
+                selected_symbol,
+                buy_date=buy_date,
+                buy_price=buy_price,
+                sell_date=None if is_holding else sell_date,
+                sell_price=None if is_holding else sell_price,
+                is_holding=is_holding,
+                note="",
+            )
+            if result.get("success"):
+                st.success(result.get("message") or "成交结果已记录。")
+                st.session_state.manual_trade_matches = []
+                st.session_state.manual_trade_search_attempted = False
+                st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
+            else:
+                st.error(result.get("message") or "成交结果保存失败。")
+
+
+def _manual_trade_plan_options(current_plan, history_rows):
+    options = []
+    seen = set()
+
+    def add_plan(plan, source):
+        if not isinstance(plan, dict) or not plan.get("recommended"):
             return
-        latest_trade_date = strategy_review.get("latest_trade_date") or "--"
-        reviewed_at = strategy_review.get("reviewed_at") or "--"
-        archive_date = strategy_review.get("review_trade_date") or latest_trade_date
-        st.caption(f"复盘交易日：{archive_date}｜最近计划入场日：{latest_trade_date}｜复盘时间：{reviewed_at}")
-        strategy_rows = strategy_review.get("strategy_rows") or []
-        if strategy_rows:
-            st.markdown("**复盘概览**")
-            st.dataframe(
-                [
-                    {
-                        "策略": row.get("strategy"),
-                        "计划数": row.get("plans"),
-                        "标的数": row.get("total"),
-                        "已完成": row.get("completed"),
-                        "待数据": row.get("pending"),
-                        "1日均收益": _format_return(row.get("avg_1d_return_pct")),
-                        "1日胜率": _format_return(row.get("win_rate_1d_pct")),
-                    }
-                    for row in strategy_rows
-                ],
-                width="stretch",
-                hide_index=True,
-            )
-        suggestions = strategy_review.get("suggestions") or []
-        if suggestions:
-            st.markdown("**明日进化建议**")
-            for suggestion in suggestions:
-                st.caption(f"- {suggestion}")
-        plan_rows = strategy_review.get("plan_rows") or []
-        if plan_rows:
-            st.markdown("**历史计划**")
-            st.dataframe(
-                [
-                    {
-                        "生成时间": row.get("generated_at"),
-                        "策略": row.get("strategy"),
-                        "板块": row.get("sector"),
-                        "推荐数": row.get("recommended_count"),
-                        "计划入场日": row.get("plan_for_trade_date"),
-                        "已完成": row.get("completed"),
-                        "1日均收益": _format_return(row.get("avg_1d_return_pct")),
-                        "1日胜率": _format_return(row.get("win_rate_1d_pct")),
-                    }
-                    for row in plan_rows[:30]
-                ],
-                width="stretch",
-                hide_index=True,
-            )
+        key = str(plan.get("history_key") or plan.get("cache_key") or plan.get("generated_at") or id(plan))
+        if key in seen:
+            return
+        seen.add(key)
+        generated = str(plan.get("generated_at") or "--")[:19]
+        plan_date = str(plan.get("plan_for_trade_date") or "--")[:10]
+        label = (
+            f"{source}｜{generated}｜{plan.get('strategy', '--')}｜"
+            f"{plan.get('sector', '--')}｜入场日 {plan_date}｜{len(plan.get('recommended') or [])}只"
+        )
+        options.append({"key": key, "label": label, "plan": plan})
+
+    add_plan(current_plan, "当前计划")
+    for row in history_rows or []:
+        add_plan((row or {}).get("plan"), "历史计划")
+    return options
+
+
+def _manual_trade_record_rows(records):
+    return [
+        {
+            "记录时间": row.get("recorded_at"),
+            "代码": row.get("symbol"),
+            "名称": row.get("name"),
+            "买入时间": row.get("buy_date"),
+            "买入价": row.get("buy_price"),
+            "卖出时间": row.get("sell_date"),
+            "卖出价": row.get("sell_price"),
+            "收益率": _format_return(row.get("return_pct")),
+            "结果": "持有中" if row.get("is_holding") else "成功" if row.get("is_success") else "失败",
+        }
+        for row in records or []
+    ]
+
+
+def _manual_trade_delete_label(row):
+    result = "持有中" if row.get("is_holding") else "成功" if row.get("is_success") else "失败"
+    return (
+        f"{row.get('symbol', '--')} {row.get('name', '--')}｜"
+        f"买入 {row.get('buy_date', '--')} {row.get('buy_price', '--')}｜"
+        f"卖出 {row.get('sell_date') or '--'} {row.get('sell_price') or '--'}｜{result}"
+    )
+
+
+def _queue_manual_trade_search(plan_options):
+    """Submit the current trade-record stock input for both Enter and button search."""
+    query = st.session_state.get("manual_trade_stock_query", "")
+    st.session_state.manual_trade_matches = _manual_trade_stock_matches(plan_options, query)
+    st.session_state.manual_trade_query = query
+    st.session_state.manual_trade_search_attempted = True
+
+
+def _manual_trade_stock_matches(plan_options, query):
+    text = str(query or "").strip()
+    if not text:
+        return []
+    lookup_values = _manual_trade_lookup_values(text)
+    matches = []
+    for option in plan_options or []:
+        plan = option.get("plan") or {}
+        for stock in plan.get("recommended") or []:
+            symbol = str(stock.get("symbol") or "").strip()
+            name = str(stock.get("name") or "").strip()
+            candidates = {
+                symbol.lower(),
+                name.lower(),
+                _normalize_manual_trade_text(symbol),
+                _normalize_manual_trade_text(name),
+            }
+            if not any(value and any(value in candidate or candidate in value for candidate in candidates) for value in lookup_values):
+                continue
+            generated = str(plan.get("generated_at") or "--")[:19]
+            plan_date = str(plan.get("plan_for_trade_date") or "--")[:10]
+            matches.append({
+                "plan": plan,
+                "stock": stock,
+                "label": (
+                    f"{symbol} {name}｜{generated}｜{plan.get('strategy', '--')}｜"
+                    f"{plan.get('sector', '--')}｜入场日 {plan_date}"
+                ),
+            })
+    if matches:
+        return matches
+    fallback = _manual_trade_fallback_match(text)
+    return [fallback] if fallback else []
+
+
+def _manual_trade_lookup_values(query):
+    values = {_normalize_manual_trade_text(query), str(query or "").strip().lower()}
+    for item in suggest_stock_inputs(query, "CN", limit=5):
+        values.add(_normalize_manual_trade_text(item.get("symbol")))
+        values.add(_normalize_manual_trade_text(item.get("name")))
+    return {value for value in values if value}
+
+
+def _manual_trade_fallback_match(query):
+    text = str(query or "").strip()
+    if not text:
+        return None
+    suggestions = suggest_stock_inputs(text, "CN", limit=1)
+    if suggestions:
+        symbol = str(suggestions[0].get("symbol") or "").strip()
+        name = str(suggestions[0].get("name") or symbol).strip()
+    elif text.isdigit() and len(text) <= 6:
+        symbol = text.zfill(6)
+        name = symbol
+    else:
+        return None
+    if not symbol:
+        return None
+    now = datetime.now().isoformat(timespec="seconds")
+    stock = {
+        "symbol": symbol,
+        "name": name,
+        "latest_price": None,
+        "price": None,
+        "score": None,
+        "rating": "手工补录",
+    }
+    plan = {
+        "generated_at": now,
+        "generated_trade_date": None,
+        "plan_for_trade_date": None,
+        "strategy": "手工补录",
+        "sector": "手工录入",
+        "num_stocks": 1,
+        "recommended": [stock],
+        "manual_trade_source": "manual_input_fallback",
+    }
+    return {
+        "plan": plan,
+        "stock": stock,
+        "label": f"{symbol} {name}｜手工补录",
+    }
+
+
+def _normalize_manual_trade_text(value):
+    return "".join(str(value or "").strip().lower().split())
 
 
 def _format_return(value):
     return f"{value:+.2f}%" if isinstance(value, (int, float)) else "--"
+
+
+def _safe_positive_float(value):
+    try:
+        number = float(value)
+        if number > 0 and number == number:
+            return round(number, 4)
+    except (TypeError, ValueError):
+        pass
+    return 0.01
 
 
 def _render_quality_diagnostics(diagnostics):
@@ -709,6 +869,7 @@ def recommended_stocks_page():
         st.session_state.rec_sector = st.session_state.rec_sector_select
         st.session_state.rec_data_loaded = False
         st.session_state.rec_results = None
+        st.session_state.rec_manual_trade_review = None
 
     def on_num_stocks_change():
         st.session_state.rec_num_stocks = st.session_state.rec_num_slider
@@ -723,6 +884,7 @@ def recommended_stocks_page():
             st.session_state.rec_sector_select = "全部"
         st.session_state.rec_data_loaded = False
         st.session_state.rec_results = None
+        st.session_state.rec_manual_trade_review = None
 
     strategy = st.session_state.rec_strategy
     sector = st.session_state.rec_sector
@@ -771,12 +933,8 @@ def recommended_stocks_page():
 
     if 'rec_entry_check' not in st.session_state:
         st.session_state.rec_entry_check = None
-    if 'rec_outcome_review' not in st.session_state:
-        st.session_state.rec_outcome_review = None
-    if 'rec_history_review' not in st.session_state:
-        st.session_state.rec_history_review = None
-    if 'rec_strategy_review' not in st.session_state:
-        st.session_state.rec_strategy_review = None
+    if 'rec_manual_trade_review' not in st.session_state:
+        st.session_state.rec_manual_trade_review = None
     if 'rec_is_running' not in st.session_state:
         st.session_state.rec_is_running = False
     if 'rec_last_error' not in st.session_state:
@@ -788,8 +946,8 @@ def recommended_stocks_page():
 
     service = RecommendationService()
     current_request_key = _request_key(strategy, sector, num_stocks)
-    if st.session_state.rec_strategy_review is None and not st.session_state.rec_is_running:
-        st.session_state.rec_strategy_review = service.latest_strategy_review(limit=80)
+    if st.session_state.rec_manual_trade_review is None and not st.session_state.rec_is_running:
+        st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
     running_request_key = st.session_state.get("rec_active_request_key")
     is_current_request_running = bool(st.session_state.rec_is_running and running_request_key == current_request_key)
     is_other_request_running = bool(st.session_state.rec_is_running and running_request_key != current_request_key)
@@ -798,6 +956,7 @@ def recommended_stocks_page():
         st.session_state.rec_results = None
         st.session_state.rec_data_loaded = False
         st.session_state.rec_entry_check = None
+        st.session_state.rec_manual_trade_review = None
     if not st.session_state.rec_results and not st.session_state.rec_is_running:
         latest_result = service.latest_t1_plan(strategy, sector, num_stocks)
         if (
@@ -811,65 +970,51 @@ def recommended_stocks_page():
         elif latest_result and _result_matches_request(latest_result, current_request_key):
             st.session_state.rec_last_error = "读取到的 T+1 推荐计划缓存为空，已跳过展示；请点击“生成 T+1 推荐计划”重新扫描。"
 
-    col1, col2, col3, col4, col5 = st.columns([1, 1.35, 1.05, 1.05, 1.05])
-    with col1:
-        if st.button("刷新K线缓存", type="secondary", disabled=st.session_state.rec_is_running):
+    generate_label = "生成 T+1 推荐计划"
+    if is_current_request_running:
+        generate_label = "本策略生成中..."
+    elif is_other_request_running:
+        generate_label = "其他计划生成中"
+
+    col_generate, col_entry, col_refresh = st.columns([2.0, 1.7, 1.4])
+    with col_generate:
+        generate_clicked = st.button(
+            generate_label,
+            type="primary",
+            disabled=st.session_state.rec_is_running,
+            use_container_width=True,
+        )
+    with col_entry:
+        entry_check_clicked = st.button(
+            "检查当前是否适合入场",
+            type="secondary",
+            disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
+            use_container_width=True,
+        )
+    with col_refresh:
+        if st.button(
+            "刷新K线缓存",
+            type="secondary",
+            disabled=st.session_state.rec_is_running,
+            use_container_width=True,
+        ):
             with status_loading("正在更新推荐策略日K缓存，不是读取T+1推荐计划缓存，请稍候...", 20):
                 cache_result = service.refresh_strategy_kline_cache()
             st.session_state.rec_data_loaded = False
             st.session_state.rec_results = None
             st.session_state.rec_entry_check = None
-            st.session_state.rec_outcome_review = None
-            st.session_state.rec_history_review = None
+            st.session_state.rec_manual_trade_review = None
             st.session_state.rec_last_error = None
             st.success(
                 f"推荐策略日K缓存已刷新：成功 {cache_result.get('refreshed', 0)} / "
                 f"{cache_result.get('total', 0)}，失败 {cache_result.get('failed', 0)}"
             )
 
-    with col2:
-        entry_check_clicked = st.button(
-            "检查当前是否适合入场",
-            type="secondary",
-            disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
-        )
-    with col3:
-        outcome_review_clicked = st.button(
-            "回看计划表现",
-            type="secondary",
-            disabled=st.session_state.rec_is_running or not bool(st.session_state.rec_results),
-        )
-    with col4:
-        history_review_clicked = st.button(
-            "统计历史计划",
-            type="secondary",
-            disabled=st.session_state.rec_is_running,
-        )
-    with col5:
-        strategy_review_clicked = st.button(
-            "刷新最近交易日复盘",
-            type="secondary",
-            disabled=st.session_state.rec_is_running,
-        )
-
-    generate_label = "生成 T+1 推荐计划"
-    if is_current_request_running:
-        generate_label = "本策略生成中..."
-    elif is_other_request_running:
-        generate_label = "其他计划生成中"
-    generate_clicked = st.button(
-        generate_label,
-        type="primary",
-        disabled=st.session_state.rec_is_running,
-    )
-
     if generate_clicked:
         st.session_state.rec_results = None
         st.session_state.rec_data_loaded = False
         st.session_state.rec_entry_check = None
-        st.session_state.rec_outcome_review = None
-        st.session_state.rec_history_review = None
-        st.session_state.rec_strategy_review = None
+        st.session_state.rec_manual_trade_review = None
         st.session_state.rec_last_error = None
         st.session_state.rec_is_running = True
         st.session_state.rec_active_request_key = current_request_key
@@ -899,16 +1044,6 @@ def recommended_stocks_page():
 
     if entry_check_clicked:
         st.session_state.rec_entry_check = service.check_entry_plan(st.session_state.rec_results)
-    if outcome_review_clicked:
-        st.session_state.rec_outcome_review = service.evaluate_t1_plan_outcomes(st.session_state.rec_results)
-    if history_review_clicked:
-        st.session_state.rec_history_review = service.evaluate_t1_plan_history(
-            strategy=strategy,
-            sector=sector,
-            limit=20,
-        )
-    if strategy_review_clicked:
-        st.session_state.rec_strategy_review = service.refresh_strategy_review(limit=80)
 
     if st.session_state.rec_last_error:
         st.error(st.session_state.rec_last_error)
@@ -924,15 +1059,21 @@ def recommended_stocks_page():
     if not st.session_state.rec_data_loaded:
         st.info("选择策略和板块后，点击“生成 T+1 推荐计划”开始收盘后/盘后计划分析。")
 
-    _render_strategy_review(st.session_state.rec_strategy_review)
+    manual_trade_history_rows = service.list_t1_plan_history(limit=5000)
+    _render_manual_trade_form(
+        st.session_state.rec_results,
+        service,
+        strategy,
+        sector,
+        manual_trade_history_rows,
+    )
+    _render_manual_trade_review(st.session_state.rec_manual_trade_review, service)
 
     if st.session_state.rec_results and _result_matches_request(st.session_state.rec_results, current_request_key):
         st.session_state.rec_results = service.ensure_t1_plan_display_profiles(st.session_state.rec_results)
         _render_t1_plan_meta(st.session_state.rec_results)
         st.caption("已读取 T+1 推荐计划缓存；未重新扫描股票池。只有点击“生成 T+1 推荐计划”才会重新运行策略。")
         _render_entry_check(st.session_state.rec_entry_check)
-        _render_outcome_review(st.session_state.rec_outcome_review)
-        _render_history_review(st.session_state.rec_history_review)
         _render_quality_diagnostics(st.session_state.rec_results.get("diagnostics"))
         display_recommendation_list(
             st.session_state.rec_results["recommended"],

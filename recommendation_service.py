@@ -10,6 +10,8 @@ import logging
 
 from config import (
     CACHE_TTL_RECOMMENDATION_RESULTS,
+    MANUAL_TRADE_LEARNING_MIN_CLOSED,
+    MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED,
     RECOMMEND_RANKER_ENABLED,
     RECOMMEND_RANKER_SORT,
     T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
@@ -30,9 +32,12 @@ from quality_monitor import (
     attach_recommendation_explanations,
     evaluate_plan_outcomes,
     list_plan_history,
+    list_manual_trade_records,
     save_plan_history,
+    save_manual_trade_record,
     summarize_recommendation_quality,
     summarize_history_outcomes,
+    summarize_manual_trade_records,
 )
 from recommend_ranker import enrich_recommendations_with_alpha
 from short_term_learning import apply_short_term_learning, build_short_term_learning_profile
@@ -127,6 +132,7 @@ class RecommendationService:
         self.plan_cache = JsonFileCache("recommendation_t1_plans", 86400 * 14)
         self.plan_history_cache = JsonFileCache("recommendation_t1_plan_history", 86400 * 120)
         self.strategy_review_cache = JsonFileCache("recommendation_strategy_reviews", 86400 * 120)
+        self.manual_trade_cache = JsonFileCache("recommendation_manual_trade_records", 86400 * 365 * 3)
 
     def run(
         self,
@@ -320,10 +326,78 @@ class RecommendationService:
             "summary": summarize_history_outcomes(reviews),
         }
 
+    def record_manual_trade_outcome(
+        self,
+        plan: dict[str, Any] | None,
+        symbol: str,
+        *,
+        buy_date: Any,
+        buy_price: Any,
+        sell_date: Any,
+        sell_price: Any,
+        is_holding: bool = False,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Save a user-entered buy/sell result for a recommended stock."""
+        stock = self._find_plan_stock(plan, symbol)
+        return save_manual_trade_record(
+            self.manual_trade_cache,
+            plan,
+            stock,
+            buy_date=buy_date,
+            buy_price=buy_price,
+            sell_date=sell_date,
+            sell_price=sell_price,
+            is_holding=is_holding,
+            note=note,
+        )
+
+    def evaluate_manual_trade_success_rate(
+        self,
+        *,
+        strategy: str | None = None,
+        sector: str | None = None,
+        symbol: str | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
+        """Summarize user-entered recommendation outcomes without rerunning strategy."""
+        records = list_manual_trade_records(
+            self.manual_trade_cache,
+            strategy=strategy,
+            sector=sector,
+            symbol=symbol,
+            limit=limit,
+        )
+        all_records = list_manual_trade_records(self.manual_trade_cache, limit=max(1000, int(limit or 200)))
+        summary = summarize_manual_trade_records(records)
+        global_summary = summarize_manual_trade_records(all_records)
+        summary["learning_readiness"] = self._manual_trade_learning_readiness(summary, global_summary)
+        return {
+            "records": records,
+            "summary": summary,
+            "global_summary": global_summary,
+        }
+
+    def delete_manual_trade_record(self, record_key: str) -> dict[str, Any]:
+        """Delete one user-entered trade outcome by its record key."""
+        key = str(record_key or "").strip()
+        if not key:
+            return {"success": False, "message": "缺少记录标识，无法删除。"}
+        delete = getattr(self.manual_trade_cache, "delete", None)
+        if callable(delete):
+            removed = bool(delete(key))
+        else:
+            payload = getattr(self.manual_trade_cache, "store", None)
+            removed = isinstance(payload, dict) and payload.pop(key, None) is not None
+        if not removed:
+            return {"success": False, "message": "未找到这条成交记录，可能已经删除。"}
+        return {"success": True, "message": "成交记录已删除。", "record_key": key}
+
     def build_strategy_review(self, *, limit: int = 80) -> dict[str, Any]:
         """Build a read-only strategy review from saved T+1 plans."""
         rows = self.list_t1_plan_history(limit=limit)
         plan_rows: list[dict[str, Any]] = []
+        detail_rows: list[dict[str, Any]] = []
         buckets: dict[str, dict[str, Any]] = {}
         latest_trade_date = ""
         for row in rows:
@@ -351,6 +425,25 @@ class RecommendationService:
                 "status": outcome.get("status"),
             }
             plan_rows.append(item)
+            for outcome_item in outcome.get("items") or []:
+                returns = outcome_item.get("returns") or {}
+                exit_dates = outcome_item.get("exit_dates") or {}
+                exit_closes = outcome_item.get("exit_closes") or {}
+                detail_rows.append({
+                    "generated_at": generated_at,
+                    "strategy": strategy,
+                    "sector": sector,
+                    "plan_for_trade_date": plan_date,
+                    "symbol": outcome_item.get("symbol"),
+                    "name": outcome_item.get("name"),
+                    "status": outcome_item.get("status"),
+                    "entry_price": outcome_item.get("entry_price"),
+                    "generated_trade_date": outcome_item.get("generated_trade_date"),
+                    "exit_date_1d": exit_dates.get("1d"),
+                    "exit_close_1d": exit_closes.get("1d"),
+                    "return_1d_pct": returns.get("1d"),
+                    "reason": outcome_item.get("reason", ""),
+                })
             bucket = buckets.setdefault(
                 strategy,
                 {
@@ -391,6 +484,7 @@ class RecommendationService:
             "reviewed_at": datetime.now().isoformat(timespec="seconds"),
             "latest_trade_date": latest_trade_date or None,
             "plan_rows": plan_rows,
+            "detail_rows": detail_rows,
             "strategy_rows": strategy_rows,
             "suggestions": self._build_strategy_review_suggestions(strategy_rows),
         }
@@ -565,6 +659,44 @@ class RecommendationService:
             evaluate_plan_outcomes=evaluate_plan_outcomes,
             strategy=strategy,
         )
+
+    @staticmethod
+    def _find_plan_stock(plan: dict[str, Any] | None, symbol: str) -> dict[str, Any] | None:
+        if not isinstance(plan, dict):
+            return None
+        symbol_text = str(symbol or "").strip()
+        for stock in plan.get("recommended") or []:
+            if str((stock or {}).get("symbol") or "").strip() == symbol_text:
+                return stock
+        return None
+
+    @staticmethod
+    def _manual_trade_learning_readiness(
+        scoped_summary: dict[str, Any],
+        global_summary: dict[str, Any],
+    ) -> dict[str, Any]:
+        global_closed = int(global_summary.get("closed_records") or 0)
+        scoped_closed = int(scoped_summary.get("closed_records") or 0)
+        min_total = int(MANUAL_TRADE_LEARNING_MIN_CLOSED or 30)
+        min_strategy = int(MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED or 12)
+        missing_total = max(0, min_total - global_closed)
+        missing_strategy = max(0, min_strategy - scoped_closed)
+        ready = missing_total == 0 and missing_strategy == 0
+        return {
+            "ready": ready,
+            "status": "ready" if ready else "collecting",
+            "global_closed_records": global_closed,
+            "scoped_closed_records": scoped_closed,
+            "min_closed_records": min_total,
+            "min_strategy_closed_records": min_strategy,
+            "missing_closed_records": missing_total,
+            "missing_strategy_closed_records": missing_strategy,
+            "message": (
+                "实盘样本已达到提醒门槛，可以评估是否接入实盘反馈学习层。"
+                if ready
+                else f"实盘样本继续积累：总已卖出 {global_closed}/{min_total}，当前策略/板块 {scoped_closed}/{min_strategy}。"
+            ),
+        }
 
     def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None, *, enrich_display: bool = True) -> None:
         if not recommended:

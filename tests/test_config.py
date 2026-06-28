@@ -86,6 +86,11 @@ class TestDefaultConstants:
         assert config.RECOMMEND_RANKER_ENABLED is True
         assert config.RECOMMEND_RANKER_SORT is False
 
+    def test_manual_trade_learning_reminder_defaults(self):
+        import config
+        assert config.MANUAL_TRADE_LEARNING_MIN_CLOSED == 30
+        assert config.MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED == 12
+
 
 class TestEnvVarOverride:
     """验证环境变量覆盖"""

@@ -93,6 +93,10 @@ DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
 RECOMMEND_RANKER_ENABLED = os.getenv("RECOMMEND_RANKER_ENABLED", "true").lower() == "true"
 RECOMMEND_RANKER_SORT = os.getenv("RECOMMEND_RANKER_SORT", "false").lower() == "true"
 
+# 手工成交记录只做样本提醒，不自动改变推荐策略。
+MANUAL_TRADE_LEARNING_MIN_CLOSED = int(os.getenv("MANUAL_TRADE_LEARNING_MIN_CLOSED", "30"))
+MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED = int(os.getenv("MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED", "12"))
+
 # ============================================================
 # 配色方案
 # ============================================================

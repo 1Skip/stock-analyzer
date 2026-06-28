@@ -79,6 +79,27 @@ class JsonFileCache:
                     json.dump(payload, file, ensure_ascii=False)
                 os.replace(tmp_path, self.path)
 
+    def delete(self, key: str) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = _get_lock(self.path)
+        with lock:
+            with self._process_lock():
+                payload = self._read_unlocked()
+                safe_key = _safe_key(key)
+                legacy_key = _legacy_safe_key(key)
+                removed = False
+                for candidate in {safe_key, legacy_key, str(key or "")}:
+                    if candidate in payload:
+                        payload.pop(candidate, None)
+                        removed = True
+                if not removed:
+                    return False
+                tmp_path = self.path.with_suffix(f"{self.path.suffix}.{os.getpid()}.tmp")
+                with open(tmp_path, "w", encoding="utf-8") as file:
+                    json.dump(payload, file, ensure_ascii=False)
+                os.replace(tmp_path, self.path)
+                return True
+
     def _read(self) -> dict[str, Any]:
         lock = _get_lock(self.path)
         with lock:

@@ -604,19 +604,130 @@ def test_recommend_page_groups_plan_review_buttons():
 
     source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
 
-    assert "def _render_strategy_review" in source
-    assert "最近交易日复盘" in source
-    assert "刷新最近交易日复盘" in source
-    assert "复盘交易日" in source
-    assert "latest_strategy_review" in source
-    assert "明日进化建议" in source
-    assert "历史计划统计" in source
-    block = source.split('st.button("回看计划表现"', 1)[0].split("col1, col2, col3, col4, col5", 1)[-1]
-    assert "with col3:" in block
-    history_block = source.split('st.button("统计历史计划"', 1)[0].split('st.button("回看计划表现"', 1)[-1]
-    assert "with col4:" in history_block
-    strategy_block = source.split('st.button("刷新最近交易日复盘"', 1)[0].split('st.button("统计历史计划"', 1)[-1]
-    assert "with col5:" in strategy_block
+    assert "def _render_strategy_review" not in source
+    assert "最近交易日复盘" not in source
+    assert "刷新最近交易日复盘" not in source
+    assert "复盘交易日" not in source
+    assert "计划价来自历史 T+1 推荐计划" not in source
+    assert "回看明细" not in source
+    assert "1日回看日" not in source
+    assert "1日收盘价" not in source
+    assert "latest_strategy_review" not in source
+    assert "refresh_strategy_review" not in source
+    assert "明日进化建议" not in source
+    assert "回看计划表现" not in source
+    assert "统计历史计划" not in source
+    assert "rec_outcome_review" not in source
+    assert "rec_history_review" not in source
+    assert "rec_strategy_review" not in source
+    assert "col_generate, col_entry, col_refresh = st.columns([2.0, 1.7, 1.4])" in source
+    button_section = source.split("col_generate, col_entry, col_refresh =", 1)[1]
+    assert button_section.index("generate_clicked = st.button(") < button_section.index("entry_check_clicked = st.button(")
+    assert button_section.index("entry_check_clicked = st.button(") < button_section.index('"刷新K线缓存"')
+    assert source.count("use_container_width=True") >= 3
+
+
+def test_recommend_page_manual_trade_form_can_use_history_plans():
+    from pathlib import Path
+
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "def _manual_trade_plan_options" in source
+    assert "service.list_t1_plan_history(limit=5000)" in source
+    assert "_render_manual_trade_form(" in source
+    assert "def _queue_manual_trade_search" in source
+    assert "def _manual_trade_stock_matches" in source
+    assert "股票代码或名称" in source
+    assert "搜索推荐记录" in source
+    assert "on_change=_queue_manual_trade_search" in source
+    assert "_queue_manual_trade_search(plan_options)" in source
+    assert "service.evaluate_manual_trade_success_rate(limit=200)" in source
+    assert "service.evaluate_manual_trade_success_rate(\n            strategy=strategy" not in source
+    assert "删除手工成交记录" in source
+    assert "service.delete_manual_trade_record" in source
+    assert 'st.button("删除"' in source
+    assert "st.rerun()" in source
+    form_block = source.split('with st.form("manual_trade_record_form"', 1)[1]
+    assert 'st.checkbox("还在持有' not in form_block
+    assert 'key="manual_trade_is_holding"' in source
+    assert 'format="%.2f"' in source
+    assert 'format="%.4f"' not in source
+    assert "没有识别到这只股票" in source
+    assert "匹配到多条推荐记录" not in source
+    assert "当前计划" in source
+    assert "历史计划" in source
+
+
+def test_manual_trade_stock_match_resolves_cn_name_to_code(monkeypatch):
+    from ui import recommend_page
+
+    monkeypatch.setattr(
+        recommend_page,
+        "suggest_stock_inputs",
+        lambda query, market, limit=5: [
+            {"symbol": "000725", "name": "京东方A"},
+        ] if query == "京东方A" else [
+            {"symbol": "002472", "name": "双环传动"},
+        ],
+    )
+    plan_options = [
+        {
+            "plan": {
+                "generated_at": "2026-06-01T15:45:00",
+                "strategy": "短线",
+                "sector": "全部",
+                "recommended": [
+                    {"symbol": "000725", "name": "缓存名称异常"},
+                    {"symbol": "002472", "name": "缓存名称异常"},
+                ],
+            }
+        }
+    ]
+
+    assert recommend_page._manual_trade_stock_matches(plan_options, "京东方A")[0]["stock"]["symbol"] == "000725"
+    assert recommend_page._manual_trade_stock_matches(plan_options, "双环传动")[0]["stock"]["symbol"] == "002472"
+
+
+def test_manual_trade_stock_match_falls_back_to_resolved_stock(monkeypatch):
+    from ui import recommend_page
+
+    monkeypatch.setattr(
+        recommend_page,
+        "suggest_stock_inputs",
+        lambda query, market, limit=5: [{"symbol": "301499", "name": "维科精密"}],
+    )
+
+    match = recommend_page._manual_trade_stock_matches([], "维科精密")[0]
+
+    assert match["stock"]["symbol"] == "301499"
+    assert match["stock"]["name"] == "维科精密"
+    assert match["plan"]["strategy"] == "手工补录"
+    assert match["plan"]["manual_trade_source"] == "manual_input_fallback"
+
+
+def test_manual_trade_stock_match_accepts_any_resolved_code_or_name(monkeypatch):
+    from ui import recommend_page
+
+    def fake_suggestions(query, market, limit=5):
+        values = {
+            "301499": {"symbol": "301499", "name": "维科精密"},
+            "维科精密": {"symbol": "301499", "name": "维科精密"},
+            "603501": {"symbol": "603501", "name": "韦尔股份"},
+            "韦尔股份": {"symbol": "603501", "name": "韦尔股份"},
+        }
+        return [values[query]] if query in values else []
+
+    monkeypatch.setattr(recommend_page, "suggest_stock_inputs", fake_suggestions)
+
+    by_code = recommend_page._manual_trade_stock_matches([], "301499")[0]
+    by_name = recommend_page._manual_trade_stock_matches([], "韦尔股份")[0]
+
+    assert by_code["stock"]["symbol"] == "301499"
+    assert by_code["stock"]["name"] == "维科精密"
+    assert by_name["stock"]["symbol"] == "603501"
+    assert by_name["stock"]["name"] == "韦尔股份"
+    assert by_code["plan"]["manual_trade_source"] == "manual_input_fallback"
+    assert by_name["plan"]["manual_trade_source"] == "manual_input_fallback"
 
 
 def test_report_history_page_groups_action_buttons():
