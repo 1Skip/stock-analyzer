@@ -22,9 +22,18 @@
 - 推荐页操作按钮调整为同一行三列：“生成 T+1 推荐计划 / 检查当前是否适合入场 / 刷新K线缓存”，主按钮在左且保持 primary，辅助按钮依次靠后。
 - 三列比例为 `[2.0, 1.7, 1.4]`，避免辅助按钮抢主流程，也避免右侧出现大块空白。
 
+## 后端数据链路与测试隔离修复
+
+- 修复 A 股日 K 自动数据源顺序：`data_fetcher.py` 中自动模式恢复为通达信 `mootdx`、同花顺、腾讯财经、东方财富、新浪财经、Yahoo Finance，确保同花顺日 K 优先于腾讯财经，后续真实源回退链仍保留。
+- 修复热门行业/概念板块 fallback 测试偶发失败：`tests/test_stock_recommendation.py` 中显式隔离同花顺热榜、问财、同花顺 HTML、东方财富/新浪等前置源，避免全量测试时现场真实热榜数据抢先命中，导致测试没有走到预期回退路径。
+- 本次修复不改变推荐股票池、过滤条件、评分、排序或推荐数量。
+
 ## 验证
 
 - `.venv\Scripts\python.exe -m pytest tests\test_ui_enhancements.py tests\test_recommendation_service.py -q --basetemp=.tmp\pytest-remove-strategy-review` 通过，`144 passed`。
 - `.venv\Scripts\python.exe -m pytest tests\test_ui_enhancements.py -q --basetemp=.tmp\pytest-button-gap` 通过，`106 passed`。
+- `.venv\Scripts\python.exe -m pytest -q --basetemp=.tmp\pytest-push-full` 通过，`940 passed, 20 warnings`。
+- `.venv\Scripts\python.exe -m ruff check .` 通过。
+- `.venv\Scripts\python.exe -m compileall data_fetcher.py tests\test_stock_recommendation.py` 通过。
 - `.venv\Scripts\python.exe -m compileall ui\recommend_page.py recommendation_service.py quality_monitor.py data\cache.py` 通过。
 - `git diff --check` 通过，仅有 Windows 换行提示。

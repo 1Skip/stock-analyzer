@@ -432,8 +432,8 @@ class StockDataFetcher:
                 # A股数据获取：始终构建完整回退链，按用户偏好排序
                 all_sources = [
                     ('mootdx', self._get_cn_stock_data_mootdx, '通达信mootdx'),
-                    ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('ths', self._get_cn_stock_data_ths, '同花顺'),
+                    ('akshare', self._get_cn_stock_data_akshare, '腾讯财经'),
                     ('akshare_em', self._get_cn_stock_data_akshare_em, '东方财富'),
                     ('sina', self._get_cn_stock_data_sina_fallback, '新浪财经'),
                 ]

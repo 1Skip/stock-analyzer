@@ -436,6 +436,12 @@ class TestGetHotSectorsCN:
             lambda *args, **kwargs: exec('raise Exception("fail")'),
         )
         monkeypatch.setattr('stock_recommendation.ak', None)
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_html", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_akshare_em", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_sina_industry", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_akshare_ths", lambda limit=30: [])
         result = recommender.get_hot_sectors_cn()
         assert result == []
         assert recommender.last_board_ranking_diagnostics["sectors"]["status"] == "unavailable"
@@ -475,6 +481,10 @@ class TestGetHotSectorsCN:
 
         monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
         monkeypatch.setattr('stock_recommendation.ak', None)
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_html", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_akshare_em", lambda limit=30: [])
 
         result = recommender.get_hot_sectors_cn(limit=5)
 
@@ -562,6 +572,11 @@ class TestGetHotConceptsCN:
             lambda *args, **kwargs: exec('raise Exception("fail")'),
         )
         monkeypatch.setattr('stock_recommendation.ak', None)
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_html", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_akshare_em", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_akshare_ths", lambda limit=30: [])
         result = recommender.get_hot_concepts_cn()
         assert result == []
         assert recommender.last_board_ranking_diagnostics["concepts"]["status"] == "unavailable"
