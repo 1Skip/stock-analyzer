@@ -47,6 +47,28 @@ class TestT1PlanSchedule:
             ("激进突破型", "全部"),
         ]
 
+    def test_t1_targets_keep_classic_short_term_full_market_only(self, monkeypatch):
+        import scheduler
+
+        monkeypatch.setattr(
+            scheduler,
+            "T1_PLAN_STRATEGIES",
+            ["短线", "短线经典版", "多因子稳健型"],
+        )
+        monkeypatch.setattr(
+            scheduler,
+            "T1_PLAN_SECTORS",
+            ["苹果概念", "特斯拉概念"],
+        )
+        monkeypatch.setattr(scheduler, "T1_PLAN_SECTOR", "苹果概念")
+
+        assert scheduler._iter_t1_plan_targets() == [
+            ("短线", "苹果概念"),
+            ("短线", "特斯拉概念"),
+            ("短线经典版", "全部"),
+            ("多因子稳健型", "全部"),
+        ]
+
     def test_t1_plan_preheat_calls_configured_targets_without_realtime_entry_check(self, monkeypatch):
         fake_service = MagicMock()
         fake_service.run_t1_plan.side_effect = lambda strategy, sector, *_args, **_kwargs: {

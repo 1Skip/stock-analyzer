@@ -87,13 +87,65 @@ def test_build_status_diagnostics_reports_t1_failure():
     assert any("t1_preheat" in item and "接口超时" in item for item in diagnostics)
 
 
-def test_render_system_status_page_is_read_only(monkeypatch):
+def test_build_data_source_health_rows_formats_check_result():
+    from ui.system_status_page import build_data_source_health_rows
+
+    rows = build_data_source_health_rows({
+        "checks": [
+            {"name": "历史K线", "status": "ok", "elapsed_ms": 120, "message": "可用"},
+            {"name": "实时行情", "status": "empty", "elapsed_ms": 80, "message": "返回为空"},
+        ]
+    })
+
+    assert rows == [
+        {"检测项": "历史K线", "状态": "可用", "耗时(ms)": 120, "说明": "可用"},
+        {"检测项": "实时行情", "状态": "返回为空", "耗时(ms)": 80, "说明": "返回为空"},
+    ]
+
+
+def test_render_data_source_health_status_runs_only_after_click(monkeypatch):
+    from ui import system_status_page
+
+    result = {
+        "status": "ok",
+        "checked_at": "2026-07-10T16:30:00",
+        "ok_count": 1,
+        "total": 1,
+        "checks": [{"name": "历史K线", "status": "ok", "elapsed_ms": 100, "message": "可用"}],
+    }
+    calls = {"runs": 0, "success": [], "dataframe": []}
+    system_status_page.st.session_state.pop(system_status_page.DATA_SOURCE_HEALTH_SESSION_KEY, None)
+    monkeypatch.setattr(system_status_page.st, "button", lambda *args, **kwargs: True, raising=False)
+    monkeypatch.setattr(system_status_page.st, "caption", lambda *args, **kwargs: None, raising=False)
+    monkeypatch.setattr(
+        system_status_page,
+        "run_system_data_source_health_check",
+        lambda: calls.update(runs=calls["runs"] + 1) or result,
+    )
+    monkeypatch.setattr(system_status_page.st, "success", lambda text: calls["success"].append(text), raising=False)
+    monkeypatch.setattr(
+        system_status_page.st,
+        "dataframe",
+        lambda rows, **kwargs: calls["dataframe"].append(rows),
+        raising=False,
+    )
+
+    system_status_page.render_data_source_health_status()
+
+    assert calls["runs"] == 1
+    assert calls["success"] == ["数据源检测通过：1/1 项可用"]
+    assert calls["dataframe"][0][0]["检测项"] == "历史K线"
+
+
+def test_render_system_status_page_does_not_run_health_check_without_click(monkeypatch):
     from ui import system_status_page
 
     calls = {"markdown": [], "caption": [], "dataframe": [], "warning": [], "info": []}
+    system_status_page.st.session_state.pop(system_status_page.DATA_SOURCE_HEALTH_SESSION_KEY, None)
     monkeypatch.setattr(system_status_page, "load_scheduler_status", lambda: {"daily_report": {"error": "失败"}})
     monkeypatch.setattr(system_status_page, "render_scheduler_status", lambda status: None)
     monkeypatch.setattr(system_status_page, "build_cache_status_rows", lambda: [{"path": ".cache/a.json", "status": "ok"}])
+    monkeypatch.setattr(system_status_page.st, "button", lambda *args, **kwargs: False, raising=False)
     monkeypatch.setattr(system_status_page.st, "markdown", lambda text, **kwargs: calls["markdown"].append(text), raising=False)
     monkeypatch.setattr(system_status_page.st, "caption", lambda text: calls["caption"].append(text), raising=False)
     monkeypatch.setattr(system_status_page.st, "dataframe", lambda rows, **kwargs: calls["dataframe"].append(rows), raising=False)
@@ -103,7 +155,14 @@ def test_render_system_status_page_is_read_only(monkeypatch):
     system_status_page.render_system_status_page()
 
     assert any("系统状态" in text for text in calls["markdown"])
-    assert any("只读诊断页" in text for text in calls["caption"])
+    assert any("数据源检测仅在点击按钮后运行" in text for text in calls["caption"])
     assert any("诊断结论" in text for text in calls["info"])
     assert any("失败" in text for text in calls["warning"])
     assert calls["dataframe"] == [[{"path": ".cache/a.json", "status": "ok"}]]
+
+
+def test_real_data_contract_workflow_has_weekday_schedule():
+    source = Path(".github/workflows/real-data-contracts.yml").read_text(encoding="utf-8")
+
+    assert 'cron: "30 8 * * 1-5"' in source
+    assert "workflow_dispatch:" in source

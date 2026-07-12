@@ -7,10 +7,14 @@ from typing import Any
 
 import streamlit as st
 
+from data.runtime import run_with_timeout
+from quality_monitor import run_data_source_health_check
 from scripts.inspect_cache_status import DEFAULT_CACHE_DIRS, inspect_cache_dirs
 from ui.scheduler_status import load_scheduler_status, render_scheduler_status
 
 CACHE_STALE_MINUTES = 24 * 60
+DATA_SOURCE_HEALTH_SESSION_KEY = "system_data_source_health"
+DATA_SOURCE_HEALTH_TIMEOUT_SECONDS = 30
 
 
 def _format_size(size_bytes: Any) -> str:
@@ -123,10 +127,62 @@ def summarize_scheduler_failures(status: dict[str, Any]) -> list[str]:
     return failures
 
 
+def run_system_data_source_health_check() -> dict[str, Any]:
+    """Run explicit real-source checks without generating recommendations."""
+    try:
+        return run_with_timeout(run_data_source_health_check, DATA_SOURCE_HEALTH_TIMEOUT_SECONDS)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "checked_at": datetime.now().isoformat(timespec="seconds"),
+            "ok_count": 0,
+            "total": 0,
+            "checks": [],
+            "error": str(exc)[:160],
+        }
+
+
+def build_data_source_health_rows(result: dict[str, Any] | None) -> list[dict[str, Any]]:
+    rows = []
+    for item in (result or {}).get("checks") or []:
+        rows.append({
+            "检测项": item.get("name") or "--",
+            "状态": {"ok": "可用", "empty": "返回为空", "failed": "失败"}.get(item.get("status"), "未知"),
+            "耗时(ms)": item.get("elapsed_ms"),
+            "说明": item.get("message") or "--",
+        })
+    return rows
+
+
+def render_data_source_health_status() -> None:
+    st.markdown("#### 数据源状态")
+    if st.button("检测数据源", key="system_run_data_source_health"):
+        st.session_state[DATA_SOURCE_HEALTH_SESSION_KEY] = run_system_data_source_health_check()
+
+    result = st.session_state.get(DATA_SOURCE_HEALTH_SESSION_KEY)
+    if not isinstance(result, dict):
+        st.caption("尚未检测。点击按钮后会抽样检查真实公开数据源，不生成推荐计划。")
+        return
+
+    status = result.get("status")
+    summary = f"{result.get('ok_count', 0)}/{result.get('total', 0)} 项可用"
+    if status == "ok":
+        st.success(f"数据源检测通过：{summary}")
+    elif status == "partial":
+        st.warning(f"数据源部分可用：{summary}")
+    else:
+        st.error(f"数据源检测失败：{result.get('error') or summary}")
+    if result.get("checked_at"):
+        st.caption(f"检测时间：{result['checked_at']}")
+    rows = build_data_source_health_rows(result)
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+
+
 def render_system_status_page() -> None:
-    """Render local scheduler and cache status without mutating project state."""
+    """Render scheduler, cache and explicit data-source diagnostics."""
     st.markdown("# 系统状态")
-    st.caption("只读诊断页：展示调度、T+1 和本地缓存状态，不触发推荐生成或行情刷新。")
+    st.caption("诊断页：展示调度、T+1 和本地缓存；数据源检测仅在点击按钮后运行，不生成推荐。")
 
     status = load_scheduler_status()
     render_scheduler_status(status)
@@ -141,6 +197,7 @@ def render_system_status_page() -> None:
         if failures:
             st.warning("最近调度失败原因：" + "；".join(failures[:5]))
 
+    render_data_source_health_status()
     st.markdown("#### 缓存状态")
     if not rows:
         st.caption("暂无缓存文件。")

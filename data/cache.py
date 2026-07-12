@@ -6,26 +6,15 @@ import os
 import base64
 import logging
 import re
-import threading
-import time
-from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 from config import RUNTIME_CACHE_DIR
+from data.file_lock import atomic_write_text, get_thread_lock, process_file_lock
 
 
 logger = logging.getLogger(__name__)
-_CACHE_LOCKS: dict[Path, threading.Lock] = {}
-_CACHE_LOCKS_GUARD = threading.Lock()
-
-
-def _get_lock(path: Path) -> threading.Lock:
-    with _CACHE_LOCKS_GUARD:
-        if path not in _CACHE_LOCKS:
-            _CACHE_LOCKS[path] = threading.Lock()
-        return _CACHE_LOCKS[path]
 
 
 def _safe_key(key: str) -> str:
@@ -49,42 +38,65 @@ class JsonFileCache:
         self.path = Path(cache_dir or RUNTIME_CACHE_DIR) / f"{self.namespace}.json"
 
     def get(self, key: str) -> Any | None:
+        return self.get_many([key]).get(str(key or ""))
+
+    def get_many(self, keys: Iterable[str]) -> dict[str, Any]:
+        """Read multiple cache keys with one file load."""
         payload = self._read()
-        item = payload.get(_safe_key(key))
-        if not item:
-            item = payload.get(_legacy_safe_key(key))
-        if not item:
-            return None
-        try:
-            updated_at = datetime.fromisoformat(item["updated_at"])
-        except Exception:
-            logger.debug("缓存条目时间戳无效: path=%s key=%s", self.path, key, exc_info=True)
-            return None
-        if datetime.now() - updated_at > self.ttl:
-            return None
-        return item.get("value")
+        now = datetime.now()
+        values: dict[str, Any] = {}
+        for key in keys:
+            raw_key = str(key or "")
+            item = payload.get(_safe_key(raw_key))
+            if not item:
+                item = payload.get(_legacy_safe_key(raw_key))
+            if not self._is_fresh_item(item, now, key=raw_key):
+                continue
+            values[raw_key] = item.get("value")
+        return values
 
     def set(self, key: str, value: Any) -> None:
+        self.set_many({key: value})
+
+    def set_many(self, values: Mapping[str, Any]) -> None:
+        """Update multiple cache keys with one read-modify-write cycle."""
+        if not values:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        lock = _get_lock(self.path)
+        lock = get_thread_lock(self.path)
         with lock:
-            with self._process_lock():
+            with process_file_lock(self.path):
                 payload = self._read_unlocked()
-                payload[_safe_key(key)] = {
-                    "updated_at": datetime.now().isoformat(),
-                    "value": value,
-                }
-                tmp_path = self.path.with_suffix(f"{self.path.suffix}.{os.getpid()}.tmp")
-                with open(tmp_path, "w", encoding="utf-8") as file:
-                    json.dump(payload, file, ensure_ascii=False)
-                os.replace(tmp_path, self.path)
+                now = datetime.now()
+                self._drop_expired_items(payload, now)
+                updated_at = now.isoformat()
+                for key, value in values.items():
+                    payload[_safe_key(str(key or ""))] = {
+                        "updated_at": updated_at,
+                        "value": value,
+                    }
+                atomic_write_text(self.path, json.dumps(payload, ensure_ascii=False))
+
+    def compact(self) -> dict[str, int]:
+        """Remove expired or malformed entries without changing fresh values."""
+        if not self.path.exists():
+            return {"removed": 0, "remaining": 0}
+        lock = get_thread_lock(self.path)
+        with lock:
+            with process_file_lock(self.path):
+                payload = self._read_unlocked()
+                removed = self._drop_expired_items(payload, datetime.now())
+                if removed:
+                    atomic_write_text(self.path, json.dumps(payload, ensure_ascii=False))
+                return {"removed": removed, "remaining": len(payload)}
 
     def delete(self, key: str) -> bool:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        lock = _get_lock(self.path)
+        lock = get_thread_lock(self.path)
         with lock:
-            with self._process_lock():
+            with process_file_lock(self.path):
                 payload = self._read_unlocked()
+                compacted = self._drop_expired_items(payload, datetime.now())
                 safe_key = _safe_key(key)
                 legacy_key = _legacy_safe_key(key)
                 removed = False
@@ -92,16 +104,13 @@ class JsonFileCache:
                     if candidate in payload:
                         payload.pop(candidate, None)
                         removed = True
-                if not removed:
+                if not removed and not compacted:
                     return False
-                tmp_path = self.path.with_suffix(f"{self.path.suffix}.{os.getpid()}.tmp")
-                with open(tmp_path, "w", encoding="utf-8") as file:
-                    json.dump(payload, file, ensure_ascii=False)
-                os.replace(tmp_path, self.path)
-                return True
+                atomic_write_text(self.path, json.dumps(payload, ensure_ascii=False))
+                return removed
 
     def _read(self) -> dict[str, Any]:
-        lock = _get_lock(self.path)
+        lock = get_thread_lock(self.path)
         with lock:
             return self._read_unlocked()
 
@@ -116,72 +125,18 @@ class JsonFileCache:
             logger.warning("读取 JSON 缓存失败，按空缓存处理: %s", self.path, exc_info=True)
             return {}
 
-    @contextmanager
-    def _process_lock(self):
-        """A small cross-process lock for read-modify-write JSON updates."""
-        lock_path = self.path.with_suffix(f"{self.path.suffix}.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        deadline = time.monotonic() + 30
-        fd = None
-        while fd is None:
-            try:
-                fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
-                payload = f"{os.getpid()}\n{time.time()}\n"
-                os.write(fd, payload.encode("utf-8"))
-            except FileExistsError:
-                if _is_stale_process_lock(lock_path):
-                    try:
-                        lock_path.unlink(missing_ok=True)
-                        continue
-                    except Exception:
-                        logger.debug("清理过期缓存锁失败: %s", lock_path, exc_info=True)
-                        pass
-                if time.monotonic() > deadline:
-                    try:
-                        if time.time() - lock_path.stat().st_mtime > 60:
-                            lock_path.unlink(missing_ok=True)
-                            continue
-                    except Exception:
-                        logger.debug("检查缓存锁超时状态失败: %s", lock_path, exc_info=True)
-                        pass
-                    raise TimeoutError(f"cache lock timeout: {lock_path}")
-                time.sleep(0.05)
+    def _drop_expired_items(self, payload: dict[str, Any], now: datetime) -> int:
+        expired = [key for key, item in payload.items() if not self._is_fresh_item(item, now, key=key)]
+        for key in expired:
+            payload.pop(key, None)
+        return len(expired)
+
+    def _is_fresh_item(self, item: Any, now: datetime, *, key: str) -> bool:
+        if not isinstance(item, dict):
+            return False
         try:
-            yield
-        finally:
-            try:
-                os.close(fd)
-            finally:
-                try:
-                    lock_path.unlink(missing_ok=True)
-                except Exception:
-                    logger.debug("释放缓存锁失败: %s", lock_path, exc_info=True)
-                    pass
-
-
-def _is_stale_process_lock(lock_path: Path, max_age_seconds: float = 60.0) -> bool:
-    try:
-        stat = lock_path.stat()
-    except OSError:
-        return True
-    try:
-        lines = lock_path.read_text(encoding="utf-8").splitlines()
-        pid = int(lines[0].strip()) if lines else None
-    except Exception:
-        logger.debug("读取缓存锁进程信息失败: %s", lock_path, exc_info=True)
-        pid = None
-    if pid and _process_exists(pid):
-        return False
-    return time.time() - stat.st_mtime > max_age_seconds or pid is not None
-
-
-def _process_exists(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    if pid == os.getpid():
-        return True
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+            updated_at = datetime.fromisoformat(item["updated_at"])
+        except Exception:
+            logger.debug("缓存条目时间戳无效: path=%s key=%s", self.path, key, exc_info=True)
+            return False
+        return now - updated_at <= self.ttl

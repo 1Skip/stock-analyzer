@@ -15,15 +15,23 @@ import logging
 _session = requests.Session()
 _session.trust_env = False
 
-from config import SPOT_CACHE_TTL_SECONDS, OFFLINE_CACHE_MAX_ENTRIES, RUNTIME_CACHE_DIR
+from config import SPOT_CACHE_TTL_SECONDS, OFFLINE_CACHE_MAX_ENTRIES
 import random
 import io
 import json
 import os
 import re
-import unicodedata
-from difflib import SequenceMatcher
 from threading import Lock
+from data.fetcher_utils import (
+    clean_stock_name as _clean_stock_name,
+    ensure_parent_dir as _ensure_parent_dir,
+    legacy_cache_path as _legacy_cache_path,
+    normalize_stock_name as _normalize_stock_name,
+    read_json_cache as _read_json_cache,
+    runtime_cache_path as _runtime_cache_path,
+    static_data_path as _static_data_path,
+    stock_name_similarity as _stock_name_similarity,
+)
 from data.providers.daily_kline_provider import (
     AkshareDailyKlineProvider,
     MootdxDailyKlineProvider,
@@ -38,6 +46,7 @@ from data.providers.sina_intraday_provider import SinaIntradayProvider
 from data.providers.sina_realtime_provider import SinaRealtimeProvider
 from data.providers.yahoo_kline_provider import YahooKlineProvider
 from data.providers.yahoo_quote_provider import YahooQuoteProvider
+from data.runtime import run_with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -48,64 +57,6 @@ try:
 except ImportError:
     AKSHARE_AVAILABLE = False
     logger.warning("AKShare 导入失败，将使用 yfinance 作为备选")
-
-
-def _runtime_cache_path(filename):
-    """返回运行缓存路径，兼容旧根目录缓存文件。"""
-    cache_dir = RUNTIME_CACHE_DIR or os.path.dirname(__file__)
-    return os.path.join(cache_dir, filename)
-
-
-def _static_data_path(filename):
-    return os.path.join(os.path.dirname(__file__), 'data', 'static', filename)
-
-
-def _legacy_cache_path(filename):
-    return os.path.join(os.path.dirname(__file__), filename)
-
-
-def _ensure_parent_dir(path):
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-
-
-def _read_json_cache(primary_file, legacy_filename=None):
-    """读取运行缓存，主路径不存在时兼容旧根目录缓存。"""
-    candidates = [primary_file]
-    if legacy_filename:
-        legacy_file = _legacy_cache_path(legacy_filename)
-        if legacy_file != primary_file:
-            candidates.append(legacy_file)
-
-    for cache_file in candidates:
-        if not os.path.exists(cache_file):
-            continue
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            return json.load(f), cache_file
-    return None, None
-
-
-def _normalize_stock_name(name):
-    """规范化股票名称，兼容全角字符、空格和大小写差异。"""
-    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', str(name))).upper()
-
-
-def _clean_stock_name(name):
-    """清理展示用股票名称，去掉异常空格并转半角。"""
-    return re.sub(r'\s+', '', unicodedata.normalize('NFKC', str(name)))
-
-
-def _stock_name_similarity(query, candidate):
-    """计算股票名称近似度，兼容相邻字颠倒等常见输入错误。"""
-    query = _normalize_stock_name(query)
-    candidate = _normalize_stock_name(candidate)
-    if not query or not candidate:
-        return 0.0
-    ratio = SequenceMatcher(None, query, candidate).ratio()
-    if len(query) >= 3 and len(candidate) >= 3 and sorted(query) == sorted(candidate):
-        ratio = max(ratio, 0.95)
-    return ratio
 
 
 class StockDataFetcher:
@@ -188,10 +139,7 @@ class StockDataFetcher:
                 return cls._spot_cache
         if AKSHARE_AVAILABLE:
             try:
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(ak.stock_zh_a_spot)
-                    cls._spot_cache = future.result(timeout=timeout)
+                cls._spot_cache = run_with_timeout(ak.stock_zh_a_spot, timeout)
                 cls._spot_cache_time = now
 
                 # 自动生成主板股票池缓存（供推荐系统使用）
@@ -1180,10 +1128,7 @@ class StockDataFetcher:
         if not AKSHARE_AVAILABLE:
             return None
         try:
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(ak.stock_zh_index_spot_em)
-                cls._index_spot_cache = future.result(timeout=8)
+            cls._index_spot_cache = run_with_timeout(ak.stock_zh_index_spot_em, 8)
             cls._index_spot_cache_time = now
             return cls._index_spot_cache
         except Exception:

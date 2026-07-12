@@ -31,6 +31,7 @@ from ui.decision_dashboard import render_decision_dashboard
 from ui.loading import make_progress_reporter
 from ui.stock_search import suggest_stock_inputs
 from quality_monitor import build_stock_data_quality_summary
+from stock_quant_evaluator import build_stock_quant_snapshot
 from data_fetcher import StockDataFetcher
 
 
@@ -389,6 +390,91 @@ def _render_data_quality_summary(data, quote, profile, extended_info):
         if warnings:
             st.markdown("**数据缺口**")
             st.markdown("\n".join(f"- {html.escape(str(item))}" for item in warnings[:8]))
+
+
+def _render_stock_quant_snapshot(data):
+    snapshot = build_stock_quant_snapshot(data)
+    if snapshot.get("status") == "empty":
+        return
+    with st.expander("个股量化评分", expanded=True):
+        if snapshot.get("status") != "ok":
+            st.info(snapshot.get("message") or "暂不具备个股量化评分条件。")
+            return
+        score = snapshot.get("score")
+        pattern = snapshot.get("similar_pattern") or {}
+        col_score, col_rating, col_hint, col_sample = st.columns(4)
+        col_score.metric("量化评分", f"{score:.1f}" if score is not None else "--")
+        col_rating.metric("强弱等级", snapshot.get("rating") or "--")
+        col_hint.metric("观察提示", snapshot.get("action_hint") or "--")
+        col_sample.metric("有效样本", pattern.get("sample_count", 0))
+
+        risk_flags = snapshot.get("risk_flags") or []
+        if risk_flags:
+            st.warning("；".join(str(item) for item in risk_flags))
+
+        dimensions = snapshot.get("dimensions") or []
+        if dimensions:
+            st.dataframe(
+                [
+                    {
+                        "维度": item.get("name"),
+                        "得分": f"{item.get('score')}/{item.get('max_score')}",
+                        "状态": item.get("level"),
+                        "依据": "；".join(item.get("notes") or []),
+                    }
+                    for item in dimensions
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+        levels = snapshot.get("key_levels") or {}
+        level_cols = st.columns(4)
+        level_cols[0].metric("支撑位", _format_optional_number(levels.get("support")))
+        level_cols[1].metric("压力位", _format_optional_number(levels.get("resistance")))
+        level_cols[2].metric("距支撑", _format_optional_number(levels.get("support_distance_pct"), "%"))
+        level_cols[3].metric("距压力", _format_optional_number(levels.get("resistance_distance_pct"), "%"))
+
+        horizons = pattern.get("horizons") or []
+        if horizons:
+            reliability = pattern.get("reliability") or {}
+            st.caption(
+                f"相似形态：{pattern.get('match_rule')}；原始匹配 {pattern.get('raw_sample_count', 0)} 次，"
+                f"按未来观察窗口去重后 {pattern.get('sample_count', 0)} 次；样本可信度："
+                f"{reliability.get('label') or '样本不足'}。"
+            )
+            st.dataframe(
+                [
+                    {
+                        "周期": row.get("horizon"),
+                        "样本数": row.get("sample_count"),
+                        "历史上涨占比": _format_optional_number(row.get("win_rate_pct"), "%"),
+                        "95%区间": _format_confidence_interval(
+                            row.get("win_rate_ci_low_pct"),
+                            row.get("win_rate_ci_high_pct"),
+                        ),
+                        "平均收益": _format_optional_number(row.get("avg_return_pct"), "%"),
+                        "最好": _format_optional_number(row.get("best_return_pct"), "%"),
+                        "最差": _format_optional_number(row.get("worst_return_pct"), "%"),
+                    }
+                    for row in horizons
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.caption("相似形态历史样本不足，暂不展示胜率参考。")
+        calibration = snapshot.get("calibration") or {}
+        st.caption(calibration.get("label") or "规则评分，尚未做收益校准。")
+        st.caption(snapshot.get("data_basis") or "基于日K指标，只读展示，不改变交易信号。")
+
+
+def _format_confidence_interval(low, high):
+    low_text = _format_optional_number(low, "%")
+    high_text = _format_optional_number(high, "%")
+    if "--" in {low_text, high_text}:
+        return "--"
+    return f"{low_text} ~ {high_text}"
 
 
 def _render_chart_header(title, values=None):
@@ -839,7 +925,19 @@ def _render_intraday_auto_refresh_fragment(symbol, market, quote):
     _render_intraday_chart_body(symbol, market, quote, intraday_data)
 
 
-def _render_analysis_results(data, signals, quote, symbol, stock_name, market, period, intraday_data=None, profile=None, extended_info=None):
+def _render_analysis_results(
+    data,
+    signals,
+    quote,
+    symbol,
+    stock_name,
+    market,
+    period,
+    intraday_data=None,
+    profile=None,
+    extended_info=None,
+    quant_data=None,
+):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
@@ -888,6 +986,7 @@ def _render_analysis_results(data, signals, quote, symbol, stock_name, market, p
     if market == "CN":
         benchmark_data = get_cached_benchmark_data("000300", period)
     render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)
+    _render_stock_quant_snapshot(quant_data if quant_data is not None else data)
     _render_data_quality_summary(data, quote, profile, extended_info)
 
     _render_stock_profile(profile)
@@ -1508,6 +1607,7 @@ def analyze_stock_page():
                 intraday_data=st.session_state.get("analyzed_intraday_data"),
                 profile=st.session_state.get("analyzed_profile"),
                 extended_info=st.session_state.get("analyzed_extended_info"),
+                quant_data=cached_data,
             )
 
     # 锚点滚动

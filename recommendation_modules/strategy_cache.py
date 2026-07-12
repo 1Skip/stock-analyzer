@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any, Callable, Protocol
 
 import pandas as pd
 
 from config import CACHE_TTL_STRATEGY_KLINE, RUNTIME_CACHE_DIR
+from data.file_lock import atomic_write_text, get_thread_lock, process_file_lock
 from data_fetcher import StockDataFetcher
 
 
@@ -22,6 +26,7 @@ THS_SOURCE = "\u540c\u82b1\u987a"
 TENCENT_SOURCE = "\u817e\u8baf\u8d22\u7ecf"
 EASTMONEY_SOURCE = "\u4e1c\u65b9\u8d22\u5bcc"
 _ORIGINAL_GET_STOCK_DATA = StockDataFetcher.get_stock_data
+logger = logging.getLogger(__name__)
 
 
 class StrategyCacheOwner(Protocol):
@@ -54,15 +59,15 @@ def strategy_kline_cache_path(cache_key: str) -> str:
 
 
 def load_strategy_kline_cache(owner: StrategyCacheOwner, cache_key: str) -> pd.DataFrame | None:
-    path = strategy_kline_cache_path(cache_key)
+    path = Path(strategy_kline_cache_path(cache_key))
     if not os.path.exists(path):
         return None
     try:
-        modified_at = pd.Timestamp.fromtimestamp(os.path.getmtime(path))
-        if pd.Timestamp.now() - modified_at > pd.Timedelta(seconds=CACHE_TTL_STRATEGY_KLINE):
-            return None
-        with open(path, "r", encoding="utf-8") as file:
-            cached = file.read()
+        with get_thread_lock(path):
+            modified_at = pd.Timestamp.fromtimestamp(os.path.getmtime(path))
+            if pd.Timestamp.now() - modified_at > pd.Timedelta(seconds=CACHE_TTL_STRATEGY_KLINE):
+                return None
+            cached = path.read_text(encoding="utf-8")
         data = pd.read_json(io.StringIO(cached), orient="split")
         if not isinstance(data.index, pd.DatetimeIndex):
             data.index = pd.to_datetime(data.index)
@@ -72,6 +77,7 @@ def load_strategy_kline_cache(owner: StrategyCacheOwner, cache_key: str) -> pd.D
         data.attrs["data_source"] = LOCAL_CACHE_SOURCE
         return data
     except Exception:
+        logger.warning("读取策略K线缓存失败: key=%s path=%s", cache_key, path, exc_info=True)
         return None
 
 
@@ -79,14 +85,41 @@ def save_strategy_kline_cache(cache_key: str, data: Any) -> None:
     try:
         if data is None or getattr(data, "empty", True):
             return
-        os.makedirs(STRATEGY_KLINE_CACHE_DIR, exist_ok=True)
-        path = strategy_kline_cache_path(cache_key)
-        tmp_path = f"{path}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as file:
-            file.write(data.to_json(orient="split", date_format="iso"))
-        os.replace(tmp_path, path)
+        path = Path(strategy_kline_cache_path(cache_key))
+        content = data.to_json(orient="split", date_format="iso")
+        with get_thread_lock(path):
+            with process_file_lock(path):
+                atomic_write_text(path, content)
     except Exception:
-        pass
+        logger.warning("写入策略K线缓存失败: key=%s", cache_key, exc_info=True)
+
+
+def prune_strategy_kline_cache(
+    cache_dir: str | os.PathLike[str] | None = None,
+    *,
+    max_age_seconds: float = CACHE_TTL_STRATEGY_KLINE,
+    now: float | None = None,
+) -> dict[str, int]:
+    """Delete strategy K-line files that are already too old to be read."""
+    root = Path(cache_dir or STRATEGY_KLINE_CACHE_DIR)
+    if not root.exists():
+        return {"removed": 0, "bytes_removed": 0, "errors": 0}
+    cutoff = (time.time() if now is None else float(now)) - max(0.0, float(max_age_seconds))
+    removed = 0
+    bytes_removed = 0
+    errors = 0
+    for path in root.glob("*.json"):
+        try:
+            stat = path.stat()
+            if stat.st_mtime >= cutoff:
+                continue
+            path.unlink()
+            removed += 1
+            bytes_removed += stat.st_size
+        except OSError:
+            errors += 1
+            logger.debug("清理过期策略K线缓存失败: %s", path, exc_info=True)
+    return {"removed": removed, "bytes_removed": bytes_removed, "errors": errors}
 
 
 def _cache_key(owner: StrategyCacheOwner, market: str, symbol: str, period: str, interval: str) -> str:
@@ -132,6 +165,7 @@ def get_strategy_stock_data(
                 owner._save_strategy_kline_cache(cache_key, data)
                 return data
         except Exception:
+            logger.debug("策略K线数据源失败: symbol=%s source=%s", symbol, source_label, exc_info=True)
             continue
 
     try:
@@ -142,7 +176,7 @@ def get_strategy_stock_data(
             owner._save_strategy_kline_cache(cache_key, data)
             return data
     except Exception:
-        pass
+        logger.debug("策略K线离线缓存失败: symbol=%s", symbol, exc_info=True)
     return None
 
 
@@ -155,6 +189,14 @@ def refresh_strategy_kline_cache(
     max_workers: int = 8,
 ) -> dict[str, int]:
     stocks = list(stocks or owner._get_strategy_popular_cn_stocks())
+    cleanup = prune_strategy_kline_cache()
+    if cleanup["removed"] or cleanup["errors"]:
+        logger.info(
+            "策略K线缓存清理完成: removed=%s bytes=%s errors=%s",
+            cleanup["removed"],
+            cleanup["bytes_removed"],
+            cleanup["errors"],
+        )
     fetcher = StockDataFetcher()
     refreshed = 0
     failed = 0

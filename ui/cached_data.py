@@ -12,6 +12,7 @@ from config import (
     CACHE_TTL_STOCK_EXTENDED_INFO,
     CACHE_TTL_STOCK_INFO,
 )
+from data.runtime import run_with_timeout
 from data.services.fundamental_service import FundamentalDataService
 from data.services.info_service import StockInfoService
 from data.services.quote_service import QuoteDataService
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 STOCK_INPUT_CACHE_VERSION = "stock-input-v4-ths-daily-kline-name-index"
 STOCK_DATA_CACHE_VERSION = "stock-data-v2-ths-daily-kline"
 INTRADAY_CACHE_VERSION = "intraday-v3-sina-chart-ths-style"
+BENCHMARK_DATA_TIMEOUT_SECONDS = 1.5
 
 
 def _cn_daily_kline_cache_bucket(now=None):
@@ -58,7 +60,7 @@ def stock_data_cache_version(market="CN"):
 
 
 @st.cache_data(ttl=CACHE_TTL_STOCK_DATA, max_entries=16, show_spinner=False)
-def get_cached_benchmark_data(symbol="000300", period="1y"):
+def get_cached_benchmark_data(symbol="000300", period="1y", timeout_seconds=BENCHMARK_DATA_TIMEOUT_SECONDS):
     """缓存A股基准指数K线，用于 Beta 等真实相对风险指标。"""
     try:
         import akshare as ak
@@ -69,12 +71,19 @@ def get_cached_benchmark_data(symbol="000300", period="1y"):
         start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
         df = None
         try:
-            df = ak.index_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date)
+            df = run_with_timeout(
+                lambda: ak.index_zh_a_hist(symbol=symbol, period="daily", start_date=start_date, end_date=end_date),
+                timeout_seconds,
+            )
         except Exception:
             logger.info("东财指数历史接口失败，改用新浪指数历史: symbol=%s", symbol, exc_info=True)
         if df is None or df.empty:
             sina_symbol = f"sh{symbol}" if str(symbol).startswith("000") else f"sz{symbol}"
-            df = ak.stock_zh_index_daily(symbol=sina_symbol)
+            try:
+                df = run_with_timeout(lambda: ak.stock_zh_index_daily(symbol=sina_symbol), timeout_seconds)
+            except Exception:
+                logger.info("新浪指数历史接口失败: symbol=%s", sina_symbol, exc_info=True)
+                df = None
             if df is not None and not df.empty and "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"], errors="coerce")
                 start_ts = pd.to_datetime(start_date)

@@ -21,6 +21,7 @@ from config import (
 from data.cache import JsonFileCache
 from data.providers.eastmoney_realtime_provider import EastmoneyRealtimeProvider
 from data.providers.tencent_realtime_provider import TencentRealtimeProvider
+from data.runtime import run_with_timeout
 from data.services.fundamental_service import FundamentalDataService
 from data.services.quote_service import QuoteDataService
 from indicator_context import (
@@ -38,6 +39,7 @@ from quality_monitor import (
     summarize_recommendation_quality,
     summarize_history_outcomes,
     summarize_manual_trade_records,
+    update_manual_trade_record,
 )
 from recommend_ranker import enrich_recommendations_with_alpha
 from short_term_learning import apply_short_term_learning, build_short_term_learning_profile
@@ -393,6 +395,29 @@ class RecommendationService:
             return {"success": False, "message": "未找到这条成交记录，可能已经删除。"}
         return {"success": True, "message": "成交记录已删除。", "record_key": key}
 
+    def update_manual_trade_record(
+        self,
+        record_key: str,
+        *,
+        buy_date: Any,
+        buy_price: Any,
+        sell_date: Any,
+        sell_price: Any,
+        is_holding: bool = False,
+        note: str = "",
+    ) -> dict[str, Any]:
+        """Update one user-entered trade outcome without rerunning strategy."""
+        return update_manual_trade_record(
+            self.manual_trade_cache,
+            record_key,
+            buy_date=buy_date,
+            buy_price=buy_price,
+            sell_date=sell_date,
+            sell_price=sell_price,
+            is_holding=is_holding,
+            note=note,
+        )
+
     def build_strategy_review(self, *, limit: int = 80) -> dict[str, Any]:
         """Build a read-only strategy review from saved T+1 plans."""
         rows = self.list_t1_plan_history(limit=limit)
@@ -702,13 +727,13 @@ class RecommendationService:
         if not recommended:
             return
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self.quote_service.get_batch_realtime_quotes,
+            quotes = run_with_timeout(
+                lambda: self.quote_service.get_batch_realtime_quotes(
                     [s["symbol"] for s in recommended if s.get("symbol")],
                     "CN",
-                )
-                quotes = future.result(timeout=3)
+                ),
+                3,
+            )
             for item in recommended:
                 quote = quotes.get(item.get("symbol")) if isinstance(quotes, dict) else None
                 if _valid_quote_for_display(quote):

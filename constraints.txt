@@ -1,0 +1,18 @@
+# Direct dependency versions verified in the project virtual environment.
+streamlit==1.57.0
+plotly==6.7.0
+yfinance==1.3.0
+pandas==3.0.3
+numpy==2.4.4
+requests==2.34.0
+akshare==1.18.64
+pywencai==0.13.1
+beautifulsoup4==4.14.3
+MyTT==2.9.3
+litellm==1.83.7
+matplotlib==3.10.9
+schedule==1.2.2
+pytest==9.0.3
+pytest-cov==7.1.0
+pytest-mock==3.15.1
+ruff==0.15.16

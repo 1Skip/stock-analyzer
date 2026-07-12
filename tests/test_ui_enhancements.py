@@ -96,6 +96,25 @@ def test_analyze_page_uses_single_unified_target_header():
     assert "analyzed_target = _get_analyzed_target()" in source
 
 
+def test_analyze_page_renders_stock_quant_snapshot_after_decision_dashboard():
+    from pathlib import Path
+
+    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+
+    assert "from stock_quant_evaluator import build_stock_quant_snapshot" in source
+    assert "def _render_stock_quant_snapshot" in source
+    assert "个股量化评分" in source
+    assert "quant_data=cached_data" in source
+    assert "_render_stock_quant_snapshot(quant_data if quant_data is not None else data)" in source
+    decision_index = source.index("render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)")
+    quant_index = source.index(
+        "_render_stock_quant_snapshot(quant_data if quant_data is not None else data)",
+        decision_index,
+    )
+    quality_index = source.index("_render_data_quality_summary(data, quote, profile, extended_info)", quant_index)
+    assert decision_index < quant_index < quality_index
+
+
 def test_analyze_page_hides_stale_result_when_input_changes():
     from pathlib import Path
 
@@ -643,14 +662,30 @@ def test_recommend_page_manual_trade_form_can_use_history_plans():
     assert "_queue_manual_trade_search(plan_options)" in source
     assert "service.evaluate_manual_trade_success_rate(limit=200)" in source
     assert "service.evaluate_manual_trade_success_rate(\n            strategy=strategy" not in source
-    assert "删除手工成交记录" in source
     assert "service.delete_manual_trade_record" in source
+    assert "def _manual_trade_record_expander_title" in source
+    assert "def _render_manual_trade_record_detail" in source
+    assert "with st.expander(_manual_trade_record_expander_title(row), expanded=False)" in source
+    assert "def _render_manual_trade_edit_form" in source
+    assert "service.update_manual_trade_record" in source
     assert 'st.button("删除"' in source
     assert "st.rerun()" in source
+    edit_block = source.split("def _render_manual_trade_edit_form", 1)[1].split("def _parse_manual_trade_date", 1)[0]
+    assert edit_block.index('"继续持有，暂不填写卖出信息"') < edit_block.index(
+        'with st.form(f"manual_trade_edit_form_{safe_key}"'
+    )
+    edit_form_block = edit_block.split('with st.form(f"manual_trade_edit_form_{safe_key}"', 1)[1]
+    assert '"继续持有，暂不填写卖出信息"' not in edit_form_block
     form_block = source.split('with st.form("manual_trade_record_form"', 1)[1]
     assert 'st.checkbox("还在持有' not in form_block
     assert 'key="manual_trade_is_holding"' in source
-    assert 'format="%.2f"' in source
+    assert source.count('format="%.3f"') >= 4
+    assert source.count("step=0.001") >= 4
+    assert source.count("min_value=0.001") >= 4
+    assert '"买入价": _format_manual_trade_price(row.get("buy_price"))' in source
+    assert '"卖出价": _format_manual_trade_price(row.get("sell_price"))' in source
+    assert 'f"{number:.3f}"' in source
+    assert 'format="%.2f"' not in form_block
     assert 'format="%.4f"' not in source
     assert "没有识别到这只股票" in source
     assert "匹配到多条推荐记录" not in source
@@ -1387,13 +1422,45 @@ def test_decision_dashboard_renders_before_profile_sections():
     assert body.index("render_decision_dashboard(") < body.index("_render_stock_profile(profile)")
 
 
-def test_benchmark_data_has_sina_fallback_for_beta():
-    from pathlib import Path
+def test_benchmark_data_has_sina_fallback_for_beta(monkeypatch):
+    import sys
+    from types import SimpleNamespace
 
-    source = Path("ui/cached_data.py").read_text(encoding="utf-8")
+    import pandas as pd
+    from ui import cached_data
 
-    assert "ak.index_zh_a_hist" in source
-    assert "ak.stock_zh_index_daily" in source
+    calls = []
+
+    def primary_source(**kwargs):
+        raise TimeoutError("primary source timeout")
+
+    def sina_source(**kwargs):
+        return pd.DataFrame({
+            "date": pd.date_range("2026-01-01", periods=30, freq="B"),
+            "open": range(30),
+            "high": range(1, 31),
+            "low": range(30),
+            "close": range(1, 31),
+            "volume": range(100, 130),
+        })
+
+    def fake_run(func, timeout_seconds):
+        calls.append(timeout_seconds)
+        return func()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "akshare",
+        SimpleNamespace(index_zh_a_hist=primary_source, stock_zh_index_daily=sina_source),
+    )
+    monkeypatch.setattr(cached_data, "run_with_timeout", fake_run)
+
+    result = cached_data.get_cached_benchmark_data("000300", "1y", timeout_seconds=1.5)
+
+    assert result is not None
+    assert not result.empty
+    assert result.index.name == "date"
+    assert calls == [1.5, 1.5]
 
 
 def test_agent_card_html_is_not_markdown_code_block():

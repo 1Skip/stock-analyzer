@@ -25,7 +25,13 @@ fi
 
 if [[ -z "${PYTHON_CMD}" ]]; then
   echo "[ERROR] Python was not found."
-  echo "Please install Python 3.10 or newer:"
+  echo "Please install Python 3.11 or newer:"
+  echo "https://www.python.org/downloads/"
+  exit 1
+fi
+
+if ! "${PYTHON_CMD}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "[ERROR] Python 3.11 or newer is required."
   echo "https://www.python.org/downloads/"
   exit 1
 fi
@@ -37,9 +43,15 @@ fi
 
 PY=".venv/bin/python"
 
+if ! "${PY}" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+  echo "[ERROR] The existing .venv uses Python older than 3.11."
+  echo "Remove .venv and run start.sh again with Python 3.11 or newer."
+  exit 1
+fi
+
 echo "[2/3] Installing dependencies. First run may take a few minutes..."
 "${PY}" -m pip install --upgrade pip
-"${PY}" -m pip install -r requirements.txt
+"${PY}" -m pip install -r requirements.txt -c constraints.txt
 
 echo
 echo "[3/3] Starting Streamlit..."

@@ -27,7 +27,16 @@ if not defined PYTHON_CMD (
 
 if not defined PYTHON_CMD (
     echo [ERROR] Python was not found.
-    echo Please install Python 3.10 or newer:
+    echo Please install Python 3.11 or newer:
+    echo https://www.python.org/downloads/
+    echo.
+    pause
+    exit /b 1
+)
+
+%PYTHON_CMD% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] Python 3.11 or newer is required.
     echo https://www.python.org/downloads/
     echo.
     pause
@@ -46,9 +55,18 @@ if not exist ".venv\Scripts\python.exe" (
 
 set "PY=.venv\Scripts\python.exe"
 
+"%PY%" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] The existing .venv uses Python older than 3.11.
+    echo Remove .venv and run start.bat again with Python 3.11 or newer.
+    echo.
+    pause
+    exit /b 1
+)
+
 echo [2/3] Installing dependencies. First run may take a few minutes...
 "%PY%" -m pip install --upgrade pip
-"%PY%" -m pip install -r requirements.txt
+"%PY%" -m pip install -r requirements.txt -c constraints.txt
 if errorlevel 1 (
     echo.
     echo [ERROR] Dependency installation failed.

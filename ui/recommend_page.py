@@ -201,24 +201,118 @@ def _render_manual_trade_review(trade_review, service=None):
                 width="stretch",
                 hide_index=True,
             )
-        records = trade_review.get("records") or []
-        if records:
-            st.dataframe(_manual_trade_record_rows(records[:50]), width="stretch", hide_index=True)
-            if service is not None:
-                with st.expander("删除手工成交记录", expanded=False):
-                    for index, row in enumerate(records[:50]):
-                        col_info, col_action = st.columns([5, 1])
-                        with col_info:
-                            st.caption(_manual_trade_delete_label(row))
-                        with col_action:
-                            if st.button("删除", key=f"manual_trade_delete_{row.get('record_key') or index}"):
-                                result = service.delete_manual_trade_record(row.get("record_key"))
-                                if result.get("success"):
-                                    st.success(result.get("message") or "成交记录已删除。")
-                                    st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
-                                    st.rerun()
-                                else:
-                                    st.error(result.get("message") or "删除失败。")
+    records = trade_review.get("records") or []
+    if records:
+        st.markdown("#### 成交记录")
+        for index, row in enumerate(records[:50]):
+            with st.expander(_manual_trade_record_expander_title(row), expanded=False):
+                _render_manual_trade_record_detail(row)
+                if service is not None:
+                    _render_manual_trade_edit_form(row, service, index)
+                    if st.button("删除", key=f"manual_trade_delete_{row.get('record_key') or index}"):
+                        result = service.delete_manual_trade_record(row.get("record_key"))
+                        if result.get("success"):
+                            st.success(result.get("message") or "成交记录已删除。")
+                            st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
+                            st.rerun()
+                        else:
+                            st.error(result.get("message") or "删除失败。")
+
+
+def _render_manual_trade_record_detail(row):
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("策略", row.get("strategy") or "--")
+    col2.metric("板块", row.get("sector") or "--")
+    col3.metric("收益率", _format_return(row.get("return_pct")))
+    col4.metric("状态", "持有中" if row.get("is_holding") else "已卖出")
+    st.dataframe([_manual_trade_record_rows([row])[0]], width="stretch", hide_index=True)
+
+
+def _render_manual_trade_edit_form(row, service, index):
+    record_key = row.get("record_key") or str(index)
+    safe_key = f"{_normalize_manual_trade_text(record_key) or 'record'}_{index}"
+    is_holding_key = f"manual_trade_edit_holding_{safe_key}"
+    default_holding = bool(row.get("is_holding"))
+    if is_holding_key not in st.session_state:
+        st.session_state[is_holding_key] = default_holding
+    is_holding = st.checkbox(
+        "继续持有，暂不填写卖出信息",
+        key=is_holding_key,
+    )
+    with st.form(f"manual_trade_edit_form_{safe_key}", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            buy_date = st.date_input(
+                "买入时间",
+                value=_parse_manual_trade_date(row.get("buy_date")),
+                key=f"manual_trade_edit_buy_date_{safe_key}",
+            )
+            buy_price = st.number_input(
+                "买入价位",
+                min_value=0.001,
+                value=_manual_trade_price_value(row.get("buy_price")),
+                step=0.001,
+                format="%.3f",
+                key=f"manual_trade_edit_buy_price_{safe_key}",
+            )
+            note = st.text_input(
+                "备注",
+                value=str(row.get("note") or ""),
+                key=f"manual_trade_edit_note_{safe_key}",
+            )
+        with col2:
+            sell_date = st.date_input(
+                "卖出时间",
+                value=_parse_manual_trade_date(row.get("sell_date")),
+                disabled=is_holding,
+                key=f"manual_trade_edit_sell_date_{safe_key}",
+            )
+            sell_price = st.number_input(
+                "卖出价位",
+                min_value=0.001,
+                value=_manual_trade_price_value(row.get("sell_price")),
+                step=0.001,
+                format="%.3f",
+                disabled=is_holding,
+                key=f"manual_trade_edit_sell_price_{safe_key}",
+            )
+        submitted = st.form_submit_button("保存修改")
+    if submitted:
+        result = service.update_manual_trade_record(
+            row.get("record_key"),
+            buy_date=buy_date,
+            buy_price=buy_price,
+            sell_date=None if is_holding else sell_date,
+            sell_price=None if is_holding else sell_price,
+            is_holding=is_holding,
+            note=note,
+        )
+        if result.get("success"):
+            st.success(result.get("message") or "成交记录已更新。")
+            st.session_state.rec_manual_trade_review = service.evaluate_manual_trade_success_rate(limit=200)
+            st.rerun()
+        else:
+            st.error(result.get("message") or "修改失败。")
+
+
+def _parse_manual_trade_date(value):
+    text = str(value or "").strip()[:10]
+    if not text:
+        return date.today()
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return date.today()
+
+
+def _manual_trade_price_value(value):
+    try:
+        number = float(value)
+        if number > 0:
+            return round(number, 3)
+    except (TypeError, ValueError):
+        pass
+    return 0.001
 
 
 def _render_manual_trade_form(current_plan, service, strategy, sector, history_rows=None):
@@ -252,15 +346,15 @@ def _render_manual_trade_form(current_plan, service, strategy, sector, history_r
             col1, col2 = st.columns(2)
             with col1:
                 buy_date = st.date_input("买入时间", value=date.today())
-                buy_price = st.number_input("买入价位", min_value=0.01, value=0.01, step=0.01, format="%.2f")
+                buy_price = st.number_input("买入价位", min_value=0.001, value=0.001, step=0.001, format="%.3f")
             with col2:
                 sell_date = st.date_input("卖出时间", value=date.today(), disabled=is_holding)
                 sell_price = st.number_input(
                     "卖出价位",
-                    min_value=0.01,
-                    value=0.01,
-                    step=0.01,
-                    format="%.2f",
+                    min_value=0.001,
+                    value=0.001,
+                    step=0.001,
+                    format="%.3f",
                     disabled=is_holding,
             )
             submitted = st.form_submit_button("保存成交结果")
@@ -322,9 +416,9 @@ def _manual_trade_record_rows(records):
             "代码": row.get("symbol"),
             "名称": row.get("name"),
             "买入时间": row.get("buy_date"),
-            "买入价": row.get("buy_price"),
+            "买入价": _format_manual_trade_price(row.get("buy_price")),
             "卖出时间": row.get("sell_date"),
-            "卖出价": row.get("sell_price"),
+            "卖出价": _format_manual_trade_price(row.get("sell_price")),
             "收益率": _format_return(row.get("return_pct")),
             "结果": "持有中" if row.get("is_holding") else "成功" if row.get("is_success") else "失败",
         }
@@ -332,13 +426,24 @@ def _manual_trade_record_rows(records):
     ]
 
 
-def _manual_trade_delete_label(row):
+def _manual_trade_record_expander_title(row):
     result = "持有中" if row.get("is_holding") else "成功" if row.get("is_success") else "失败"
     return (
         f"{row.get('symbol', '--')} {row.get('name', '--')}｜"
-        f"买入 {row.get('buy_date', '--')} {row.get('buy_price', '--')}｜"
-        f"卖出 {row.get('sell_date') or '--'} {row.get('sell_price') or '--'}｜{result}"
+        f"买入 {row.get('buy_date', '--')} {_format_manual_trade_price(row.get('buy_price'))}｜"
+        f"卖出 {row.get('sell_date') or '--'} {_format_manual_trade_price(row.get('sell_price'))}｜"
+        f"{result}｜收益 {_format_return(row.get('return_pct'))}"
     )
+
+
+def _format_manual_trade_price(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    if number <= 0:
+        return "--"
+    return f"{number:.3f}"
 
 
 def _queue_manual_trade_search(plan_options):
@@ -534,13 +639,21 @@ def _render_short_term_diagnostics(diagnostics):
     if not diagnostics:
         return
     st.markdown("**筛选诊断**")
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("热门板块", diagnostics.get("hot_boards", 0))
-    col2.metric("候选池", diagnostics.get("raw_pool", 0))
-    col3.metric("已分析", diagnostics.get("analyzed", 0))
-    col4.metric("技术通过", diagnostics.get("technical_passed", 0))
     pattern_passed = diagnostics.get("pattern_passed")
-    col5.metric("最终命中", diagnostics.get("result_count", 0))
+    if diagnostics.get("pool_mode") == "主板纯技术池":
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("候选池", diagnostics.get("raw_pool", 0))
+        col2.metric("已分析", diagnostics.get("analyzed", 0))
+        col3.metric("技术通过", diagnostics.get("technical_passed", 0))
+        col4.metric("最终命中", diagnostics.get("result_count", 0))
+        st.caption("经典版使用主板纯技术池，不检查热门板块、基本面、财报、资金流或消息面。")
+    else:
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("热门板块", diagnostics.get("hot_boards", 0))
+        col2.metric("候选池", diagnostics.get("raw_pool", 0))
+        col3.metric("已分析", diagnostics.get("analyzed", 0))
+        col4.metric("技术通过", diagnostics.get("technical_passed", 0))
+        col5.metric("最终命中", diagnostics.get("result_count", 0))
     if pattern_passed is not None:
         st.caption(f"全部短线形态通过：{pattern_passed} 只。")
     failures = diagnostics.get("failures") or {}
@@ -736,7 +849,7 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
             st.info("激进突破型采用全市场沪深主板 + 创业板扫描，若暂无结果，上方诊断会显示是技术突破不足还是市值过滤未通过。")
         elif "短线经典版" in strategy_name:
             _render_short_term_diagnostics(diagnostics or {})
-            st.info("短线经典版先看热门板块候选池与成交量、MACD、RSI、KDJ、BOLL，不检查二板以上、回调天数、回调幅度、放量反包/涨停板四项形态硬过滤。上方诊断会显示具体卡点。")
+            st.info("短线经典版回到原始纯技术短线：只看沪深主板候选池与成交量、MACD、RSI、KDJ、BOLL，不检查热门板块、基本面、财报、资金流、消息面和四项形态硬过滤。上方诊断会显示具体卡点。")
         elif "短线" in strategy_name:
             _render_short_term_diagnostics(diagnostics or {})
             st.info("短线先看热门板块候选池与成交量、MACD、RSI、KDJ、BOLL；全部还会检查二板以上、回调天数、回调幅度、放量反包/涨停板。上方诊断会显示具体卡点。")
@@ -903,7 +1016,7 @@ def recommended_stocks_page():
     if strategy == "短线":
         st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选沪深主板短线候选；创业板、科创板、北交所不进入推荐池。")
     elif strategy == "短线经典版":
-        st.info("经典短线：沿用短线热门板块候选池与成交量、MACD、RSI、KDJ、BOLL 技术过滤，不启用二板以上、2-8天回调、回撤不超50%、放量反包/涨停板四项形态硬过滤。")
+        st.info("经典短线：回到原始纯技术口径，只扫描沪深主板候选池，使用成交量、MACD、RSI、KDJ、BOLL 技术过滤，不启用热门板块、基本面、财报、资金流、消息面和四项形态硬过滤。")
     elif strategy == "激进突破型":
         st.info("纯量价突破策略：市值300亿以下、MA5>MA10>MA20、收盘价创20日新高、成交量大于前5日均量1.2倍；范围为沪深主板+创业板，排除科创板/北交所/ST。")
     else:

@@ -106,17 +106,22 @@ class StockInfoService:
             "source": "layered_cache",
         }
 
-        news = self.research_cache.get(f"{base_key}:news:v1")
-        market_news = self.research_cache.get(f"{base_key}:market_news:v1")
+        research_keys = {
+            field: f"{base_key}:{field}:v1"
+            for field in ("news", "market_news", "research", "dividend", "sector_attribution")
+        }
+        research_values = self.research_cache.get_many(research_keys.values())
+        news = research_values.get(research_keys["news"])
+        market_news = research_values.get(research_keys["market_news"])
         if isinstance(news, list):
             payload["news"] = news
         if isinstance(market_news, list):
             payload["market_news"] = market_news
 
         if include_deep_layers:
-            research = self.research_cache.get(f"{base_key}:research:v1")
-            dividend = self.research_cache.get(f"{base_key}:dividend:v1")
-            sector_attribution = self.research_cache.get(f"{base_key}:sector_attribution:v1")
+            research = research_values.get(research_keys["research"])
+            dividend = research_values.get(research_keys["dividend"])
+            sector_attribution = research_values.get(research_keys["sector_attribution"])
             risk_events = self.risk_cache.get(f"{base_key}:risk_events:v1")
             if not isinstance(risk_events, dict):
                 return None
@@ -137,15 +142,18 @@ class StockInfoService:
             self.financial_cache.set(f"{base_key}:financial:v1", payload.get("financial"))
         if self._is_usable_layer(payload.get("fund_flow")):
             self.fund_flow_cache.set(f"{base_key}:fund_flow:v1", payload.get("fund_flow"))
+        research_values = {}
         if isinstance(payload.get("news"), list):
-            self.research_cache.set(f"{base_key}:news:v1", payload.get("news"))
+            research_values[f"{base_key}:news:v1"] = payload.get("news")
         if isinstance(payload.get("market_news"), list):
-            self.research_cache.set(f"{base_key}:market_news:v1", payload.get("market_news"))
+            research_values[f"{base_key}:market_news:v1"] = payload.get("market_news")
         if not include_deep_layers:
+            self.research_cache.set_many(research_values)
             return
         for field in ("research", "dividend", "sector_attribution"):
             if self._is_usable_optional_layer(field, payload.get(field)):
-                self.research_cache.set(f"{base_key}:{field}:v1", payload.get(field))
+                research_values[f"{base_key}:{field}:v1"] = payload.get(field)
+        self.research_cache.set_many(research_values)
         if isinstance(payload.get("risk_events"), dict):
             self.risk_cache.set(f"{base_key}:risk_events:v1", payload.get("risk_events"))
 

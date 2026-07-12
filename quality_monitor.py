@@ -196,7 +196,7 @@ def save_manual_trade_record(
         return {"success": False, "message": "买入价必须大于 0。"}
     if not buy_date_text:
         return {"success": False, "message": "买入时间不能为空。"}
-    buy = round(buy, 2)
+    buy = round(buy, 3)
 
     sell = None
     sell_date_text = None
@@ -210,7 +210,7 @@ def save_manual_trade_record(
             return {"success": False, "message": "卖出时间不能为空；如果还没卖出，请勾选继续持有。"}
         if sell_date_text < buy_date_text:
             return {"success": False, "message": "卖出时间不能早于买入时间。"}
-        sell = round(sell, 2)
+        sell = round(sell, 3)
         return_pct = round((sell / buy - 1) * 100, 2)
 
     record = {
@@ -241,6 +241,67 @@ def save_manual_trade_record(
     key = _manual_trade_key(record)
     trade_cache.set(key, record)
     return {"success": True, "message": "成交结果已记录。", "record": record, "record_key": key}
+
+
+def update_manual_trade_record(
+    trade_cache: Any,
+    record_key: str,
+    *,
+    buy_date: Any,
+    buy_price: Any,
+    sell_date: Any,
+    sell_price: Any,
+    is_holding: bool = False,
+    note: str = "",
+) -> dict[str, Any]:
+    """Update an existing user-entered trade outcome in place."""
+    key = str(record_key or "").strip()
+    if not key:
+        return {"success": False, "message": "缺少记录标识，无法修改。"}
+    payload = _read_cache_payload(trade_cache)
+    item = payload.get(key)
+    record = item.get("value") if isinstance(item, dict) else None
+    if not isinstance(record, dict):
+        return {"success": False, "message": "未找到这条成交记录，可能已经删除。"}
+
+    buy = _safe_float(buy_price)
+    buy_date_text = _date_text(buy_date)
+    if buy is None or buy <= 0:
+        return {"success": False, "message": "买入价必须大于 0。"}
+    if not buy_date_text:
+        return {"success": False, "message": "买入时间不能为空。"}
+    buy = round(buy, 3)
+
+    sell = None
+    sell_date_text = None
+    return_pct = None
+    if not is_holding:
+        sell = _safe_float(sell_price)
+        sell_date_text = _date_text(sell_date)
+        if sell is None or sell <= 0:
+            return {"success": False, "message": "卖出价必须大于 0；如果还没卖出，请勾选继续持有。"}
+        if not sell_date_text:
+            return {"success": False, "message": "卖出时间不能为空；如果还没卖出，请勾选继续持有。"}
+        if sell_date_text < buy_date_text:
+            return {"success": False, "message": "卖出时间不能早于买入时间。"}
+        sell = round(sell, 3)
+        return_pct = round((sell / buy - 1) * 100, 2)
+
+    updated = dict(record)
+    updated.update({
+        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "buy_date": buy_date_text,
+        "buy_price": buy,
+        "sell_date": sell_date_text,
+        "sell_price": sell,
+        "return_pct": return_pct,
+        "is_success": return_pct > 0 if return_pct is not None else None,
+        "is_holding": bool(is_holding),
+        "status": "holding" if is_holding else "closed",
+        "note": str(note or "").strip()[:200],
+    })
+    trade_cache.set(key, updated)
+    return {"success": True, "message": "成交记录已更新。", "record": updated, "record_key": key}
 
 
 def list_manual_trade_records(

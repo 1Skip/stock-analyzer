@@ -463,6 +463,9 @@ class TestGetHotSectorsCN:
             raise Exception("fail")
 
         monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_html", lambda limit=30: [])
 
         result = recommender.get_hot_sectors_cn(limit=5)
 
@@ -506,6 +509,12 @@ class TestGetHotSectorsCN:
             lambda *args, **kwargs: exec('raise Exception("network down")'),
         )
         monkeypatch.setattr('stock_recommendation.ak', None)
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_ths_html", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_akshare_em", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_sina_industry", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_sectors_akshare_ths", lambda limit=30: [])
 
         result = recommender.get_hot_sectors_cn(limit=5)
 
@@ -598,6 +607,9 @@ class TestGetHotConceptsCN:
             raise Exception("fail")
 
         monkeypatch.setattr('stock_recommendation.hot_stocks._SINA_SESSION.get', fake_get)
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_html", lambda limit=30: [])
 
         result = recommender.get_hot_concepts_cn(limit=5)
 
@@ -613,6 +625,11 @@ class TestGetHotConceptsCN:
             lambda *args, **kwargs: exec('raise Exception("network down")'),
         )
         monkeypatch.setattr('stock_recommendation.ak', None)
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_hotlist", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_wencai", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_ths_html", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_akshare_em", lambda limit=30: [])
+        monkeypatch.setattr(recommender, "_get_hot_concepts_akshare_ths", lambda limit=30: [])
 
         result = recommender.get_hot_concepts_cn(limit=5)
 
@@ -1179,22 +1196,93 @@ class TestGetShortTermRecommendations:
         failed['strategy_checks']['回调天数'] = True
         failed['strategy_checks']['回调幅度'] = False
         failed['strategy_checks']['放量反包/涨停板'] = True
+        calls = []
+
+        def analyze(self, code, market='CN', include_context=True):
+            calls.append((code, market, include_context))
+            return failed.copy()
+
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',
-                            lambda self, code, market='CN': failed.copy())
+                            analyze)
         monkeypatch.setattr(
-            'stock_recommendation.StockRecommender._get_short_term_hot_board_rows',
-            lambda self, limit=6: [{'name': 'PCB', 'leader': ''}],
-        )
-        monkeypatch.setattr(
-            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
-            lambda self, board, board_code=None, board_category=None: [{'code': '002938', 'name': '鹏鼎控股'}],
+            'stock_recommendation.StockRecommender._get_main_board_popular_cn_stocks',
+            lambda self, limit=None: [{'code': '002938', 'name': '鹏鼎控股'}],
         )
 
         result = recommender.get_classic_short_term_recommendations(num_stocks=5)
 
+        assert calls == [('002938', 'CN', False)]
         assert [item['symbol'] for item in result] == ['002938']
         assert result[0]['strategy'] == '短线经典版'
-        assert result[0]['strategy_checks']['形态过滤'] == '未启用'
+        assert "形态过滤" not in result[0]['strategy_checks']
+        assert "形态过滤" not in result[0].get('strategy_details', {})
+        assert "热门板块" not in result[0]['strategy_checks']
+
+    def test_classic_short_term_uses_main_board_technical_pool_not_hot_board_pool(self, recommender, monkeypatch):
+        calls = []
+        analysis = _mock_short_analysis('002938')
+        analysis['strategy_checks'].update({
+            '基本面/估值可用': True,
+            '财报/盈利确认': True,
+            '资金流确认': True,
+            '消息面催化': True,
+        })
+
+        def analyze(self, code, market='CN', include_context=True):
+            calls.append((code, include_context))
+            clean = analysis.copy()
+            clean['strategy_checks'] = {
+                key: value for key, value in clean['strategy_checks'].items()
+                if key not in ('基本面/估值可用', '财报/盈利确认', '资金流确认', '消息面催化')
+            }
+            clean['strategy_details'] = {}
+            return clean
+
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_main_board_popular_cn_stocks',
+            lambda self, limit=None: [{'code': '002938', 'name': '鹏鼎控股'}],
+        )
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_short_term_all_candidate_stocks',
+            lambda self, limit=None: (_ for _ in ()).throw(AssertionError("经典版不应读取热门板块候选池")),
+        )
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', analyze)
+
+        result = recommender.get_classic_short_term_recommendations(num_stocks=5)
+
+        assert calls == [('002938', False)]
+        assert [item['symbol'] for item in result] == ['002938']
+        assert result[0]['sector'] == '深市主板'
+        assert "形态过滤" not in result[0]['strategy_checks']
+        assert "形态过滤" not in result[0].get('strategy_details', {})
+        assert "热门板块" not in result[0]['strategy_checks']
+        assert "基本面/估值可用" not in result[0]['strategy_checks']
+        assert "财报/盈利确认" not in result[0]['strategy_checks']
+        assert "资金流确认" not in result[0]['strategy_checks']
+        assert "消息面催化" not in result[0]['strategy_checks']
+        diagnostics = recommender.last_short_term_diagnostics
+        assert diagnostics["pool_mode"] == "主板纯技术池"
+        assert diagnostics["hot_boards"] == 0
+
+    def test_classic_short_term_candidate_pool_balances_markets_and_excludes_risk_names(
+        self,
+        recommender,
+        monkeypatch,
+    ):
+        stocks = [
+            {'code': '600001', 'name': '沪市一'},
+            {'code': '600002', 'name': '*ST沪市'},
+            {'code': '600003', 'name': '沪市三'},
+            {'code': '000001', 'name': '深市一'},
+            {'code': '000002', 'name': '退市样本'},
+            {'code': '000003', 'name': '深市三'},
+        ]
+        monkeypatch.setattr(recommender, '_get_main_board_popular_cn_stocks', lambda limit=None: stocks)
+
+        result = recommender._get_classic_short_term_candidate_stocks(limit=4)
+
+        assert [item['code'] for item in result] == ['600001', '000001', '600003', '000003']
+        assert all('ST' not in item['name'].upper() and '退' not in item['name'] for item in result)
 
     def test_short_term_all_pattern_passes_after_surge_pullback_and_volume_reversal(self, recommender):
         dates = pd.date_range("2026-01-01", periods=16, freq="B")
@@ -2263,7 +2351,7 @@ class TestGetSectorShortTerm:
             lambda self, board_name, board_code=None, board_category=None: [],
         )
         result = recommender.get_sector_short_term_recommendations('苹果概念', num_stocks=5)
-        assert analyzed == ['300750', '000001', '600519']
+        assert sorted(analyzed) == ['000001', '300750', '600519']
         assert all(not r['symbol'].startswith(('688', '8')) for r in result)
 
 

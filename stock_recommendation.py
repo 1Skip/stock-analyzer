@@ -10,8 +10,6 @@ import json
 import os
 import subprocess
 import sys
-import math
-import io
 import inspect
 import logging
 from urllib.parse import quote
@@ -37,7 +35,18 @@ from data.providers.akshare_provider import _find_profile_index_item
 from data.runtime import run_with_timeout
 from data.cache import JsonFileCache
 from recommendation_modules import auxiliary_data, board_rankings, hot_stocks, market_rankings, strategy_cache
-from config import CACHE_TTL_STRATEGY_KLINE, RUNTIME_CACHE_DIR
+from recommendation_modules.catalyst_helpers import (
+    classify_catalyst_item as _classify_catalyst_item,
+    recent_items as _recent_items,
+)
+from recommendation_modules.runtime_helpers import (
+    emit_progress as _emit_progress,
+    has_usable_extended_layer as _has_usable_extended_layer,
+    log_short_term_skip as _log_short_term_skip,
+    metric_value as _metric_value,
+    safe_extended_info_failure as _safe_extended_info_failure,
+    safe_float as _safe_float,
+)
 
 # 板块股票定义 - 短线龙头股
 # 评分权重配置
@@ -58,15 +67,6 @@ _SHORT_TERM_WEIGHTS = {
 }
 
 MAX_STRATEGY_MARKET_CAP = 30_000_000_000
-STRATEGY_KLINE_CACHE_DIR = os.path.join(RUNTIME_CACHE_DIR, "strategy_kline_daily")
-POSITIVE_CATALYST_KEYWORDS = [
-    "政策", "订单", "业绩", "回购", "增持", "合同", "机构覆盖",
-]
-RISK_CATALYST_KEYWORDS = [
-    "减持", "处罚", "诉讼", "亏损", "退市风险",
-]
-
-
 SHORT_TERM_ALLOWED_SECTORS = ("\u82f9\u679c\u6982\u5ff5", "\u7279\u65af\u62c9\u6982\u5ff5")
 SHORT_TERM_BOARD_CONSTITUENT_TIMEOUT_SECONDS = 3
 BOARD_RANKING_FETCH_TIMEOUT_SECONDS = 4
@@ -154,128 +154,6 @@ def _score_rating(score):
     if score >= 35:
         return "偏空信号"
     return "偏空信号（强）"
-
-
-def _safe_float(value):
-    try:
-        if value is None or value == "":
-            return None
-        number = float(value)
-        if pd.isna(number):
-            return None
-        return number
-    except (TypeError, ValueError):
-        return None
-
-
-def _metric_value(metrics, aliases):
-    for alias in aliases:
-        for key, value in (metrics or {}).items():
-            if alias == str(key) or alias in str(key):
-                numeric = _safe_float(value)
-                if numeric is not None:
-                    return numeric
-    return None
-
-
-def _log_short_term_skip(symbol, reason, **details):
-    logger.debug(
-        "短线分析跳过 symbol=%s reason=%s details=%s",
-        symbol,
-        reason,
-        {key: value for key, value in details.items() if value is not None},
-    )
-
-
-def _recent_items(items, days=2):
-    if not items:
-        return []
-    cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=days)
-    recent = []
-    for item in items:
-        raw_date = item.get("date") or item.get("announcement_date") or item.get("time")
-        parsed = pd.to_datetime(raw_date, errors="coerce")
-        if pd.notna(parsed) and parsed.normalize() >= cutoff:
-            recent.append(item)
-    return recent
-
-
-def _classify_catalyst_item(item):
-    text = " ".join(str(item.get(key) or "") for key in ("title", "summary", "type", "rating"))
-    risk_hits = [keyword for keyword in RISK_CATALYST_KEYWORDS if keyword in text]
-    positive_hits = [keyword for keyword in POSITIVE_CATALYST_KEYWORDS if keyword in text]
-    if risk_hits:
-        return "风险", risk_hits
-    if positive_hits:
-        return "偏利好", positive_hits
-    return "中性", []
-
-
-def _format_catalyst_item(item):
-    title = str(item.get("title") or item.get("summary") or "").strip()
-    if not title:
-        return ""
-    date = str(item.get("date") or item.get("announcement_date") or item.get("time") or "").strip()
-    source = str(item.get("source") or item.get("org") or item.get("type") or "").strip()
-    sentiment, keywords = _classify_catalyst_item(item)
-    prefix = f"{date} " if date else ""
-    suffix_parts = [part for part in [source, sentiment, "/".join(keywords)] if part]
-    suffix = f"（{'，'.join(suffix_parts)}）" if suffix_parts else ""
-    return f"{prefix}{title}{suffix}"
-
-
-def _emit_progress(progress_callback, stage, percent, **metrics):
-    if not callable(progress_callback):
-        return
-    try:
-        progress_callback(stage, percent, metrics)
-    except Exception:
-        pass
-
-
-def _safe_extended_info_failure(symbol, reason):
-    return {
-        "symbol": symbol,
-        "financial": {},
-        "fund_flow": {},
-        "news": [],
-        "market_news": [],
-        "research": {"reports": [], "eps_consensus": {}},
-        "risk_events": {"lhb": {}, "restricted_release": [], "announcements": []},
-        "status": "source_failed",
-        "reason": reason,
-    }
-
-
-def _has_usable_extended_layer(value):
-    if not isinstance(value, dict) or not value:
-        return False
-    if value.get("status") in {"source_failed", "source_empty"}:
-        return False
-    return True
-
-
-def _sanitize_for_json(value):
-    if isinstance(value, dict):
-        return {str(k): _sanitize_for_json(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_sanitize_for_json(v) for v in value]
-    if isinstance(value, tuple):
-        return [_sanitize_for_json(v) for v in value]
-    if isinstance(value, pd.Timestamp):
-        return value.strftime("%Y-%m-%d")
-    if hasattr(value, "item"):
-        try:
-            return value.item()
-        except Exception:
-            pass
-    if value is not None and not isinstance(value, (str, bytes, list, dict, tuple)):
-        try:
-            if pd.isna(value):
-                return None
-        except Exception:
-            pass
-    return value
 
 
 def _fetch_extended_info_subprocess(symbol, market='CN', timeout_seconds=18):
@@ -1212,6 +1090,33 @@ class StockRecommender:
         stocks = [s for s in get_popular_cn_stocks() if self._is_main_board(s['code'])]
         return stocks[:limit] if limit else stocks
 
+    def _get_classic_short_term_candidate_stocks(self, limit=80):
+        """经典短线候选池：沪深主板交替取样，并排除风险名称。"""
+        eligible = []
+        for stock in self._get_main_board_popular_cn_stocks():
+            code = str(stock.get('code') or '').strip()
+            name = str(stock.get('name') or '').strip()
+            upper_name = name.upper()
+            if not code or not name or 'ST' in upper_name or '退' in name:
+                continue
+            eligible.append(stock)
+
+        shanghai = [stock for stock in eligible if str(stock.get('code') or '').startswith('6')]
+        shenzhen = [stock for stock in eligible if not str(stock.get('code') or '').startswith('6')]
+        selected = []
+        positions = [0, 0]
+        buckets = [shanghai, shenzhen]
+        target = len(eligible) if limit is None else max(0, int(limit))
+        while len(selected) < target and any(positions[index] < len(bucket) for index, bucket in enumerate(buckets)):
+            for index, bucket in enumerate(buckets):
+                if positions[index] >= len(bucket):
+                    continue
+                selected.append(bucket[positions[index]])
+                positions[index] += 1
+                if len(selected) >= target:
+                    break
+        return selected
+
     def _get_main_board_sector_stocks(self, sector_name):
         """获取指定板块的主板股票池，过滤创业板、科创板和北交所。"""
         return [s for s in SECTOR_STOCKS.get(sector_name, []) if self._is_main_board(s['code'])]
@@ -1847,22 +1752,27 @@ class StockRecommender:
 
     def get_classic_short_term_recommendations(self, num_stocks=10):
         """
-        获取经典短线推荐股票：沿用短线技术/评分逻辑，但不执行
+        获取经典短线推荐股票：回到原始纯技术短线。
+
+        经典版只使用沪深主板候选池和成交量、MACD、RSI、KDJ、BOLL 技术过滤，
+        不执行热门板块候选池、基本面/财报/资金流/消息面上下文评分，也不执行
         “二板以上涨幅、回调天数、回调幅度、放量反包/涨停板”四项形态过滤。
         """
         results = []
-        candidates = self._get_short_term_all_candidate_stocks(80)
+        candidates = self._get_classic_short_term_candidate_stocks(80)
         diagnostics = {
             "strategy": "短线经典版",
             "sector": "全部",
-            "hot_boards": len(self._get_short_term_hot_board_rows(limit=SHORT_TERM_HOT_BOARD_LIMIT)),
+            "hot_boards": 0,
             "raw_pool": len(candidates),
             "analyzed": 0,
             "technical_passed": 0,
             "pattern_passed": None,
             "result_count": 0,
+            "pool_mode": "主板纯技术池",
             "failures": {},
             "removed_filters": ["二板以上涨幅", "回调天数", "回调幅度", "放量反包/涨停板"],
+            "disabled_context": ["热门板块", "基本面/估值", "财报/盈利", "资金流", "消息面"],
         }
 
         def record_failure(reason):
@@ -1871,30 +1781,15 @@ class StockRecommender:
 
         def analyze_one(stock):
             try:
-                analysis = self._analyze_short_term(stock['code'], market='CN')
-                candidate_sectors = stock.get("short_term_sectors") or []
+                analysis = self._analyze_short_term(stock['code'], market='CN', include_context=False)
                 if not analysis:
                     return None, "K线/指标数据不足", False
-                if not candidate_sectors:
-                    return None, "未匹配热门板块成分股", False
                 if not self._short_term_technical_filter_passes(analysis):
                     hit_count = (analysis.get("strategy_checks") or {}).get("技术命中数")
                     return None, f"技术命中不足({hit_count or 0}/5)", False
                 analysis['name'] = stock['name']
-                analysis['sector'] = "、".join(candidate_sectors)
+                analysis['sector'] = stock.get("sector") or self._board_label(stock.get('code'))
                 analysis['strategy'] = "短线经典版"
-                hot_board_matched = stock.get("short_term_source") != "market_ranking_fallback"
-                checks = analysis.setdefault("strategy_checks", {})
-                checks["热门板块"] = hot_board_matched
-                checks["形态过滤"] = "未启用"
-                details = analysis.setdefault("strategy_details", {})
-                details["形态过滤"] = "经典短线不要求二板以上、2-8天回调、回撤不超50%、放量反包/涨停板"
-                if hot_board_matched:
-                    details["热门板块"] = analysis['sector']
-                else:
-                    details["热门板块"] = (
-                        f"同花顺板块成分股源暂不可用，使用真实涨幅榜兜底；个股所属板块：{analysis['sector']}"
-                    )
                 return analysis, None, True
             except Exception as exc:
                 return None, f"分析异常:{str(exc)[:40]}", False
@@ -2078,7 +1973,7 @@ class StockRecommender:
         if delta:
             analysis["score"] = max(0, min(100, round((analysis.get("score") or 0) + delta, 1)))
 
-    def _analyze_short_term(self, symbol, market='CN', include_all_pattern=False):
+    def _analyze_short_term(self, symbol, market='CN', include_all_pattern=False, include_context=True):
         """
         短线分析 - 使用更短的周期和更敏感的指标权重
         """
@@ -2119,11 +2014,14 @@ class StockRecommender:
 
         # 短线评分：使用短线权重 + 波动率加成
         score = _score_from_signals(signals, latest, _SHORT_TERM_WEIGHTS)
-        context = self._build_short_term_context(symbol, market)
-        context_delta, context_checks, context_details = self._score_short_term_context(context)
-        score += context_delta
-        strategy_checks.update(context_checks)
-        context_details = {**technical_details, **context_details}
+        context = {}
+        strategy_details = dict(technical_details)
+        if include_context:
+            context = self._build_short_term_context(symbol, market)
+            context_delta, context_checks, context_details = self._score_short_term_context(context)
+            score += context_delta
+            strategy_checks.update(context_checks)
+            strategy_details.update(context_details)
 
         # 波动率加成：短线喜欢适中波动
         if len(data) > 5:
@@ -2143,7 +2041,7 @@ class StockRecommender:
             'change_pct': round(change_pct, 2),
             'strategy': '短线',
             'strategy_checks': strategy_checks,
-            'strategy_details': context_details,
+            'strategy_details': strategy_details,
             'profile': context.get("profile") or {},
             'extended_info': context.get("extended_info") or {},
             'indicators': self._build_indicators_dict(latest)

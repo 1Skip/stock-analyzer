@@ -468,7 +468,7 @@ def test_manual_trade_outcome_keeps_holding_records_out_of_success_rate():
     assert review["summary"]["success_rate_pct"] is None
 
 
-def test_manual_trade_outcome_rounds_prices_to_two_decimals():
+def test_manual_trade_outcome_rounds_prices_to_three_decimals():
     service = RecommendationService(
         recommender=FakeRecommender(),
         quote_service=FakeQuoteServiceWithFuture(),
@@ -489,9 +489,9 @@ def test_manual_trade_outcome_rounds_prices_to_two_decimals():
     )
 
     assert saved["success"] is True
-    assert saved["record"]["buy_price"] == 10.13
-    assert saved["record"]["sell_price"] == 11.99
-    assert saved["record"]["return_pct"] == 18.36
+    assert saved["record"]["buy_price"] == 10.126
+    assert saved["record"]["sell_price"] == 11.987
+    assert saved["record"]["return_pct"] == round((11.987 / 10.126 - 1) * 100, 2)
 
 
 def test_manual_trade_review_without_filters_returns_all_records():
@@ -572,6 +572,50 @@ def test_manual_trade_record_can_be_deleted_by_record_key():
     assert deleted["success"] is True
     assert after["summary"]["total_records"] == 0
     assert deleted_again["success"] is False
+
+
+def test_manual_trade_holding_record_can_be_edited_to_closed():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        fundamental_service=FakeFundamentalService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.manual_trade_cache = FakeCache()
+
+    plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    saved = service.record_manual_trade_outcome(
+        plan,
+        plan["recommended"][0]["symbol"],
+        buy_date="2026-06-01",
+        buy_price=10,
+        sell_date=None,
+        sell_price=None,
+        is_holding=True,
+        note="先观察",
+    )
+    edited = service.update_manual_trade_record(
+        saved["record_key"],
+        buy_date="2026-06-01",
+        buy_price=10.1234,
+        sell_date="2026-06-05",
+        sell_price=12.4567,
+        is_holding=False,
+        note="已卖出",
+    )
+    review = service.evaluate_manual_trade_success_rate(strategy="多因子稳健型", sector="全部")
+
+    assert edited["success"] is True
+    assert edited["record_key"] == saved["record_key"]
+    assert edited["record"]["status"] == "closed"
+    assert edited["record"]["buy_price"] == 10.123
+    assert edited["record"]["sell_price"] == 12.457
+    assert edited["record"]["return_pct"] == round((12.457 / 10.123 - 1) * 100, 2)
+    assert edited["record"]["note"] == "已卖出"
+    assert review["summary"]["closed_records"] == 1
+    assert review["summary"]["holding_count"] == 0
+    assert review["summary"]["success_rate_pct"] == 100
 
 
 def test_manual_trade_outcome_alerts_when_samples_are_enough():
