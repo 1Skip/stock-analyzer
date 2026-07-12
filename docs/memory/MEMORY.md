@@ -1,7 +1,7 @@
 ﻿# 项目 Memory 索引
 
 
-- [Bug fixes & context 2026-07-12](bug_fixes_and_context_2026-07-12.md) — 个股分析新增只读量化快照与样本可信度；手工成交支持编辑；自选股、缓存、超时与关键 fallback 完成可观测性加固；推荐股票池辅助逻辑继续拆分；CI 新增默认断网、66.5% 跨平台覆盖率基线和高风险 Ruff 规则；完整测试 `983 passed`。
+- [Bug fixes & context 2026-07-12](bug_fixes_and_context_2026-07-12.md) — 个股分析新增只读量化快照与样本可信度；手工成交支持编辑；自选股、缓存、超时与关键 fallback 完成可观测性加固；推荐股票池辅助逻辑继续拆分；CI 新增默认断网、66.5% 跨平台覆盖率基线和高风险 Ruff 规则；修复干净环境股票索引回退；完整测试 `984 passed`。
 - [Bug fixes & context 2026-06-29](bug_fixes_and_context_2026-06-29.md) — 短线经典版回到原始纯技术口径：只扫描沪深主板候选池，只看成交量、MACD、RSI、KDJ、BOLL，不看热门板块、基本面、财报、资金流、消息面；T+1 预热中经典版只生成 `全部`。
 - [Bug fixes & context 2026-06-23](bug_fixes_and_context_2026-06-23.md) — agent.md 乱码修复，测试同步 T+1 板块从 4 → 2（config.py 已前置落地），测试合约适配新方法签名
 - [Bug fixes & context 2026-06-28](bug_fixes_and_context_2026-06-28.md) — 智能推荐页新增手工实盘买卖结果录入、继续持有、成功率汇总、样本充足提醒和记录删除；移除旧复盘入口，保留后端只读历史复盘/短线学习链路；推荐页操作按钮按主流程重排；修复 A 股日 K 自动源顺序和热门板块 fallback 测试隔离。

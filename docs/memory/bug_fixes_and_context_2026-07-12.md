@@ -42,7 +42,7 @@
 ## CI 与测试门禁
 
 - 非 `network` 测试通过自动夹具默认阻断外部 DNS、Python socket 和 `curl_cffi` 请求，仅允许 localhost/回环地址；真实联网测试必须显式标记 `@pytest.mark.network`，未注册 marker 会直接失败。
-- GitHub Actions 的 Python 3.11 任务采集应用源码覆盖率并执行 `66.5%` 跨平台基线，Python 3.12 继续执行兼容性测试；Windows/Python 3.14 本地最终覆盖率为 `67.90%`，待 GitHub Actions 首次实测后再决定是否收紧。
+- GitHub Actions 的 Python 3.11 任务采集应用源码覆盖率并执行 `66.5%` 跨平台基线，Python 3.12 继续执行兼容性测试；Windows/Python 3.14 本地最终覆盖率为 `67.92%`。首轮云端运行在干净环境暴露股票搜索内置索引路径错误，已改为读取 `data/static/stock_name_index.json`，并增加无本地 `.cache` 的回归测试。
 - Ruff 新增 `B006/B012/B017/B023/B025/E722/F601/F602/F811` 等高风险规则，并修复现有循环闭包绑定和可变默认参数问题；没有开启导入排序等大范围格式治理。
 - 个股分析页四组依赖源码文本和语句顺序的断言已改为直接执行缓存归属、输入切换、清理和同步函数的行为测试，并用 AST 结构检查保留页面入口调用这些 helper 的接线契约。
 
@@ -60,7 +60,7 @@
 
 ## 验证
 
-- `.venv\Scripts\python.exe -m pytest tests\ -q -m "not network" --cov=. --cov-report=term --cov-report=xml --cov-fail-under=66.5 --basetemp=.tmp\pytest-root-full-review-final` 通过，`983 passed, 20 warnings`，应用源码覆盖率 `67.90%`。
+- `.venv\Scripts\python.exe -m pytest tests\ -q -m "not network" --tb=short --cov=. --cov-report=term --cov-report=xml --cov-fail-under=66.5 --basetemp=.tmp\pytest-root-full-ci-fix` 通过，`984 passed, 20 warnings`，应用源码覆盖率 `67.92%`。
 - `.venv\Scripts\python.exe -m ruff check .` 通过。
 - `.venv\Scripts\python.exe -m scripts.check_offline_data_contracts` 通过。
 - `.venv\Scripts\python.exe -m scripts.check_doc_encoding` 通过。

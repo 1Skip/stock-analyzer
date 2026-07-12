@@ -124,6 +124,7 @@ def _load_cached_stock_index() -> list[dict[str, str]]:
     candidates = [
         os.path.join(_project_root(), ".cache", "stock_name_index.json"),
         os.path.join(_project_root(), "data", "stock_name_index.json"),
+        os.path.join(_project_root(), "data", "static", "stock_name_index.json"),
     ]
     for path in candidates:
         if not os.path.exists(path):

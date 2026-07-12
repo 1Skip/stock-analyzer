@@ -900,6 +900,22 @@ def test_stock_search_tolerates_common_near_match():
     assert result[0]["name"] == "\u745e\u9e44\u6a21\u5177"
 
 
+def test_stock_search_loads_bundled_index_without_runtime_cache(monkeypatch, tmp_path):
+    import ui.stock_search as stock_search
+
+    static_dir = tmp_path / "data" / "static"
+    static_dir.mkdir(parents=True)
+    (static_dir / "stock_name_index.json").write_text(
+        '{"stocks": [{"code": "002997", "name": "\\u745e\\u9e44\\u6a21\\u5177"}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(stock_search, "_project_root", lambda: str(tmp_path))
+
+    assert stock_search._load_cached_stock_index() == [
+        {"code": "002997", "name": "\u745e\u9e44\u6a21\u5177"}
+    ]
+
+
 def test_stock_search_tolerates_transposed_name(monkeypatch):
     import ui.stock_search as stock_search
 

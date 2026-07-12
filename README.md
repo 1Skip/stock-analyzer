@@ -27,8 +27,9 @@
 - **推荐辅助层继续拆分** — `StockRecommender` 保留原有兼容方法，但主板/创业板判断、经典短线沪深交替取样、策略股票池合并和热门板块交错整理已统一委托给 `recommendation_modules/`；股票池、过滤、评分、排序、推荐数量、缓存键和 T+1 语义保持不变。
 - **显式失败诊断** — 系统状态页保留用户主动触发的真实数据抽检；批量实时行情、热门榜和板块成分回退新增聚合诊断，区分新鲜结果、单股补拉、缓存命中、部分缺失和全部不可用，中间数据源失败仍继续尝试原有后备源。
 - **CI 维护门禁** — 非 `network` 测试默认禁止外网并允许 localhost，同时覆盖 `yfinance` 使用的 `curl_cffi` 传输层；Python 3.11 采集应用源码覆盖率并执行 `66.5%` 跨平台基线，Python 3.12 保留兼容测试。Ruff 增加循环闭包、可变默认参数、重复键和异常处理等高风险规则，首批个股页源码顺序断言已改为状态行为测试并保留 AST 接线契约。
+- **干净环境索引回退** — 股票快速搜索在没有本地 `.cache` 时改读仓库内的 `data/static/stock_name_index.json`；补充隔离运行缓存的回归测试，避免开发机缓存掩盖 CI 或首次部署问题。
 - **依赖约束** — 新增 `constraints.txt` 锁定当前验证过的直接依赖版本，项目最低 Python 版本统一为 3.11；本地启动脚本、Dev Container 和 GitHub Actions 统一使用 `pip install -r requirements.txt -c constraints.txt`。
-- **本轮验证** — 完整断网测试 `983 passed, 20 warnings`，应用源码覆盖率 `67.90%`；Ruff、离线数据契约、文档编码和 `git diff --check` 均通过。未做浏览器实点，也未观察本次改动在 GitHub Actions Python 3.11/3.12 环境中的实际执行。
+- **本轮验证** — 完整断网测试 `984 passed, 20 warnings`，应用源码覆盖率 `67.92%`；Ruff、离线数据契约、文档编码和 `git diff --check` 均通过。GitHub Actions Python 3.11/3.12 负责跨平台复验，干净环境索引回退已纳入测试；未做浏览器实点。
 
 ## 2026-06-28 智能推荐实盘结果记录更新
 
