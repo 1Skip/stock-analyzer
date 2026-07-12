@@ -4,11 +4,13 @@
 """
 import streamlit as st
 import json
+import logging
 import os
-from threading import Lock
+
+from data.file_lock import atomic_write_text, get_thread_lock, process_file_lock
 
 _WATCHLIST_FILE = os.path.join(os.path.dirname(__file__), 'watchlist.json')
-_save_lock = Lock()
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -187,29 +189,73 @@ def get_watchlist_summary(watchlist_items):
 
 def _load_from_file():
     """从 JSON 文件加载自选股"""
-    if os.path.exists(_WATCHLIST_FILE):
-        try:
+    if not os.path.exists(_WATCHLIST_FILE):
+        return []
+    try:
+        with get_thread_lock(_WATCHLIST_FILE):
             with open(_WATCHLIST_FILE, 'r', encoding='utf-8-sig') as f:
-                return json.load(f)
-        except Exception:
+                payload = json.load(f)
+        if not isinstance(payload, list):
+            logger.warning(
+                "自选股文件结构无效，按空列表处理: file=%s",
+                os.path.basename(_WATCHLIST_FILE),
+            )
             return []
-    return []
+        return payload
+    except Exception as exc:
+        logger.warning(
+            "读取自选股文件失败，按空列表处理: file=%s error=%s",
+            os.path.basename(_WATCHLIST_FILE),
+            type(exc).__name__,
+        )
+        return []
 
 
 def _save_to_file(watchlist):
-    """?????? JSON ??"""
-    with _save_lock:
+    """原子保存自选股；失败时由调用方保留原 session 状态。"""
+    try:
+        content = json.dumps(watchlist, ensure_ascii=False, indent=2)
+        with get_thread_lock(_WATCHLIST_FILE):
+            with process_file_lock(_WATCHLIST_FILE):
+                atomic_write_text(_WATCHLIST_FILE, content)
         try:
-            with open(_WATCHLIST_FILE, 'w', encoding='utf-8') as f:
-                json.dump(watchlist, f, ensure_ascii=False, indent=2)
-            st.session_state.watchlist_file_mtime = os.path.getmtime(_WATCHLIST_FILE)
-        except Exception:
-            pass
+            file_mtime = os.path.getmtime(_WATCHLIST_FILE)
+        except OSError as exc:
+            logger.info(
+                "自选股已保存但读取修改时间失败: file=%s error=%s",
+                os.path.basename(_WATCHLIST_FILE),
+                type(exc).__name__,
+            )
+            file_mtime = None
+        st.session_state.watchlist_file_mtime = file_mtime
+        return True
+    except Exception as exc:
+        logger.warning(
+            "保存自选股文件失败: file=%s error=%s",
+            os.path.basename(_WATCHLIST_FILE),
+            type(exc).__name__,
+        )
+        return False
+
+
+def _get_file_mtime():
+    """读取自选股文件修改时间；异常时返回 None 并记录脱敏日志。"""
+    if not os.path.exists(_WATCHLIST_FILE):
+        return None
+    try:
+        return os.path.getmtime(_WATCHLIST_FILE)
+    except OSError as exc:
+        logger.warning(
+            "读取自选股文件状态失败: file=%s error=%s",
+            os.path.basename(_WATCHLIST_FILE),
+            type(exc).__name__,
+        )
+        return None
 
 
 def init_watchlist():
     """初始化自选股列表：文件变化时自动刷新 session_state。"""
-    file_mtime = os.path.getmtime(_WATCHLIST_FILE) if os.path.exists(_WATCHLIST_FILE) else None
+    file_mtime = _get_file_mtime()
     if (
         'watchlist' not in st.session_state
         or st.session_state.get('watchlist_file_mtime') != file_mtime
@@ -224,23 +270,27 @@ def add_to_watchlist(symbol, name, market='CN'):
     for item in st.session_state.watchlist:
         if item['symbol'] == symbol and item['market'] == market:
             return False, "该股票已在自选股中"
-    st.session_state.watchlist.append({
+    updated_watchlist = [*st.session_state.watchlist, {
         'symbol': symbol,
         'name': name,
         'market': market
-    })
-    _save_to_file(st.session_state.watchlist)
+    }]
+    if not _save_to_file(updated_watchlist):
+        return False, "保存失败，自选股未更改"
+    st.session_state.watchlist = updated_watchlist
     return True, "添加成功"
 
 
 def remove_from_watchlist(symbol, market='CN'):
     """从自选股中移除"""
     init_watchlist()
-    st.session_state.watchlist = [
+    updated_watchlist = [
         item for item in st.session_state.watchlist
         if not (item['symbol'] == symbol and item['market'] == market)
     ]
-    _save_to_file(st.session_state.watchlist)
+    if not _save_to_file(updated_watchlist):
+        return False, "保存失败，自选股未更改"
+    st.session_state.watchlist = updated_watchlist
     return True, "移除成功"
 
 
@@ -253,8 +303,9 @@ def get_watchlist():
 def clear_watchlist():
     """清空自选股"""
     init_watchlist()
+    if not _save_to_file([]):
+        return False, "保存失败，自选股未更改"
     st.session_state.watchlist = []
-    _save_to_file(st.session_state.watchlist)
     return True, "已清空"
 
 

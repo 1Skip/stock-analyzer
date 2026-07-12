@@ -100,6 +100,23 @@ class StockDataFetcher:
         self.retry_delay = RETRY_DELAY
         # 用户手动指定的优先数据源
         self.preferred_source = os.environ.get('STOCK_DATA_SOURCE', 'auto')
+        self.last_batch_quote_diagnostics = self._new_batch_quote_diagnostics()
+
+    @staticmethod
+    def _new_batch_quote_diagnostics(status='idle', requested=0):
+        return {
+            'status': status,
+            'requested': requested,
+            'resolved': 0,
+            'missing': requested,
+            'batch_chunks': 0,
+            'batch_failures': 0,
+            'batch_empty': 0,
+            'single_attempted': 0,
+            'single_failures': 0,
+            'single_empty': 0,
+            'error_types': [],
+        }
 
     def _get_request_lock(self, key):
         """获取请求锁，防止重复请求"""
@@ -967,11 +984,14 @@ class StockDataFetcher:
         返回 {symbol: {price, change_pct}}，查不到的 symbol 不在结果中
         """
         result = {}
+        diagnostics = self._new_batch_quote_diagnostics('skipped', len(symbols or []))
         if not symbols or market != "CN":
+            self.last_batch_quote_diagnostics = diagnostics
             return result
 
         import concurrent.futures as _cf
         provider = SinaRealtimeProvider(_session)
+        error_types = set()
 
         def _sina_code(symbol):
             if symbol.startswith('6'):
@@ -1013,7 +1033,7 @@ class StockDataFetcher:
             try:
                 chunk_result.update(provider.fetch_cn_batch_quotes(list(chunk)))
                 if chunk_result:
-                    return chunk_result
+                    return chunk_result, None
                 code_to_symbol = {_sina_code(symbol): symbol for symbol in chunk}
                 url = "https://hq.sinajs.cn/list=" + ",".join(code_to_symbol.keys())
                 headers = {
@@ -1027,9 +1047,9 @@ class StockDataFetcher:
                         parsed = _parse_sina_quote(symbol, raw) if symbol else None
                         if parsed:
                             chunk_result[symbol] = parsed
-            except Exception:
-                pass
-            return chunk_result
+            except Exception as exc:
+                return chunk_result, type(exc).__name__
+            return chunk_result, None
 
         def _fetch_one(symbol):
             try:
@@ -1043,30 +1063,76 @@ class StockDataFetcher:
                     match = re.search(r'"([^"]*)"', response.text)
                     parsed = _parse_sina_quote(symbol, match.group(1) if match else "")
                     if parsed:
-                        return symbol, parsed
-            except Exception:
-                logger.debug("新浪行情单只补拉失败 symbol=%s", symbol, exc_info=True)
-            return symbol, None
+                        return symbol, parsed, None
+            except Exception as exc:
+                return symbol, None, type(exc).__name__
+            return symbol, None, None
 
         chunks = [symbols[i:i + 80] for i in range(0, len(symbols), 80)]
+        diagnostics['batch_chunks'] = len(chunks)
         with _cf.ThreadPoolExecutor(max_workers=6) as executor:
             futures = {executor.submit(_fetch_chunk, chunk): chunk for chunk in chunks}
             for future in _cf.as_completed(futures, timeout=8):
                 try:
-                    result.update(future.result(timeout=5) or {})
-                except Exception:
-                    logger.debug("新浪行情分片结果读取失败 symbols=%s", futures[future], exc_info=True)
+                    chunk_result, error_type = future.result(timeout=5)
+                    if error_type:
+                        diagnostics['batch_failures'] += 1
+                        error_types.add(error_type)
+                    if not chunk_result:
+                        diagnostics['batch_empty'] += 1
+                    result.update(chunk_result or {})
+                except Exception as exc:
+                    diagnostics['batch_failures'] += 1
+                    diagnostics['batch_empty'] += 1
+                    error_types.add(type(exc).__name__)
         missing_symbols = [symbol for symbol in symbols if symbol not in result]
         if missing_symbols:
+            diagnostics['single_attempted'] = min(len(missing_symbols), 200)
             with _cf.ThreadPoolExecutor(max_workers=10) as executor:
                 futures = {executor.submit(_fetch_one, symbol): symbol for symbol in missing_symbols[:200]}
                 for future in _cf.as_completed(futures, timeout=8):
                     try:
-                        symbol, data = future.result(timeout=5)
+                        symbol, data, error_type = future.result(timeout=5)
+                        if error_type:
+                            diagnostics['single_failures'] += 1
+                            error_types.add(error_type)
+                        elif data is None:
+                            diagnostics['single_empty'] += 1
                         if data is not None:
                             result[symbol] = data
-                    except Exception:
-                        logger.debug("新浪行情单只补拉结果读取失败 symbol=%s", futures[future], exc_info=True)
+                    except Exception as exc:
+                        diagnostics['single_failures'] += 1
+                        error_types.add(type(exc).__name__)
+
+        diagnostics['resolved'] = len(result)
+        diagnostics['missing'] = len([symbol for symbol in symbols if symbol not in result])
+        diagnostics['error_types'] = sorted(error_types)
+        used_fallback = bool(
+            diagnostics['batch_failures']
+            or diagnostics['batch_empty']
+            or diagnostics['single_attempted']
+        )
+        if not result:
+            diagnostics['status'] = 'unavailable'
+        elif diagnostics['missing']:
+            diagnostics['status'] = 'partial'
+        elif used_fallback:
+            diagnostics['status'] = 'fallback'
+        else:
+            diagnostics['status'] = 'fresh'
+        self.last_batch_quote_diagnostics = diagnostics
+        if diagnostics['status'] != 'fresh':
+            logger.info(
+                "批量实时行情回退诊断: status=%s requested=%s resolved=%s missing=%s "
+                "batch_failures=%s single_failures=%s error_types=%s",
+                diagnostics['status'],
+                diagnostics['requested'],
+                diagnostics['resolved'],
+                diagnostics['missing'],
+                diagnostics['batch_failures'],
+                diagnostics['single_failures'],
+                ",".join(diagnostics['error_types']) or "none",
+            )
         return result
 
     def get_index_realtime(self, symbol):

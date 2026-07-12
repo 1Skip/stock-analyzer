@@ -1,6 +1,7 @@
 """Hot stock ranking helpers."""
 from __future__ import annotations
 
+import logging
 import re
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -10,6 +11,9 @@ import requests
 import pandas as pd
 
 from data.providers.sina_realtime_provider import SinaRealtimeProvider
+
+
+logger = logging.getLogger(__name__)
 
 
 CODE = "\u4ee3\u7801"
@@ -37,6 +41,7 @@ def hot_stocks_cn(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
     headers = {
         "Referer": "https://finance.sina.com.cn",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -57,8 +62,8 @@ def hot_stocks_cn(
                             data = match.group(2).split(",")
                             if len(data) >= 33:
                                 all_quotes[match.group(1)] = data
-            except Exception:
-                pass
+            except Exception as exc:
+                failures.append(("sh_batch", type(exc).__name__))
 
         if sz_stocks:
             codes = [f"sz{stock['code']}" for stock in sz_stocks]
@@ -71,8 +76,8 @@ def hot_stocks_cn(
                             data = match.group(2).split(",")
                             if len(data) >= 33:
                                 all_quotes[match.group(1)] = data
-            except Exception:
-                pass
+            except Exception as exc:
+                failures.append(("sz_batch", type(exc).__name__))
 
         for stock in stocks:
             code = stock["code"]
@@ -99,10 +104,18 @@ def hot_stocks_cn(
                 )
             except (ValueError, IndexError):
                 continue
-    except Exception:
-        pass
+    except Exception as exc:
+        failures.append(("prepare", type(exc).__name__))
 
     results.sort(key=lambda item: item[HEAT_SCORE], reverse=True)
+    if failures:
+        logger.info(
+            "A股热门榜批量行情诊断: requested=%s resolved=%s failed_groups=%s failures=%s",
+            len(stocks),
+            len(results),
+            len(failures),
+            ",".join(f"{stage}:{error_type}" for stage, error_type in failures),
+        )
     return results[:limit]
 
 

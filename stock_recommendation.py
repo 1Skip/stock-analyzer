@@ -34,7 +34,7 @@ from data.services.fundamental_service import FundamentalDataService
 from data.providers.akshare_provider import _find_profile_index_item
 from data.runtime import run_with_timeout
 from data.cache import JsonFileCache
-from recommendation_modules import auxiliary_data, board_rankings, hot_stocks, market_rankings, strategy_cache
+from recommendation_modules import auxiliary_data, board_rankings, hot_stocks, market_rankings, strategy_cache, strategy_pool
 from recommendation_modules.catalyst_helpers import (
     classify_catalyst_item as _classify_catalyst_item,
     recent_items as _recent_items,
@@ -350,7 +350,7 @@ class StockRecommender:
             while len(sectors) < limit:
                 url = f'https://q.10jqka.com.cn/thshy/index/field/199112/order/desc/page/{page}/'
                 resp = hot_stocks._call_without_proxy_env(
-                    lambda: hot_stocks._SINA_SESSION.get(url, headers=headers, timeout=4)
+                    lambda url=url: hot_stocks._SINA_SESSION.get(url, headers=headers, timeout=4)
                 )
                 if resp is None or getattr(resp, "status_code", None) != 200 or not getattr(resp, "text", ""):
                     break
@@ -435,7 +435,7 @@ class StockRecommender:
                 if page > 1:
                     url = f'https://data.10jqka.com.cn/funds/gnzjl/order/desc/page/{page}/'
                     resp = hot_stocks._call_without_proxy_env(
-                        lambda: hot_stocks._SINA_SESSION.get(url, headers=headers, timeout=4)
+                        lambda url=url: hot_stocks._SINA_SESSION.get(url, headers=headers, timeout=4)
                     )
                     if resp is None or getattr(resp, "status_code", None) != 200 or not getattr(resp, "text", ""):
                         break
@@ -1064,62 +1064,39 @@ class StockRecommender:
     @staticmethod
     def _is_main_board(code):
         """判断是否为沪深主板股票（排除创业板/科创板/北交所）"""
-        return code.startswith(('600', '601', '603', '605',     # 沪市主板
-                                '000', '001', '002', '003'))    # 深市主板
+        return strategy_pool.is_main_board(code)
 
     @staticmethod
     def _is_recommendable_board(code):
         """智能推荐股票池：沪深主板 + 创业板，排除科创板/北交所/ST。"""
-        return str(code).startswith((
-            '600', '601', '603', '605',
-            '000', '001', '002', '003',
-            '300', '301',
-        ))
+        return strategy_pool.is_recommendable_board(code)
 
     @staticmethod
     def _board_label(code):
-        code = str(code)
-        if code.startswith(('300', '301')):
-            return '创业板'
-        if code.startswith('6'):
-            return '沪市主板'
-        return '深市主板'
+        return strategy_pool.board_label(code)
 
     def _get_main_board_popular_cn_stocks(self, limit=None):
         """获取主板推荐股票池，过滤创业板、科创板和北交所。"""
-        stocks = [s for s in get_popular_cn_stocks() if self._is_main_board(s['code'])]
-        return stocks[:limit] if limit else stocks
+        return strategy_pool.main_board_stocks(
+            get_popular_cn_stocks(),
+            limit=limit,
+            predicate=self._is_main_board,
+        )
 
     def _get_classic_short_term_candidate_stocks(self, limit=80):
         """经典短线候选池：沪深主板交替取样，并排除风险名称。"""
-        eligible = []
-        for stock in self._get_main_board_popular_cn_stocks():
-            code = str(stock.get('code') or '').strip()
-            name = str(stock.get('name') or '').strip()
-            upper_name = name.upper()
-            if not code or not name or 'ST' in upper_name or '退' in name:
-                continue
-            eligible.append(stock)
-
-        shanghai = [stock for stock in eligible if str(stock.get('code') or '').startswith('6')]
-        shenzhen = [stock for stock in eligible if not str(stock.get('code') or '').startswith('6')]
-        selected = []
-        positions = [0, 0]
-        buckets = [shanghai, shenzhen]
-        target = len(eligible) if limit is None else max(0, int(limit))
-        while len(selected) < target and any(positions[index] < len(bucket) for index, bucket in enumerate(buckets)):
-            for index, bucket in enumerate(buckets):
-                if positions[index] >= len(bucket):
-                    continue
-                selected.append(bucket[positions[index]])
-                positions[index] += 1
-                if len(selected) >= target:
-                    break
-        return selected
+        return strategy_pool.classic_short_term_candidates(
+            self._get_main_board_popular_cn_stocks(),
+            limit=limit,
+        )
 
     def _get_main_board_sector_stocks(self, sector_name):
         """获取指定板块的主板股票池，过滤创业板、科创板和北交所。"""
-        return [s for s in SECTOR_STOCKS.get(sector_name, []) if self._is_main_board(s['code'])]
+        return strategy_pool.main_board_sector_stocks(
+            sector_name,
+            sector_stocks=SECTOR_STOCKS,
+            predicate=self._is_main_board,
+        )
 
     def _get_short_term_all_candidate_stocks(self, limit=None):
         merged = {}
@@ -1202,7 +1179,13 @@ class StockRecommender:
         return results
 
     def _get_board_constituent_stocks(self, board_name, board_code=None, board_category=None):
+        diagnostic_key = f"board_constituents:{board_name}"
         if not board_name or ak is None:
+            self.last_board_ranking_diagnostics[diagnostic_key] = {
+                "status": "unavailable",
+                "count": 0,
+                "reason": "板块名称为空或板块数据组件不可用",
+            }
             return []
 
         ths_stocks = self._get_ths_board_constituent_stocks(
@@ -1212,24 +1195,54 @@ class StockRecommender:
         )
         if ths_stocks:
             self._board_ranking_cache.set(f"ths_board_constituents:{board_name}", ths_stocks)
+            self.last_board_ranking_diagnostics[diagnostic_key] = {
+                "status": "fresh",
+                "count": len(ths_stocks),
+                "source": "同花顺板块详情",
+            }
             return ths_stocks
 
         fetchers = [
-            lambda: hot_stocks._call_without_proxy_env(lambda: ak.stock_board_industry_cons_em(symbol=board_name)),
-            lambda: hot_stocks._call_without_proxy_env(lambda: ak.stock_board_concept_cons_em(symbol=board_name)),
+            ("东方财富行业板块成分", lambda: hot_stocks._call_without_proxy_env(
+                lambda: ak.stock_board_industry_cons_em(symbol=board_name)
+            )),
+            ("东方财富概念板块成分", lambda: hot_stocks._call_without_proxy_env(
+                lambda: ak.stock_board_concept_cons_em(symbol=board_name)
+            )),
         ]
-        for fetcher in fetchers:
+        failures = []
+        for source, fetcher in fetchers:
             try:
                 df = run_with_timeout(fetcher, SHORT_TERM_BOARD_CONSTITUENT_TIMEOUT_SECONDS)
-            except Exception:
+            except Exception as exc:
+                failures.append(f"{source}: {type(exc).__name__}")
+                logger.debug("Board constituent source failed: %s", source, exc_info=True)
                 continue
             stocks = self._normalize_board_constituents(df)
             if stocks:
                 self._board_ranking_cache.set(f"ths_board_constituents:{board_name}", stocks)
+                self.last_board_ranking_diagnostics[diagnostic_key] = {
+                    "status": "fresh",
+                    "count": len(stocks),
+                    "source": source,
+                    "fallback_errors": failures,
+                }
                 return stocks
         cached = self._board_ranking_cache.get(f"ths_board_constituents:{board_name}")
         if isinstance(cached, list) and cached:
+            self.last_board_ranking_diagnostics[diagnostic_key] = {
+                "status": "cache",
+                "count": len(cached),
+                "reason": "在线板块成分源无可用结果，使用最近成功缓存",
+                "fallback_errors": failures,
+            }
             return cached
+        self.last_board_ranking_diagnostics[diagnostic_key] = {
+            "status": "unavailable",
+            "count": 0,
+            "reason": "在线板块成分源无可用结果，且本地无可用缓存",
+            "fallback_errors": failures,
+        }
         return []
 
     def _get_ths_board_constituent_stocks(self, board_name, board_code=None, board_category=None):
@@ -1371,29 +1384,26 @@ class StockRecommender:
 
     def _get_strategy_popular_cn_stocks(self, limit=None):
         """获取策略推荐股票池：沪深主板 + 创业板，优先使用全量A股名称索引。"""
-        merged = {s['code']: s for s in get_popular_cn_stocks()}
+        index_items = []
         try:
-            for item in StockDataFetcher._load_stock_name_index(max_age_hours=48):
-                code = str(item.get('code', '')).strip()
-                name = str(item.get('name', '')).strip()
-                if code and name:
-                    merged.setdefault(code, {'code': code, 'name': name})
+            index_items = StockDataFetcher._load_stock_name_index(max_age_hours=48)
         except Exception:
-            pass
-        for code, name in CN_STOCK_NAMES_EXTENDED.items():
-            merged.setdefault(code, {'code': code, 'name': name})
-        stocks = [
-            s for s in merged.values()
-            if self._is_recommendable_board(s['code']) and 'ST' not in str(s.get('name', '')).upper()
-        ]
-        return stocks[:limit] if limit else stocks
+            logger.debug("Failed to load the strategy stock-name index", exc_info=True)
+        return strategy_pool.merge_strategy_stocks(
+            get_popular_cn_stocks(),
+            index_items,
+            limit=limit,
+            extended_names=CN_STOCK_NAMES_EXTENDED,
+            predicate=self._is_recommendable_board,
+        )
 
     def _get_strategy_sector_stocks(self, sector_name):
         """获取指定板块策略股票池：沪深主板 + 创业板。"""
-        return [
-            s for s in SECTOR_STOCKS.get(sector_name, [])
-            if self._is_recommendable_board(s['code']) and 'ST' not in str(s.get('name', '')).upper()
-        ]
+        return strategy_pool.strategy_sector_stocks(
+            sector_name,
+            sector_stocks=SECTOR_STOCKS,
+            predicate=self._is_recommendable_board,
+        )
 
     # 行业缓存（东方财富F10 API，首次查询后复用）
     _sector_cache = {}
@@ -2286,38 +2296,30 @@ class StockRecommender:
         return [row["name"] for row in self._get_short_term_hot_board_rows(limit=10)]
 
     def _get_short_term_hot_board_rows(self, limit=10):
-        names = []
-        seen = set()
-
-        def append_row(item):
-            value = item.get("板块") or item.get("行业") or item.get("概念") or item.get("名称")
-            name = str(value or "").strip()
-            if name and name not in seen:
-                seen.add(name)
-                names.append({
-                    "name": name,
-                    "code": str(item.get("代码") or item.get("code") or "").strip(),
-                    "category": str(item.get("类别") or item.get("category") or "").strip(),
-                    "leader": str(item.get("领涨股") or item.get("领涨股票") or "").strip(),
-                })
+        failures = []
 
         sector_rows = []
         concept_rows = []
         try:
             sector_rows = self.get_hot_sectors_cn(limit=limit) or []
-        except Exception:
-            pass
+        except Exception as exc:
+            failures.append(f"行业板块: {type(exc).__name__}")
+            logger.debug("Short-term industry board ranking failed", exc_info=True)
         try:
             concept_rows = self.get_hot_concepts_cn(limit=limit) or []
-        except Exception:
-            pass
-        for idx in range(max(len(concept_rows), len(sector_rows))):
-            if idx < len(concept_rows):
-                append_row(concept_rows[idx])
-            if idx < len(sector_rows):
-                append_row(sector_rows[idx])
-            if len(names) >= limit:
-                break
+        except Exception as exc:
+            failures.append(f"概念板块: {type(exc).__name__}")
+            logger.debug("Short-term concept board ranking failed", exc_info=True)
+        names = board_rankings.merge_short_term_hot_board_rows(sector_rows, concept_rows, limit=limit)
+        self.last_board_ranking_diagnostics["short_term_hot_boards"] = {
+            "status": "fresh" if names else "unavailable",
+            "count": len(names[:limit]),
+            "source_counts": {
+                "industry": len(sector_rows),
+                "concept": len(concept_rows),
+            },
+            "fallback_errors": failures,
+        }
         return names[:limit]
 
     @staticmethod

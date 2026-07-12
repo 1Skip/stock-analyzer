@@ -27,6 +27,25 @@
 - `data_fetcher.py`、`stock_recommendation.py` 的路径、股票名、运行时和催化文本辅助函数机械迁移到独立模块；股票池、过滤、评分、排序、推荐数量和 A 股日 K 数据源优先级均未改变。
 - 删除两份已无用途的临时补丁脚本，`.tmp/` 加入忽略列表，避免 Windows pytest 临时目录进入提交。
 
+## 可维护性、持久化与失败诊断
+
+- 自选股文件复用 `data/file_lock.py` 的线程锁、跨进程锁和原子替换；添加、移除、清空只有在落盘成功后才更新当前 session，保存失败时返回失败并保留原页面状态和原文件。损坏 JSON、结构异常和读写失败只记录文件名与异常类型，不把绝对路径或异常正文写入日志。
+- 批量实时行情新增调用级诊断，记录批量分片失败、单股补拉、最终缺失和异常类型；热门榜的沪市/深市批量失败也收敛为单条聚合日志。现有数据源顺序、超时、返回结构和 fallback 顺序未改变。
+- 板块成分和短线热门板块回退写入现有 `last_board_ranking_diagnostics`，可区分在线新鲜结果、缓存命中、部分源失败和全部不可用，不再把关键异常全部表现为空列表。
+
+## 推荐辅助层拆分
+
+- `StockRecommender` 原方法名继续作为兼容门面，主板/创业板判断、经典短线沪深交替取样、策略股票池合并和板块股票池过滤统一委托给 `recommendation_modules/strategy_pool.py`。
+- 短线热门行业/概念的交错合并与去重迁入 `recommendation_modules/board_rankings.py`，核心类只保留数据源调用和诊断编排。
+- 同一 mock 输入下的股票代码、顺序、限制、评分、诊断字段和推荐结果契约继续由行为测试保护；股票池、过滤、评分、排序、推荐数量、T+1 缓存键和 `trade_plan` 边界均未改变。
+
+## CI 与测试门禁
+
+- 非 `network` 测试通过自动夹具默认阻断外部 DNS、Python socket 和 `curl_cffi` 请求，仅允许 localhost/回环地址；真实联网测试必须显式标记 `@pytest.mark.network`，未注册 marker 会直接失败。
+- GitHub Actions 的 Python 3.11 任务采集应用源码覆盖率并执行 `66.5%` 跨平台基线，Python 3.12 继续执行兼容性测试；Windows/Python 3.14 本地最终覆盖率为 `67.90%`，待 GitHub Actions 首次实测后再决定是否收紧。
+- Ruff 新增 `B006/B012/B017/B023/B025/E722/F601/F602/F811` 等高风险规则，并修复现有循环闭包绑定和可变默认参数问题；没有开启导入排序等大范围格式治理。
+- 个股分析页四组依赖源码文本和语句顺序的断言已改为直接执行缓存归属、输入切换、清理和同步函数的行为测试，并用 AST 结构检查保留页面入口调用这些 helper 的接线契约。
+
 ## 系统状态与真实数据契约
 
 - 系统状态页新增“检测数据源”按钮；只有用户点击后才抽样检查历史 K 线、批量实时行情和扩展信息，外层总超时为 30 秒，不生成推荐计划。
@@ -41,7 +60,7 @@
 
 ## 验证
 
-- `.venv\Scripts\python.exe -m pytest -q --basetemp=.tmp\pytest-push-final-20260712b` 通过，`965 passed, 20 warnings`。
+- `.venv\Scripts\python.exe -m pytest tests\ -q -m "not network" --cov=. --cov-report=term --cov-report=xml --cov-fail-under=66.5 --basetemp=.tmp\pytest-root-full-review-final` 通过，`983 passed, 20 warnings`，应用源码覆盖率 `67.90%`。
 - `.venv\Scripts\python.exe -m ruff check .` 通过。
 - `.venv\Scripts\python.exe -m scripts.check_offline_data_contracts` 通过。
 - `.venv\Scripts\python.exe -m scripts.check_doc_encoding` 通过。

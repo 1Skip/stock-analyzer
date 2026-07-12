@@ -135,3 +135,22 @@ def test_hot_indices_uses_ths_hotlist():
 
     assert board_rankings.hot_indices(owner, 1) == [{"name": "index"}]
     assert owner.calls == [("index_hotlist", 1)]
+
+
+def test_merge_short_term_hot_board_rows_interleaves_and_deduplicates():
+    sectors = [
+        {"板块": "行业A", "代码": "881001", "类别": "行业", "领涨股": "甲"},
+        {"板块": "重复板块", "代码": "881002", "类别": "行业"},
+    ]
+    concepts = [
+        {"板块": "概念A", "代码": "301001", "类别": "概念", "领涨股票": "乙"},
+        {"板块": "重复板块", "代码": "301002", "类别": "概念"},
+    ]
+
+    result = board_rankings.merge_short_term_hot_board_rows(sectors, concepts, limit=4)
+
+    assert result == [
+        {"name": "概念A", "code": "301001", "category": "概念", "leader": "乙"},
+        {"name": "行业A", "code": "881001", "category": "行业", "leader": "甲"},
+        {"name": "重复板块", "code": "301002", "category": "概念", "leader": ""},
+    ]

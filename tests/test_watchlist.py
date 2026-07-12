@@ -1,5 +1,6 @@
 """自选股管理模块测试"""
 import json
+import logging
 import pytest
 import streamlit as st
 
@@ -54,11 +55,23 @@ class TestInitWatchlist:
         watchlist.init_watchlist()
         assert st.session_state.watchlist[0]['symbol'] == '002609'
 
-    def test_corrupted_file_returns_empty(self, temp_watchlist_file):
+    def test_corrupted_file_returns_empty_with_sanitized_log(self, temp_watchlist_file, caplog):
         import watchlist
         temp_watchlist_file.write_text('not valid json', encoding='utf-8')
-        watchlist.init_watchlist()
+        with caplog.at_level(logging.WARNING, logger='watchlist'):
+            watchlist.init_watchlist()
         assert st.session_state.watchlist == []
+        assert '读取自选股文件失败' in caplog.text
+        assert 'JSONDecodeError' in caplog.text
+        assert str(temp_watchlist_file.parent) not in caplog.text
+
+    def test_invalid_file_structure_returns_empty(self, temp_watchlist_file, caplog):
+        import watchlist
+        temp_watchlist_file.write_text('{"symbol":"000001"}', encoding='utf-8')
+        with caplog.at_level(logging.WARNING, logger='watchlist'):
+            watchlist.init_watchlist()
+        assert st.session_state.watchlist == []
+        assert '自选股文件结构无效' in caplog.text
 
     def test_idempotent(self, temp_watchlist_file):
         """多次调用不会重置已有数据"""
@@ -101,6 +114,25 @@ class TestAddToWatchlist:
         saved = json.loads(temp_watchlist_file.read_text(encoding='utf-8'))
         assert len(saved) == 1
         assert saved[0]['symbol'] == '000001'
+        assert not list(temp_watchlist_file.parent.glob('*.lock'))
+        assert not list(temp_watchlist_file.parent.glob('*.tmp'))
+
+    def test_save_failure_keeps_session_unchanged(self, temp_watchlist_file, monkeypatch, caplog):
+        import watchlist
+
+        def fail_write(*args, **kwargs):
+            raise OSError('sensitive absolute path')
+
+        monkeypatch.setattr(watchlist, 'atomic_write_text', fail_write)
+        with caplog.at_level(logging.WARNING, logger='watchlist'):
+            success, msg = watchlist.add_to_watchlist('000001', '平安银行', 'CN')
+
+        assert success is False
+        assert '未更改' in msg
+        assert st.session_state.watchlist == []
+        assert not temp_watchlist_file.exists()
+        assert 'OSError' in caplog.text
+        assert 'sensitive absolute path' not in caplog.text
 
     def test_structure_has_required_fields(self, temp_watchlist_file):
         from watchlist import add_to_watchlist, get_watchlist
@@ -137,6 +169,24 @@ class TestRemoveFromWatchlist:
         saved = json.loads(temp_watchlist_file.read_text(encoding='utf-8'))
         assert len(saved) == 1
         assert saved[0]['symbol'] == '000002'
+
+    def test_remove_save_failure_rolls_back_session_and_file(self, temp_watchlist_file, monkeypatch):
+        import watchlist
+
+        watchlist.add_to_watchlist('000001', '平安银行', 'CN')
+        original_file = temp_watchlist_file.read_text(encoding='utf-8')
+        monkeypatch.setattr(
+            watchlist,
+            'atomic_write_text',
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError('write failed')),
+        )
+
+        success, msg = watchlist.remove_from_watchlist('000001', 'CN')
+
+        assert success is False
+        assert '未更改' in msg
+        assert st.session_state.watchlist[0]['symbol'] == '000001'
+        assert temp_watchlist_file.read_text(encoding='utf-8') == original_file
 
 
 # ============================================================
@@ -185,6 +235,24 @@ class TestClearWatchlist:
         clear_watchlist()
         saved = json.loads(temp_watchlist_file.read_text(encoding='utf-8'))
         assert saved == []
+
+    def test_clear_save_failure_rolls_back_session_and_file(self, temp_watchlist_file, monkeypatch):
+        import watchlist
+
+        watchlist.add_to_watchlist('000001', '平安银行', 'CN')
+        original_file = temp_watchlist_file.read_text(encoding='utf-8')
+        monkeypatch.setattr(
+            watchlist,
+            'atomic_write_text',
+            lambda *args, **kwargs: (_ for _ in ()).throw(OSError('write failed')),
+        )
+
+        success, msg = watchlist.clear_watchlist()
+
+        assert success is False
+        assert '未更改' in msg
+        assert st.session_state.watchlist[0]['symbol'] == '000001'
+        assert temp_watchlist_file.read_text(encoding='utf-8') == original_file
 
 
 # ============================================================

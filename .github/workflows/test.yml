@@ -27,5 +27,14 @@ jobs:
       - name: 静态检查（高信号规则）
         run: ruff check .
 
-      - name: 运行测试（跳过网络测试）
+      - name: 运行测试并校验覆盖率（Python 3.11）
+        if: matrix.python-version == '3.11'
+        # Windows/Python 3.14 实测 67.90%，首次跨平台基线保守取 66.5%。
+        run: >-
+          pytest tests/ -v -m "not network" --tb=short
+          --cov=. --cov-report=term-missing --cov-report=xml
+          --cov-fail-under=66.5
+
+      - name: 运行兼容性测试（Python 3.12）
+        if: matrix.python-version == '3.12'
         run: pytest tests/ -v -m "not network" --tb=short

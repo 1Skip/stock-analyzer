@@ -1,5 +1,8 @@
 ﻿"""UI workspace enhancement tests."""
 
+import ast
+from pathlib import Path
+
 import pandas as pd
 
 from ui.decision_dashboard import build_decision_snapshot, build_defense_dashboard, build_trade_plan
@@ -13,6 +16,77 @@ from ui.compare_page import (
 from ui.report_history_page import _list_reports
 from ui.stock_search import parse_suggestion_label, suggest_stock_inputs
 from ui.ai_analysis_ui import _agent_has_displayable_content, _has_meaningful_content
+
+
+def _analyze_page_entry():
+    tree = ast.parse(Path("ui/analyze_page.py").read_text(encoding="utf-8-sig"))
+    return next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "analyze_stock_page"
+    )
+
+
+def _call_names(node):
+    return {
+        child.func.id
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+    }
+
+
+def _body_call_names(statements):
+    names = set()
+    for statement in statements:
+        names.update(_call_names(statement))
+    return names
+
+
+def _analyze_page_has_target_and_result_guards():
+    entry = _analyze_page_entry()
+    target_guard = False
+    result_guard = False
+    for node in ast.walk(entry):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.IfExp):
+            targets = {target.id for target in node.targets if isinstance(target, ast.Name)}
+            target_guard = target_guard or (
+                "analyzed_target" in targets
+                and "_is_current_input_analyzed" in _call_names(node.value.test)
+                and "_get_analyzed_target" in _call_names(node.value.body)
+            )
+        if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.Or):
+            test_names = {child.id for child in ast.walk(node.test) if isinstance(child, ast.Name)}
+            result_guard = result_guard or (
+                "_is_current_input_analyzed" in _call_names(node.test)
+                and "has_fresh_task_result" in test_names
+                and "_render_analysis_results" in _body_call_names(node.body)
+            )
+    return target_guard and result_guard
+
+
+def _analyze_page_has_clear_and_sync_guards():
+    entry = _analyze_page_entry()
+    clear_guard = False
+    sync_guard = False
+    for node in ast.walk(entry):
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name):
+            clear_guard = clear_guard or (
+                node.test.id == "manual_analyze_clicked"
+                and "_clear_analyzed_result" in _body_call_names(node.body)
+            )
+        if isinstance(node, ast.If) and isinstance(node.test, ast.BoolOp) and isinstance(node.test.op, ast.And):
+            negated_names = {
+                child.operand.id
+                for child in ast.walk(node.test)
+                if isinstance(child, ast.UnaryOp)
+                and isinstance(child.op, ast.Not)
+                and isinstance(child.operand, ast.Name)
+            }
+            sync_guard = sync_guard or (
+                {"pending_watchlist_analysis", "pending_quick_match"} <= negated_names
+                and "_sync_analyze_input_to_cached_result" in _body_call_names(node.body)
+            )
+    return clear_guard and sync_guard
 
 
 def test_stock_search_suggests_popular_cn_aliases():
@@ -75,14 +149,34 @@ def test_long_running_pages_use_stable_loading_contexts():
 
 
 def test_analyze_page_keeps_analyzed_target_separate_from_input():
-    from pathlib import Path
+    import streamlit as st
+    from ui.analyze_page import (
+        _analysis_target_key,
+        _get_analyzed_target,
+        _is_current_input_analyzed,
+        _tag_analysis_data,
+    )
 
-    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    st.session_state.clear()
+    data = _tag_analysis_data(pd.DataFrame({"close": [10.0]}), "AAPL", "US", "1y")
+    st.session_state.update({
+        "analyzed_symbol": "AAPL",
+        "analyzed_stock_name": "Apple",
+        "analyzed_market": "US",
+        "analyzed_period": "1y",
+        "analyzed_target_key": _analysis_target_key("AAPL", "US", "1y"),
+        "analyzed_data": data,
+        "analyze_symbol_input": "MSFT",
+        "analyze_market": "US",
+        "analyze_period": "1y",
+    })
 
-    assert "st.session_state.analyzed_symbol = symbol" in source
-    assert "st.session_state.analyzed_market = market" in source
-    assert "st.session_state.analyzed_period = period" in source
-    assert "cached_symbol = st.session_state.get(\"analyzed_symbol\"" in source
+    assert _get_analyzed_target() == ("AAPL", "Apple", "US", "1y")
+    assert _is_current_input_analyzed() is False
+    st.session_state.analyze_symbol_input = "AAPL"
+    assert _is_current_input_analyzed() is True
+    assert _analyze_page_has_target_and_result_guards()
+    st.session_state.clear()
 
 
 def test_analyze_page_uses_single_unified_target_header():
@@ -116,41 +210,65 @@ def test_analyze_page_renders_stock_quant_snapshot_after_decision_dashboard():
 
 
 def test_analyze_page_hides_stale_result_when_input_changes():
-    from pathlib import Path
+    import streamlit as st
+    from ui.analyze_page import _clear_analyzed_result
 
-    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    st.session_state.clear()
+    st.session_state.update({
+        "analyzed_symbol": "000001",
+        "analyzed_market": "CN",
+        "analyzed_period": "1y",
+        "analyzed_target_key": ("000001", "CN", "1y"),
+        "analyzed_data": pd.DataFrame({"close": [10.0]}),
+        "analyze_symbol_input": "000002",
+        "unrelated_state": "keep",
+    })
 
-    assert "def _is_current_input_analyzed" in source
-    assert "analyzed_target = _get_analyzed_target() if _is_current_input_analyzed() else None" in source
-    assert "has_fresh_task_result" in source
-    assert "if _is_current_input_analyzed() or has_fresh_task_result" in source
-    assert "def _clear_analyzed_result" in source
-    assert "_clear_analyzed_result()" in source
+    _clear_analyzed_result()
+
+    assert "analyzed_symbol" not in st.session_state
+    assert "analyzed_target_key" not in st.session_state
+    assert "analyzed_data" not in st.session_state
+    assert st.session_state.unrelated_state == "keep"
+    assert _analyze_page_has_clear_and_sync_guards()
+    st.session_state.clear()
 
 
 def test_analyze_page_syncs_cached_result_when_returning_to_page():
-    from pathlib import Path
+    import streamlit as st
+    from ui.analyze_page import _analysis_target_key, _sync_analyze_input_to_cached_result, _tag_analysis_data
 
-    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    st.session_state.clear()
+    data = _tag_analysis_data(pd.DataFrame({"close": [10.0]}), "AAPL", "US", "6mo")
+    st.session_state.update({
+        "analyzed_symbol": "AAPL",
+        "analyzed_market": "US",
+        "analyzed_period": "6mo",
+        "analyzed_target_key": _analysis_target_key("AAPL", "US", "6mo"),
+        "analyzed_data": data,
+        "analyze_symbol_input": "MSFT",
+        "analyze_market": "CN",
+        "analyze_period": "1y",
+    })
 
-    assert "def _sync_analyze_input_to_cached_result" in source
-    assert "st.session_state.analyze_symbol_input = analyzed_symbol" in source
-    assert "if not pending_watchlist_analysis and not pending_quick_match:" in source
-    assert "_sync_analyze_input_to_cached_result()" in source
+    _sync_analyze_input_to_cached_result()
+
+    assert st.session_state.analyze_symbol == "AAPL"
+    assert st.session_state.analyze_symbol_input == "AAPL"
+    assert st.session_state.analyze_market_select == "US"
+    assert st.session_state.analyze_period_select == "6mo"
+    assert _analyze_page_has_clear_and_sync_guards()
+    st.session_state.clear()
 
 
 def test_analyze_page_binds_cached_result_to_target_key():
-    from pathlib import Path
+    from ui.analyze_page import _data_matches_target, _tag_analysis_data
 
-    source = Path("ui/analyze_page.py").read_text(encoding="utf-8")
+    data = _tag_analysis_data(pd.DataFrame({"close": [10.0]}), "1", "CN", "1y")
 
-    assert "def _analysis_target_key" in source
-    assert "def _has_valid_analyzed_result" in source
-    assert "def _tag_analysis_data" in source
-    assert "def _data_matches_target" in source
-    assert "st.session_state.analyzed_target_key = _analysis_target_key(symbol, market, period)" in source
-    assert "st.session_state.pending_analyze_input_sync" in source
-    assert "_analysis_target_key(" in source.split("has_fresh_task_result", 1)[1]
+    assert data.attrs["analysis_target_key"] == ("000001", "CN", "1y")
+    assert _data_matches_target(data, "000001", "CN", "1y") is True
+    assert _data_matches_target(data, "000002", "CN", "1y") is False
 
 
 def test_analyze_page_rejects_cross_symbol_quote_cache():

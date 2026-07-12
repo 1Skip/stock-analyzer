@@ -544,7 +544,11 @@ class AkShareInfoProvider:
         }
         metrics = {}
         for target, aliases in mapping.items():
-            matched = rows[rows[label_col].astype(str).apply(lambda text: any(alias in text for alias in aliases))]
+            matched = rows[
+                rows[label_col].astype(str).apply(
+                    lambda text, aliases=aliases: any(alias in text for alias in aliases)
+                )
+            ]
             if not matched.empty:
                 value = _safe_float(matched.iloc[0].get(latest_period))
                 if value is not None:
@@ -563,7 +567,11 @@ class AkShareInfoProvider:
         for period in sorted([str(col) for col in period_columns])[-4:]:
             row_payload: dict[str, Any] = {"period": period}
             for metric_name in metric_names:
-                rows = df[df[label_col].astype(str).apply(lambda text: metric_name == text or metric_name in text)]
+                rows = df[
+                    df[label_col].astype(str).apply(
+                        lambda text, metric_name=metric_name: metric_name == text or metric_name in text
+                    )
+                ]
                 if rows.empty:
                     continue
                 value = _safe_float(rows.iloc[0].get(period))

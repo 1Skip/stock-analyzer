@@ -1,11 +1,107 @@
 """
 测试夹具和共享工具
 """
+import ipaddress
+import socket
 import sys
+from urllib.parse import urlsplit
+
 import pytest
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+
+
+class ExternalNetworkBlocked(RuntimeError):
+    """非 network 测试尝试访问外网。"""
+
+
+def _is_loopback_host(host):
+    if host is None:
+        return True
+    if isinstance(host, bytes):
+        host = host.decode("ascii", errors="ignore")
+    normalized = str(host).strip().strip("[]").rstrip(".").lower()
+    if normalized == "localhost" or normalized.endswith(".localhost"):
+        return True
+    normalized = normalized.split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def block_external_network(request, monkeypatch):
+    """非 network 测试默认禁止外网，仅放行 localhost 和回环 IP。"""
+    if request.node.get_closest_marker("network") is not None:
+        yield
+        return
+
+    original_connect = socket.socket.connect
+    original_connect_ex = socket.socket.connect_ex
+    original_getaddrinfo = socket.getaddrinfo
+    original_gethostbyname = socket.gethostbyname
+    original_gethostbyname_ex = socket.gethostbyname_ex
+    try:
+        import curl_cffi.requests as curl_requests
+    except ImportError:
+        curl_requests = None
+
+    def ensure_local(host):
+        if not _is_loopback_host(host):
+            raise ExternalNetworkBlocked(
+                f"非 network 测试禁止外网访问: {host!r}；"
+                "真实联网测试请添加 @pytest.mark.network"
+            )
+
+    def guarded_connect(sock, address):
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            ensure_local(address[0])
+        return original_connect(sock, address)
+
+    def guarded_connect_ex(sock, address):
+        if sock.family in {socket.AF_INET, socket.AF_INET6}:
+            ensure_local(address[0])
+        return original_connect_ex(sock, address)
+
+    def guarded_getaddrinfo(host, *args, **kwargs):
+        ensure_local(host)
+        return original_getaddrinfo(host, *args, **kwargs)
+
+    def guarded_gethostbyname(host):
+        ensure_local(host)
+        return original_gethostbyname(host)
+
+    def guarded_gethostbyname_ex(host):
+        ensure_local(host)
+        return original_gethostbyname_ex(host)
+
+    def ensure_local_url(url):
+        ensure_local(urlsplit(str(url)).hostname)
+
+    monkeypatch.setattr(socket.socket, "connect", guarded_connect)
+    monkeypatch.setattr(socket.socket, "connect_ex", guarded_connect_ex)
+    monkeypatch.setattr(socket, "getaddrinfo", guarded_getaddrinfo)
+    monkeypatch.setattr(socket, "gethostbyname", guarded_gethostbyname)
+    monkeypatch.setattr(socket, "gethostbyname_ex", guarded_gethostbyname_ex)
+    if curl_requests is not None:
+        original_curl_request = curl_requests.Session.request
+
+        def guarded_curl_request(session, method, url, *args, **kwargs):
+            ensure_local_url(url)
+            return original_curl_request(session, method, url, *args, **kwargs)
+
+        monkeypatch.setattr(curl_requests.Session, "request", guarded_curl_request)
+        if hasattr(curl_requests, "AsyncSession"):
+            original_async_curl_request = curl_requests.AsyncSession.request
+
+            async def guarded_async_curl_request(session, method, url, *args, **kwargs):
+                ensure_local_url(url)
+                return await original_async_curl_request(session, method, url, *args, **kwargs)
+
+            monkeypatch.setattr(curl_requests.AsyncSession, "request", guarded_async_curl_request)
+    yield
 
 # ============================================================
 # Streamlit Mock — 在收集阶段设置，供所有测试使用

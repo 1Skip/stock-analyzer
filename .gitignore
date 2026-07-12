@@ -46,6 +46,7 @@ reports/history/
 
 # 测试
 .coverage
+coverage.xml
 .pytest_cache/
 .tmp/
 htmlcov/

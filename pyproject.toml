@@ -2,4 +2,32 @@
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+select = [
+    "B006",
+    "B012",
+    "B017",
+    "B023",
+    "B025",
+    "E722",
+    "E9",
+    "F601",
+    "F602",
+    "F63",
+    "F7",
+    "F811",
+    "F82",
+]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    ".venv/*",
+    "*/.venv/*",
+    "tests/*",
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_empty = true

@@ -54,7 +54,7 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
-    def calculate_rsi(data, periods=[6, 12, 24]):
+    def calculate_rsi(data, periods=(6, 12, 24)):
         """
         计算RSI指标 — MyTT（同花顺标准SMA算法）
         RSI = SMA(涨幅, N, 1) / SMA(|涨跌|, N, 1) × 100
@@ -141,7 +141,7 @@ class TechnicalIndicators:
         return df
 
     @staticmethod
-    def calculate_ma(data, periods=[5, 10, 20, 30, 60]):
+    def calculate_ma(data, periods=(5, 10, 20, 30, 60)):
         """
         计算移动平均线 — MyTT（同花顺标准算法）
         """

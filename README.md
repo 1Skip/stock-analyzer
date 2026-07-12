@@ -23,10 +23,12 @@
 - **样本可信度** — 相似形态统计展示原始匹配数、非重叠前向窗口去重后的有效样本、历史上涨占比及 Wilson 95% 区间，并明确标注“规则评分，尚未做收益校准”。
 - **手工成交可编辑** — 成交记录可展开查看、修改或删除；持有中记录可补录卖出信息转为已结记录，买卖价统一保留三位小数，保存后重算收益率和成功率，不重新运行推荐策略。
 - **经典版候选池安全** — 短线经典版继续保持纯技术口径，候选按沪深主板交替取样并排除 ST、退市风险名称，避免代码顺序截断导致只扫描沪市；不引入热门板块或实时排行条件。
-- **缓存与超时加固** — JSON 缓存统一使用线程锁、跨进程锁和原子写入，支持批量读写、过期条目压缩和孤儿临时文件清理；策略 K 线缓存增加并发写保护与过期清理，第三方接口超时改为共享限容执行器。辅助函数拆分仅调整工程结构，不改变股票池、过滤、评分、排序或数据源优先级。
-- **显式数据源诊断** — 系统状态页新增“检测数据源”按钮，点击后抽样检查真实历史 K 线、批量实时行情和扩展信息，不生成推荐；真实数据契约 GitHub Actions 保留手动入口，并在工作日 `08:30 UTC` 定时抽检。
+- **缓存、自选股与超时加固** — JSON 缓存统一使用线程锁、跨进程锁和原子写入，支持批量读写、过期条目压缩和孤儿临时文件清理；策略 K 线缓存增加并发写保护与过期清理，第三方接口超时改为共享限容执行器。自选股文件也改为锁保护和原子替换，落盘失败时保留原页面状态并明确返回失败，不再提示“假成功”。
+- **推荐辅助层继续拆分** — `StockRecommender` 保留原有兼容方法，但主板/创业板判断、经典短线沪深交替取样、策略股票池合并和热门板块交错整理已统一委托给 `recommendation_modules/`；股票池、过滤、评分、排序、推荐数量、缓存键和 T+1 语义保持不变。
+- **显式失败诊断** — 系统状态页保留用户主动触发的真实数据抽检；批量实时行情、热门榜和板块成分回退新增聚合诊断，区分新鲜结果、单股补拉、缓存命中、部分缺失和全部不可用，中间数据源失败仍继续尝试原有后备源。
+- **CI 维护门禁** — 非 `network` 测试默认禁止外网并允许 localhost，同时覆盖 `yfinance` 使用的 `curl_cffi` 传输层；Python 3.11 采集应用源码覆盖率并执行 `66.5%` 跨平台基线，Python 3.12 保留兼容测试。Ruff 增加循环闭包、可变默认参数、重复键和异常处理等高风险规则，首批个股页源码顺序断言已改为状态行为测试并保留 AST 接线契约。
 - **依赖约束** — 新增 `constraints.txt` 锁定当前验证过的直接依赖版本，项目最低 Python 版本统一为 3.11；本地启动脚本、Dev Container 和 GitHub Actions 统一使用 `pip install -r requirements.txt -c constraints.txt`。
-- **本轮验证** — 完整测试 `965 passed, 20 warnings`；Ruff、离线数据契约、文档编码和 `git diff --check` 均通过。未做浏览器实点，也未观察本次推送后的云端定时任务实际执行。
+- **本轮验证** — 完整断网测试 `983 passed, 20 warnings`，应用源码覆盖率 `67.90%`；Ruff、离线数据契约、文档编码和 `git diff --check` 均通过。未做浏览器实点，也未观察本次改动在 GitHub Actions Python 3.11/3.12 环境中的实际执行。
 
 ## 2026-06-28 智能推荐实盘结果记录更新
 
@@ -435,9 +437,10 @@ python main.py --schedule
 
 ```bash
 pytest tests/ -v                    # 全部测试
-pytest tests/ -v -m "not network"   # 跳过网络测试（离线环境）
+pytest tests/ -v -m "not network"   # 离线测试；默认阻断外网，仅允许 localhost
+pytest tests/ -q -m "not network" --cov=. --cov-report=term-missing --cov-fail-under=66.5  # 覆盖率门禁
 pytest tests/test_config.py tests/test_json_cache_keys.py tests/test_trade_plan.py tests/test_recommendation_strategy_contracts.py tests/test_unsafe_html_check.py tests/test_system_status_page.py -q  # 快速红线回归
-ruff check . --select E9,F63,F7,F82  # 静态高信号检查
+ruff check .                         # 仓库配置的高信号静态检查
 pytest tests/test_technical_indicators.py -v  # 单文件
 ```
 
