@@ -452,6 +452,20 @@ class TestGetStockDataCN:
                             lambda url, **kw: exec('raise Exception("network error")'))
 
         fetcher = StockDataFetcher()
+        monkeypatch.setattr(
+            fetcher,
+            '_retry_with_backoff',
+            lambda func, source, *args, **kwargs: func(*args, **kwargs),
+        )
+        for method_name in (
+            '_get_cn_stock_data_mootdx',
+            '_get_cn_stock_data_ths',
+            '_get_cn_stock_data_akshare',
+            '_get_cn_stock_data_akshare_em',
+            '_get_cn_stock_data_sina_fallback',
+            '_get_cn_stock_data_yfinance',
+        ):
+            monkeypatch.setattr(fetcher, method_name, lambda *args, **kwargs: None)
         monkeypatch.setattr(fetcher, '_load_offline_cache', lambda s, **kwargs: None)
         monkeypatch.setattr(fetcher, '_save_offline_cache', lambda s, d, **kwargs: None)
         assert fetcher.get_stock_data('000001', period='1y', market='CN') is None
@@ -687,9 +701,10 @@ class TestGetStockInfo:
         info = fetcher.get_stock_info('000001', market='CN')
         assert info['shortName'] == '平安银行'
 
-    def test_cn_unknown_returns_symbol(self):
+    def test_cn_unknown_returns_symbol(self, monkeypatch):
         from data_fetcher import StockDataFetcher
         fetcher = StockDataFetcher()
+        monkeypatch.setattr(fetcher, '_retry_with_backoff', lambda *args, **kwargs: None)
         info = fetcher.get_stock_info('XYZ999', market='CN')
         assert info['symbol'] == 'XYZ999'
 
