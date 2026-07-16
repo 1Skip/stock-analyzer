@@ -397,6 +397,7 @@ def test_recommendation_service_persists_t1_plan_without_changing_strategy(monke
         result_cache=cache,
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
 
     plan = service.run_t1_plan("激进突破型", "全部", 5)
     latest = service.latest_t1_plan("激进突破型", "全部", 5)
@@ -511,6 +512,7 @@ def test_manual_trade_outcome_rounds_prices_to_three_decimals():
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     service.manual_trade_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
@@ -587,6 +589,7 @@ def test_manual_trade_record_can_be_deleted_by_record_key():
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     service.manual_trade_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
@@ -617,6 +620,7 @@ def test_manual_trade_holding_record_can_be_edited_to_closed():
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     service.manual_trade_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
@@ -661,6 +665,7 @@ def test_manual_trade_outcome_alerts_when_samples_are_enough():
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     service.manual_trade_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
@@ -693,6 +698,7 @@ def test_manual_trade_outcome_rejects_non_recommended_symbol():
         result_cache=FakeCache(),
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     service.manual_trade_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
@@ -766,6 +772,7 @@ def test_t1_plan_records_preheat_and_elapsed_metrics_without_changing_strategy(m
         result_cache=cache,
     )
     service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
     monkeypatch.setattr(service, "_preheat_kline_cache", lambda: {"status": "ok", "total": 2, "refreshed": 2, "failed": 0})
     monkeypatch.setattr(service, "_preheat_extended_info_cache", lambda recommended: {"status": "ok", "total": len(recommended), "refreshed": len(recommended), "failed": 0})
 

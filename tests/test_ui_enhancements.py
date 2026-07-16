@@ -2032,6 +2032,15 @@ def test_backtest_page_keeps_input_and_result_state_separate():
     assert "_backtest_target_matches_input(current_result, symbol_input, market, period, eval_window)" in source
 
 
+def test_backtest_excess_return_uses_a_share_color_and_arrow_direction():
+    from backtest_ui import _backtest_delta_style
+
+    assert _backtest_delta_style(10.81) == ("red", "up")
+    assert _backtest_delta_style(-2.5) == ("green", "down")
+    assert _backtest_delta_style(0) == ("gray", "off")
+    assert _backtest_delta_style(None) == ("gray", "off")
+
+
 def test_settings_page_removed_from_app_shell():
     from pathlib import Path
 
@@ -2050,6 +2059,14 @@ def test_market_temperature_fetches_indices_concurrently():
     assert "wait(futures, timeout=3)" in source
     assert "executor.shutdown(wait=False, cancel_futures=True)" in source
     assert "executor.submit(quote_service.get_index_realtime, code)" in source
+
+
+def test_market_temperature_delta_uses_a_share_color_and_arrow_direction():
+    from ui.sidebar import _market_metric_delta
+
+    assert _market_metric_delta(1.32) == ("上涨", "red", "up")
+    assert _market_metric_delta(-1.32) == ("下跌", "green", "down")
+    assert _market_metric_delta(0) == ("平盘", "gray", "off")
 
 
 def test_index_realtime_uses_sina_fast_source_first():

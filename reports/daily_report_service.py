@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 from typing import Any
 
 from config import (
@@ -19,6 +20,9 @@ from reports.decision_cards import build_decision_card_markdown
 from reports.exporter import save_markdown_report
 from recommendation_service import RecommendationService
 from stock_recommendation import StockRecommender
+
+
+logger = logging.getLogger(__name__)
 
 
 class DailyReportService:
@@ -53,7 +57,8 @@ class DailyReportService:
             "market_indices": self._get_market_indices(),
             "watchlist": watchlist_summary,
             "recommendations": self._get_recommendations() if include_recommendations else [],
-            "t1_plan_history": self._get_t1_plan_history() if include_recommendations else {},
+            # Reading saved T+1 outcomes is read-only and does not rescan the stock pool.
+            "t1_plan_history": self._get_t1_plan_history(),
             "extended_info": extended_info,
             "decisions": decision_map,
             "debates": self._get_debate_results(watchlist_summary, extended_info, decision_map),
@@ -105,6 +110,7 @@ class DailyReportService:
         try:
             return self.recommendation_service.evaluate_t1_plan_history(limit=10)
         except Exception:
+            logger.exception("读取 T+1 历史计划回看失败")
             return {}
 
     def _collect_focus_symbols(self, watchlist_items: list[dict[str, Any]]) -> list[dict[str, str]]:

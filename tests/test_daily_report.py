@@ -173,6 +173,28 @@ class TestDailyReportService:
         assert data["extended_info"][0]["symbol"] == "000001"
         assert data["recommendations"] == []
 
+    def test_build_report_data_keeps_t1_history_without_recommendation_pool(self, monkeypatch):
+        service = DailyReportService(
+            quote_service=object(),
+            info_service=object(),
+            recommender=object(),
+        )
+        history = {
+            "summary": {
+                "plans": 1,
+                "total_items": 2,
+                "completed_items": 1,
+            },
+        }
+        monkeypatch.setattr(service, "_get_t1_plan_history", lambda: history)
+        monkeypatch.setattr(service, "_load_watchlist", lambda: [])
+        monkeypatch.setattr(service, "_get_market_indices", lambda: [])
+
+        data = service.build_report_data(report_date="2026-05-13", include_recommendations=False)
+
+        assert data["recommendations"] == []
+        assert data["t1_plan_history"] == history
+
     def test_decision_score_and_risk_lines(self):
         service = DailyReportService(quote_service=object(), info_service=object(), recommender=object())
 

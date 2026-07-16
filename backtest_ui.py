@@ -15,6 +15,17 @@ from config import (
 )
 
 
+def _backtest_delta_style(value):
+    """Return A-share color and arrow settings for a metric delta."""
+    if value is None:
+        return "gray", "off"
+    if value > 0:
+        return "red", "up"
+    if value < 0:
+        return "green", "down"
+    return "gray", "off"
+
+
 def _resolve_backtest_target(query: str, market: str) -> tuple[str, str]:
     """把回测输入解析为股票代码和名称。"""
     query = str(query or "").strip()
@@ -148,11 +159,13 @@ def _render_backtest_result(result):
     excess_ret = summary.get("excess_return_pct")
     m11, m12, _, _, _ = st.columns(5)
     m11.metric("同期大盘", f"{bench_ret:+.2f}%" if bench_ret is not None else "N/A", delta=None)
+    excess_color, excess_arrow = _backtest_delta_style(excess_ret)
     m12.metric(
         "超额收益",
         f"{excess_ret:+.2f}%" if excess_ret is not None else "N/A",
         delta=f"{excess_ret:+.2f}%" if excess_ret is not None else None,
-        delta_color="normal",
+        delta_color=excess_color,
+        delta_arrow=excess_arrow,
     )
 
     risk_summary = build_backtest_risk_summary(results)

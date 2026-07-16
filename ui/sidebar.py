@@ -13,6 +13,15 @@ from watchlist import (
 from ui.cached_data import quote_service
 
 
+def _market_metric_delta(pct):
+    """Return A-share delta text, color, and arrow direction."""
+    if pct > 0:
+        return "上涨", "red", "up"
+    if pct < 0:
+        return "下跌", "green", "down"
+    return "平盘", "gray", "off"
+
+
 def _open_watchlist_stock_in_main(symbol, market, name=None):
     """打开自选股对应的个股分析主页面。"""
     st.session_state.analyze_symbol = symbol
@@ -65,8 +74,14 @@ def display_market_temperature():
     st.caption("大盘温度")
     for idx in indices:
         pct = idx["change_pct"]
-        direction = "上涨" if pct > 0 else ("下跌" if pct < 0 else "平盘")
-        st.metric(str(idx["name"]), f"{idx['price']:.2f}", f"{direction} {pct:+.2f}%")
+        direction, delta_color, delta_arrow = _market_metric_delta(pct)
+        st.metric(
+            str(idx["name"]),
+            f"{idx['price']:.2f}",
+            f"{direction} {pct:+.2f}%",
+            delta_color=delta_color,
+            delta_arrow=delta_arrow,
+        )
 
 
 def display_watchlist_sidebar():
