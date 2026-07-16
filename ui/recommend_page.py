@@ -92,9 +92,9 @@ def _sector_options_for_strategy(strategy):
     if strategy in ("激进突破型", "多因子稳健型"):
         return ["全部"]
     if strategy == "短线经典版":
-        return ["全部"]
+        return ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
     if strategy == "短线":
-        return ["全部", "苹果概念", "特斯拉概念"]
+        return ["全部"]
     return ["全部"]
 
 
@@ -1016,7 +1016,7 @@ def recommended_stocks_page():
     if strategy == "短线":
         st.info("基于MACD、RSI、KDJ、布林带等技术指标，筛选沪深主板短线候选；创业板、科创板、北交所不进入推荐池。")
     elif strategy == "短线经典版":
-        st.info("经典短线：回到原始纯技术口径，只扫描沪深主板候选池，使用成交量、MACD、RSI、KDJ、BOLL 技术过滤，不启用热门板块、基本面、财报、资金流、消息面和四项形态硬过滤。")
+        st.info("经典短线：回到原始纯技术口径，可按全部、苹果概念、特斯拉概念、电力或算力租赁限定沪深主板候选池，只使用成交量、MACD、RSI、KDJ、BOLL 技术过滤，不启用热门板块、基本面、财报、资金流、消息面和四项形态硬过滤。")
     elif strategy == "激进突破型":
         st.info("纯量价突破策略：市值300亿以下、MA5>MA10>MA20、收盘价创20日新高、成交量大于前5日均量1.2倍；范围为沪深主板+创业板，排除科创板/北交所/ST。")
     else:

@@ -1,5 +1,7 @@
 ﻿from recommendation_service import RecommendationService
 
+import pytest
+
 
 class FakeCache:
     def __init__(self):
@@ -95,6 +97,10 @@ class FakeRecommender:
         self.called.append(("classic_short", num_stocks, False))
         return [_stock("002005", "短线经典版")]
 
+    def get_classic_sector_short_term_recommendations(self, sector, num_stocks):
+        self.called.append(("classic_sector_short", sector, num_stocks, False))
+        return [_stock("002006", "短线经典版")]
+
     def get_sector_short_term_recommendations(self, sector, num_stocks):
         self.called.append(("sector_short", sector, num_stocks, False))
         return [_stock("002004", "短线")]
@@ -164,6 +170,20 @@ def test_recommendation_service_keeps_short_term_available():
     assert result["diagnostics"]["short_term_learning"]["status"] in ("active", "insufficient_samples")
 
 
+def test_recommendation_service_rejects_short_term_sector_route():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    with pytest.raises(ValueError, match="短线仅支持全部板块"):
+        service.run("短线", "苹果概念", 5)
+
+    assert recommender.called == []
+
+
 def test_recommendation_service_routes_classic_short_term_without_pattern_filters():
     recommender = FakeRecommender()
     service = RecommendationService(
@@ -178,6 +198,21 @@ def test_recommendation_service_routes_classic_short_term_without_pattern_filter
     assert result["title"] == "短线经典版推荐"
     assert result["recommended"][0]["strategy"] == "短线经典版"
     assert result["diagnostics"]["short_term_learning"]["enabled"] is True
+
+
+def test_recommendation_service_routes_classic_short_term_sector():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("短线经典版", "电力", 5)
+
+    assert recommender.called == [("classic_sector_short", "电力", 5, False)]
+    assert result["title"] == "电力 短线经典版推荐"
+    assert result["recommended"][0]["strategy"] == "短线经典版"
 
 
 def test_recommendation_service_rejects_long_term_strategy():

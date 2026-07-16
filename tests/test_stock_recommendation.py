@@ -103,11 +103,19 @@ class TestSectorStocks:
         from stock_recommendation import SECTOR_STOCKS
         assert '苹果概念' in SECTOR_STOCKS
         assert '特斯拉概念' in SECTOR_STOCKS
+        assert '电力' in SECTOR_STOCKS
+        assert '算力租赁' in SECTOR_STOCKS
 
     def test_each_sector_has_min_5_stocks(self):
         from stock_recommendation import SECTOR_STOCKS
         for sector, stocks in SECTOR_STOCKS.items():
             assert len(stocks) >= 5, f"{sector} 只有 {len(stocks)} 只股票"
+
+    def test_compute_rental_fallback_uses_correct_stock_name(self):
+        from stock_recommendation import SECTOR_STOCKS
+
+        stocks = {item['code']: item['name'] for item in SECTOR_STOCKS['算力租赁']}
+        assert stocks['000938'] == '紫光股份'
 
     def test_stocks_have_code_and_name(self):
         from stock_recommendation import SECTOR_STOCKS
@@ -2264,6 +2272,31 @@ class TestGetSectorShortTerm:
                             lambda self, code, market='CN': _mock_short_analysis(code))
         assert recommender.get_sector_short_term_recommendations('电力', num_stocks=5) == []
         assert recommender.get_sector_short_term_recommendations('算力租赁', num_stocks=5) == []
+
+    def test_classic_sector_uses_pure_technical_analysis(self, recommender, monkeypatch):
+        calls = []
+
+        def analyze(self, code, market='CN', include_context=True):
+            calls.append((code, include_context))
+            return _mock_short_analysis(code)
+
+        monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term', analyze)
+        monkeypatch.setattr(
+            'stock_recommendation.StockRecommender._get_board_constituent_stocks',
+            lambda self, board_name, board_code=None, board_category=None: [
+                {'code': '600900', 'name': '长江电力'},
+                {'code': '300001', 'name': '创业板样本'},
+            ],
+        )
+
+        result = recommender.get_classic_sector_short_term_recommendations('电力', num_stocks=3)
+
+        assert [code for code, _ in calls] == ['600900']
+        assert all(include_context is False for _, include_context in calls)
+        assert result[0]['strategy'] == '短线经典版'
+        assert result[0]['sector'] == '电力'
+        assert recommender.last_short_term_diagnostics['pool_mode'] == '主板纯技术板块池'
+        assert recommender.last_short_term_diagnostics['hot_boards'] == 0
 
     def test_hot_board_is_auxiliary_for_allowed_sector(self, recommender, monkeypatch):
         monkeypatch.setattr('stock_recommendation.StockRecommender._analyze_short_term',

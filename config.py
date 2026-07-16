@@ -192,13 +192,13 @@ T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "true").lower() == "tru
 T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
 _T1_PLAN_STRATEGIES_RAW = os.getenv(
     "T1_PLAN_STRATEGIES",
-    os.getenv("T1_PLAN_STRATEGY", "短线,多因子稳健型,激进突破型"),
+    os.getenv("T1_PLAN_STRATEGY", "短线,短线经典版,多因子稳健型,激进突破型"),
 )
 T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(",") if item.strip()]
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
 _T1_PLAN_SECTORS_RAW = os.getenv(
     "T1_PLAN_SECTORS",
-    os.getenv("T1_PLAN_SECTOR", "苹果概念,特斯拉概念"),
+    os.getenv("T1_PLAN_SECTOR", "苹果概念,特斯拉概念,电力,算力租赁"),
 )
 T1_PLAN_SECTORS = [item.strip() for item in _T1_PLAN_SECTORS_RAW.split(",") if item.strip()]
 T1_PLAN_SECTOR = T1_PLAN_SECTORS[0] if T1_PLAN_SECTORS else "全部"

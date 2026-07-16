@@ -77,6 +77,12 @@ SHORT_TERM_SECTOR_THS_CODES = {
     "苹果概念": {"code": "300309", "category": "概念"},
     "特斯拉概念": {"code": "301121", "category": "概念"},
 }
+CLASSIC_SHORT_TERM_ALLOWED_SECTORS = ("苹果概念", "特斯拉概念", "电力", "算力租赁")
+CLASSIC_SHORT_TERM_SECTOR_THS_CODES = {
+    **SHORT_TERM_SECTOR_THS_CODES,
+    "电力": {"code": "881145", "category": "行业"},
+    "算力租赁": {"code": "309068", "category": "概念"},
+}
 SHORT_TERM_HOT_BOARD_BONUS = 5
 WENCAI_BOARD_RANKING_TIMEOUT_SECONDS = 8
 WENCAI_COOKIE_ENV_KEYS = ("WENCAI_COOKIE", "IWENCAI_COOKIE")
@@ -1817,6 +1823,86 @@ class StockRecommender:
                     record_failure(failure)
 
         results.sort(key=lambda x: x['score'], reverse=True)
+        diagnostics["result_count"] = len(results[:num_stocks])
+        self.last_short_term_diagnostics = diagnostics
+        return results[:num_stocks]
+
+    def get_classic_sector_short_term_recommendations(self, sector_name, num_stocks=5):
+        """获取指定板块的经典短线推荐，只执行纯技术过滤。"""
+        if sector_name not in CLASSIC_SHORT_TERM_ALLOWED_SECTORS:
+            self.last_short_term_diagnostics = {
+                "strategy": "短线经典版",
+                "sector": sector_name,
+                "raw_pool": 0,
+                "result_count": 0,
+                "pool_mode": "主板纯技术板块池",
+                "failures": {"不支持的经典短线板块": 1},
+            }
+            return []
+
+        ths_info = CLASSIC_SHORT_TERM_SECTOR_THS_CODES.get(sector_name, {})
+        dynamic_stocks = self._get_board_constituent_stocks(
+            sector_name,
+            board_code=ths_info.get("code"),
+            board_category=ths_info.get("category"),
+        )
+        sector_stocks = [
+            stock for stock in dynamic_stocks
+            if self._is_main_board(stock.get("code"))
+            and "ST" not in str(stock.get("name") or "").upper()
+            and "退" not in str(stock.get("name") or "")
+        ]
+        if not sector_stocks:
+            sector_stocks = self._get_main_board_sector_stocks(sector_name)
+
+        results = []
+        diagnostics = {
+            "strategy": "短线经典版",
+            "sector": sector_name,
+            "hot_boards": 0,
+            "raw_pool": len(sector_stocks),
+            "analyzed": 0,
+            "technical_passed": 0,
+            "pattern_passed": None,
+            "result_count": 0,
+            "pool_mode": "主板纯技术板块池",
+            "failures": {},
+            "removed_filters": ["二板以上涨幅", "回调天数", "回调幅度", "放量反包/涨停板"],
+            "disabled_context": ["热门板块", "基本面/估值", "财报/盈利", "资金流", "消息面", "美股联动"],
+        }
+
+        def record_failure(reason):
+            failures = diagnostics.setdefault("failures", {})
+            failures[reason] = failures.get(reason, 0) + 1
+
+        def analyze_one(stock):
+            try:
+                analysis = self._analyze_short_term(stock["code"], market="CN", include_context=False)
+                if not analysis:
+                    return None, "K线/指标数据不足", False
+                if not self._short_term_technical_filter_passes(analysis):
+                    hit_count = (analysis.get("strategy_checks") or {}).get("技术命中数")
+                    return None, f"技术命中不足({hit_count or 0}/5)", False
+                analysis["name"] = stock["name"]
+                analysis["sector"] = sector_name
+                analysis["strategy"] = "短线经典版"
+                return analysis, None, True
+            except Exception as exc:
+                return None, f"分析异常:{str(exc)[:40]}", False
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(analyze_one, stock): stock for stock in sector_stocks}
+            for future in as_completed(futures):
+                result, failure, technical_passed = future.result()
+                diagnostics["analyzed"] += 1
+                if technical_passed:
+                    diagnostics["technical_passed"] += 1
+                if result:
+                    results.append(result)
+                elif failure:
+                    record_failure(failure)
+
+        results.sort(key=lambda x: x["score"], reverse=True)
         diagnostics["result_count"] = len(results[:num_stocks])
         self.last_short_term_diagnostics = diagnostics
         return results[:num_stocks]

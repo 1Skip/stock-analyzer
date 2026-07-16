@@ -579,18 +579,18 @@ class RecommendationService:
         diagnostics: dict[str, Any] = {}
         _emit_progress(progress_callback, "执行策略", 15, {"strategy": strategy, "sector": sector})
         if strategy == "短线":
-            if sector == "全部":
-                recommended = self.recommender.get_short_term_recommendations(num_stocks)
-                title = "短线推荐"
-            else:
-                recommended = self.recommender.get_sector_short_term_recommendations(sector, num_stocks)
-                title = f"{sector} 短线推荐"
+            if sector != "全部":
+                raise ValueError("短线仅支持全部板块")
+            recommended = self.recommender.get_short_term_recommendations(num_stocks)
+            title = "短线推荐"
             diagnostics = getattr(self.recommender, "last_short_term_diagnostics", {})
         elif strategy == "短线经典版":
-            if sector != "全部":
-                raise ValueError("短线经典版仅支持全部板块")
-            recommended = self.recommender.get_classic_short_term_recommendations(num_stocks)
-            title = "短线经典版推荐"
+            if sector == "全部":
+                recommended = self.recommender.get_classic_short_term_recommendations(num_stocks)
+                title = "短线经典版推荐"
+            else:
+                recommended = self.recommender.get_classic_sector_short_term_recommendations(sector, num_stocks)
+                title = f"{sector} 短线经典版推荐"
             diagnostics = getattr(self.recommender, "last_short_term_diagnostics", {})
         elif strategy == "激进突破型":
             if sector == "全部":
