@@ -7,10 +7,11 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def scheduler_defaults(monkeypatch):
-    """调度单元测试默认关闭日报，并清空自选股。"""
+def scheduler_defaults(monkeypatch, tmp_path):
+    """调度单元测试默认关闭日报，并隔离本地运行状态。"""
     monkeypatch.setattr("scheduler.DAILY_REPORT_ENABLED", False)
     monkeypatch.setattr("scheduler._load_watchlist_from_file", lambda: [])
+    monkeypatch.setattr("scheduler.SCHEDULER_STATUS_PATH", tmp_path / "scheduler_status.json")
 
 
 class TestSchedulerImport:

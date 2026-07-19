@@ -16,6 +16,7 @@ from config import (
     CACHE_TTL_STRATEGY_KLINE,
     RUNTIME_CACHE_DIR,
 )
+from data.periods import period_for_start_date
 
 
 _REQUIRED_STOCK_FIELDS = ("symbol", "name", "score", "rating", "latest_price", "indicators", "signals")
@@ -676,7 +677,8 @@ def _evaluate_stock_outcome(
     if not symbol or not entry_price:
         return {**base, "status": "skipped", "reason": "缺少代码或计划价"}
     try:
-        data = quote_service.get_stock_data(symbol, period="3mo", market="CN")
+        history_period = period_for_start_date(generated_date) if generated_date else "3mo"
+        data = quote_service.get_stock_data(symbol, period=history_period, market="CN")
     except Exception as exc:
         return {**base, "status": "failed", "reason": str(exc)}
     if data is None or getattr(data, "empty", True):

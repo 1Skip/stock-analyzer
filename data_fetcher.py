@@ -46,6 +46,7 @@ from data.providers.sina_intraday_provider import SinaIntradayProvider
 from data.providers.sina_realtime_provider import SinaRealtimeProvider
 from data.providers.yahoo_kline_provider import YahooKlineProvider
 from data.providers.yahoo_quote_provider import YahooQuoteProvider
+from data.periods import get_period_spec, tag_period_coverage
 from data.runtime import run_with_timeout
 
 logger = logging.getLogger(__name__)
@@ -364,6 +365,7 @@ class StockDataFetcher:
 
     def get_stock_data(self, symbol, period="1y", interval="1d", market="US", use_cache=True, adjust=""):
         """获取股票历史数据 - 带重试机制、数据源追踪、离线模式"""
+        period_spec = get_period_spec(period)
         cache_key = f"{symbol}_{period}_{interval}_{market}_{adjust or 'raw'}"
 
         # 使用锁防止重复请求
@@ -420,13 +422,22 @@ class StockDataFetcher:
                         if src_name != self.preferred_source and self._health_status[src_name]['healthy']:
                             sources_to_try.append((src_name, src_func))
 
-                # 尝试所有数据源
-                stale_result = None
-                stale_source_name = None
+                # 同时校验最新交易日和请求周期覆盖，避免短历史被误当成长周期。
+                source_labels = {
+                    'mootdx': '通达信mootdx',
+                    'ths': '同花顺',
+                    'akshare_em': '东方财富',
+                    'akshare': '腾讯财经',
+                    'sina': '新浪财经',
+                    'yfinance': 'Yahoo Finance',
+                }
+                full_stale = None
+                partial_fresh = None
+                partial_stale = None
                 for source_name, source_func in sources_to_try:
                     try:
                         if adjust:
-                            result = self._retry_with_backoff(
+                            candidate = self._retry_with_backoff(
                                 lambda source_symbol, source_period, func=source_func: func(
                                     source_symbol,
                                     source_period,
@@ -437,51 +448,77 @@ class StockDataFetcher:
                                 period,
                             )
                         else:
-                            result = self._retry_with_backoff(source_func, source_name, symbol, period)
-                        if result is not None and len(result) >= 10:
-                            if not self._is_cn_daily_kline_fresh(result):
-                                if stale_result is None:
-                                    stale_result = result
-                                    stale_source_name = source_name
+                            candidate = self._retry_with_backoff(source_func, source_name, symbol, period)
+                        if candidate is not None and len(candidate) >= min(2, period_spec.minimum_rows):
+                            coverage = tag_period_coverage(candidate, period)
+                            is_fresh = self._is_cn_daily_kline_fresh(candidate)
+                            if is_fresh and coverage["is_complete"]:
+                                result = candidate
+                                data_source = source_labels.get(source_name, source_name)
+                                result_source_name = source_name
+                                break
+                            if not is_fresh:
                                 logger.info(
                                     "%s A股日K滞后，继续尝试下一个真实日K源: symbol=%s last=%s",
                                     source_name,
                                     symbol,
-                                    result.index[-1] if isinstance(result.index, pd.DatetimeIndex) else None,
+                                    candidate.index[-1] if isinstance(candidate.index, pd.DatetimeIndex) else None,
                                 )
-                                continue
-                            data_source = {
-                                'mootdx': '通达信mootdx',
-                                'ths': '同花顺',
-                                'akshare_em': '东方财富',
-                                'akshare': '腾讯财经',
-                                'sina': '新浪财经',
-                                'yfinance': 'Yahoo Finance'
-                            }.get(source_name, source_name)
-                            result_source_name = source_name
-                            break
+                            else:
+                                logger.info(
+                                    "%s A股日K未覆盖请求周期，继续尝试下一个源: symbol=%s period=%s rows=%s actual_start=%s",
+                                    source_name,
+                                    symbol,
+                                    period,
+                                    coverage["rows"],
+                                    coverage["actual_start"],
+                                )
+                            if coverage["is_complete"]:
+                                bucket_name = "full_stale"
+                                current = full_stale
+                            elif is_fresh:
+                                bucket_name = "partial_fresh"
+                                current = partial_fresh
+                            else:
+                                bucket_name = "partial_stale"
+                                current = partial_stale
+                            if current is None or len(candidate) > len(current[0]):
+                                stored = (candidate, source_name)
+                                if bucket_name == "full_stale":
+                                    full_stale = stored
+                                elif bucket_name == "partial_fresh":
+                                    partial_fresh = stored
+                                else:
+                                    partial_stale = stored
                     except Exception as e:
                         logger.info("%s 获取失败: %s", source_name, e)
                 else:
                     result = None
 
-                if result is None and stale_result is not None:
-                    result = stale_result
-                    data_source = {
-                        'mootdx': '通达信mootdx',
-                        'ths': '同花顺',
-                        'akshare_em': '东方财富',
-                        'akshare': '腾讯财经',
-                        'sina': '新浪财经',
-                        'yfinance': 'Yahoo Finance'
-                    }.get(stale_source_name, stale_source_name)
-                    result_source_name = stale_source_name
-                    result.attrs['source_note'] = "当前数据源未返回最新交易日日K，暂显示最后可用真实日K"
+                if result is None:
+                    fallback = full_stale or partial_fresh or partial_stale
+                    if fallback is not None:
+                        result, result_source_name = fallback
+                        data_source = source_labels.get(result_source_name, result_source_name)
+                        coverage = result.attrs.get("period_coverage") or tag_period_coverage(result, period)
+                        if coverage.get("is_complete"):
+                            result.attrs['source_note'] = "当前数据源未返回最新交易日日K，暂显示最后可用真实日K"
+                        else:
+                            result.attrs['source_note'] = (
+                                f"{period_spec.label}历史数据覆盖不足，实际仅有 "
+                                f"{coverage.get('actual_start') or '--'} 至 {coverage.get('actual_end') or '--'}"
+                            )
 
                 # 所有在线源失败，尝试离线缓存
                 if result is None:
                     result = self._load_offline_cache(symbol, adjust=adjust)
                     if result is not None:
+                        coverage = tag_period_coverage(result, period)
+                        if not coverage["is_complete"]:
+                            result.attrs["source_note"] = (
+                                f"{period_spec.label}历史数据覆盖不足，实际仅有 "
+                                f"{coverage.get('actual_start') or '--'} 至 {coverage.get('actual_end') or '--'}"
+                            )
                         data_source = result.attrs.get('data_source', '离线缓存')
                         offline_mode = True
 
@@ -523,12 +560,18 @@ class StockDataFetcher:
 
             if isinstance(result, pd.DataFrame):
                 result.columns = [col.lower().replace(' ', '_') for col in result.columns]
+                coverage = tag_period_coverage(result, period)
                 # 添加数据源信息到DataFrame属性
                 result.attrs['data_source'] = data_source or "未知"
                 if data_source and not result.attrs.get('data_provider'):
                     result.attrs['data_provider'] = data_source
                 if result_source_name and result_source_name != 'ths' and not result.attrs.get('source_note'):
                     result.attrs['source_note'] = "同花顺日K滞后时自动切换到可用真实日K源"
+                if not coverage["is_complete"] and not result.attrs.get('source_note'):
+                    result.attrs['source_note'] = (
+                        f"{period_spec.label}历史数据覆盖不足，实际仅有 "
+                        f"{coverage.get('actual_start') or '--'} 至 {coverage.get('actual_end') or '--'}"
+                    )
                 result.attrs['offline_mode'] = offline_mode
 
                 # 保存到离线缓存

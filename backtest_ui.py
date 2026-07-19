@@ -8,6 +8,7 @@ import pandas as pd
 from ui.loading import status_loading
 from ui.cached_data import quote_service, resolve_cached_stock_input
 from quality_monitor import build_backtest_risk_summary
+from data.periods import BACKTEST_PERIOD_CODES, get_period_spec
 
 from config import (
     BACKTEST_EVAL_WINDOW, BACKTEST_STOP_LOSS, BACKTEST_TAKE_PROFIT,
@@ -235,15 +236,13 @@ def _fmt_pct(value):
     return f"{value:+.2f}%" if isinstance(value, (int, float)) else "N/A"
 
 
-def backtest_page():
-    """回测验证页面"""
-    st.header("回测验证")
-    st.caption("验证历史信号在后续窗口中的实际表现，评估交易信号的准确性")
+def _render_single_stock_signal_diagnostic():
+    """保留原单股技术信号验证，避免与策略回测混为一谈。"""
+    st.caption("诊断单只股票的通用技术偏多/偏空信号，不代表推荐策略表现。")
 
     # ---- 控制区 ----
     MARKET_MAP = {"A股": "CN", "港股": "HK", "美股": "US"}
-    PERIOD_OPTIONS = {"6个月 · 快速验证": "6mo", "1年 · 标准回测": "1y",
-                      "2年 · 深度验证": "2y", "5年 · 长期验证": "5y"}
+    PERIOD_OPTIONS = {get_period_spec(code).label: code for code in BACKTEST_PERIOD_CODES}
 
     if "bt_symbol_input" not in st.session_state:
         st.session_state.bt_symbol_input = "000001"
@@ -304,3 +303,115 @@ def backtest_page():
         _render_backtest_result(st.session_state.backtest_result)
     elif current_result:
         st.caption("当前输入与上一次回测结果不一致，点击「开始回测」生成新结果。")
+
+
+def _run_strategy_backtest_task(period):
+    from strategy_backtest import StrategyBacktestAdapter
+
+    return StrategyBacktestAdapter().run(period=period)
+
+
+def _format_metric(value):
+    return f"{value:+.2f}%" if isinstance(value, (int, float)) else "--"
+
+
+def _format_rate(value):
+    return f"{value:.2f}%" if isinstance(value, (int, float)) else "--"
+
+
+def _render_strategy_backtest_result(result):
+    coverage = result.get("coverage") or {}
+    summary = result.get("summary") or {}
+    actual_start = coverage.get("actual_start") or "--"
+    actual_end = coverage.get("actual_end") or "--"
+    actual_text = f"{actual_start} 至 {actual_end}"
+
+    if coverage.get("is_complete"):
+        st.caption(f"实际覆盖：{actual_text} · {coverage.get('rows', 0)} 份历史计划")
+    else:
+        st.warning(
+            f"请求范围：{result.get('requested_start')} 至 {result.get('requested_end')}；"
+            f"当前真实计划实际覆盖：{actual_text}。不足部分没有使用模拟数据补齐。"
+        )
+
+    st.markdown(
+        "**样本概览：** "
+        f"{summary.get('strategies_with_plans', 0)}/4 个策略 · "
+        f"{summary.get('plan_count', 0)} 份历史计划 · "
+        f"{summary.get('recommended_count', 0)} 个推荐样本 · "
+        f"{summary.get('completed_count', 0)} 个已完成样本"
+    )
+    st.caption("T+1策略主看1日胜率和1日均收益；5日、20日用于观察持有延续性。")
+
+    rows = []
+    for item in result.get("strategies") or []:
+        rows.append(
+            {
+                "策略": item.get("strategy"),
+                "计划": item.get("plans", 0),
+                "已完成": item.get("completed", 0),
+                "1日胜率": _format_rate(item.get("win_rate_1d_pct")),
+                "1日均收益": _format_metric(item.get("avg_1d_return_pct")),
+                "5日胜率": _format_rate(item.get("win_rate_5d_pct")),
+                "5日均收益": _format_metric(item.get("avg_5d_return_pct")),
+                "20日均收益": _format_metric(item.get("avg_20d_return_pct")),
+                "结论": item.get("conclusion"),
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    st.caption(f"数据来源：{result.get('source')}")
+
+    with st.expander("查看策略历史明细", expanded=False):
+        details = result.get("details") or []
+        if not details:
+            st.info("所选范围内暂无真实策略计划。")
+        else:
+            detail_rows = [
+                {
+                    "日期": item.get("plan_date"),
+                    "策略": item.get("strategy"),
+                    "板块": item.get("sector"),
+                    "股票": f"{item.get('symbol') or '--'} {item.get('name') or ''}".strip(),
+                    "1日": _format_metric(item.get("return_1d_pct")),
+                    "5日": _format_metric(item.get("return_5d_pct")),
+                    "20日": _format_metric(item.get("return_20d_pct")),
+                    "状态": item.get("status"),
+                }
+                for item in details
+            ]
+            st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
+
+
+def _render_strategy_backtest():
+    period_options = {get_period_spec(code).label: code for code in BACKTEST_PERIOD_CODES}
+    with st.form("strategy_backtest_form", clear_on_submit=False):
+        period_label = st.selectbox(
+            "验证周期",
+            options=list(period_options),
+            index=1,
+            key="strategy_bt_period_label",
+        )
+        submitted = st.form_submit_button("验证全部策略", type="primary", width="stretch")
+    period = period_options[period_label]
+
+    if submitted:
+        with status_loading("正在读取真实策略计划并核对后续日K...", 20):
+            st.session_state.strategy_backtest_result = _run_strategy_backtest_task(period)
+
+    result = st.session_state.get("strategy_backtest_result")
+    if result and result.get("period") == period:
+        _render_strategy_backtest_result(result)
+    elif result:
+        st.caption("周期已改变，点击「验证全部策略」生成对应结果。")
+    else:
+        st.info("当前尚未生成四策略验证结果。")
+
+
+def backtest_page():
+    """四策略验证为主，单股技术信号诊断为辅。"""
+    st.header("回测验证")
+    strategy_tab, signal_tab = st.tabs(["四策略真实验证", "单股信号诊断"])
+    with strategy_tab:
+        _render_strategy_backtest()
+    with signal_tab:
+        _render_single_stock_signal_diagnostic()

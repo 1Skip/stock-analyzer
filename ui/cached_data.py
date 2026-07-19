@@ -1,6 +1,6 @@
 """缓存数据获取层 — Streamlit @st.cache_data 封装"""
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +13,7 @@ from config import (
     CACHE_TTL_STOCK_INFO,
 )
 from data.runtime import run_with_timeout
+from data.periods import period_date_range
 from data.services.fundamental_service import FundamentalDataService
 from data.services.info_service import StockInfoService
 from data.services.quote_service import QuoteDataService
@@ -65,10 +66,7 @@ def get_cached_benchmark_data(symbol="000300", period="1y", timeout_seconds=BENC
     try:
         import akshare as ak
 
-        period_days = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-        days = period_days.get(period, 365)
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        start_date, end_date = period_date_range(period)
         df = None
         try:
             df = run_with_timeout(

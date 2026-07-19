@@ -311,29 +311,11 @@ class TestGetStockDataCN:
 
     def test_ths_daily_kline_is_first_auto_source(self, monkeypatch):
         from data_fetcher import StockDataFetcher
-
-        ths_text = (
-            'quotebridge_v6_line_hs_002101_01_last({"data":"'
-            '20260507,10.05,10.09,10.00,10.00,6192576,61925760.00,0.936,,,0;'
-            '20260508,10.01,10.13,9.94,10.10,8740527,87405270.00,1.320,,,0;'
-            '20260511,10.10,10.10,9.97,10.02,7439800,74398000.00,1.124,,,0;'
-            '20260512,10.01,10.03,9.84,9.84,6717828,67178280.00,1.014,,,0;'
-            '20260513,9.88,9.96,9.85,9.90,5904970,59049700.00,0.892,,,0;'
-            '20260514,9.91,9.93,9.65,9.66,8149267,81492670.00,1.231,,,0;'
-            '20260515,9.64,9.81,9.63,9.72,6880449,68804490.00,1.039,,,0;'
-            '20260518,9.70,9.70,9.45,9.53,6956600,69566000.00,1.051,,,0;'
-            '20260519,9.53,9.62,9.51,9.61,4403998,44039980.00,0.665,,,0;'
-            '20260520,9.58,9.58,9.34,9.45,5788700,57887000.00,0.874,,,0;'
-            '20260521,9.45,9.60,9.35,9.37,6473554,64735540.00,0.978,,,0"})'
-        )
-
-        def mock_get(url, headers=None, timeout=None, **kwargs):
-            resp = MagicMock()
-            resp.status_code = 200
-            resp.text = ths_text
-            return resp
-
-        monkeypatch.setattr('data_fetcher._session.get', mock_get)
+        ths = _make_ohlcv_df(days=260, base_price=10.0)
+        ths.attrs["data_provider"] = "同花顺"
+        ths.attrs["volume_unit"] = "share"
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_mootdx", lambda self, *args, **kwargs: None)
+        monkeypatch.setattr(StockDataFetcher, "_get_cn_stock_data_ths", lambda self, *args, **kwargs: ths)
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
                             lambda self, s, d, **kwargs: None)
         monkeypatch.setattr(
@@ -348,9 +330,8 @@ class TestGetStockDataCN:
         assert result.attrs['data_provider'] == '同花顺'
         assert result.attrs['data_source'] == '同花顺'
         assert result.attrs['volume_unit'] == 'share'
-        assert result.index[-1].strftime('%Y%m%d') == '20260521'
-        assert result['close'].iloc[-1] == 9.37
-        assert result['volume'].iloc[-1] == 6473554
+        assert result.attrs['period_coverage']['is_complete'] is True
+        assert len(result) == 260
 
     def test_stale_ths_daily_kline_falls_back_to_fresh_real_source(self, monkeypatch):
         import data_fetcher
@@ -365,8 +346,8 @@ class TestGetStockDataCN:
             def fromisoformat(cls, value):
                 return datetime.fromisoformat(value)
 
-        ths = _make_ohlcv_df(days=60, base_price=10.0)
-        ths.index = pd.date_range(end=pd.Timestamp("2026-05-20"), periods=60, freq="B")
+        ths = _make_ohlcv_df(days=260, base_price=10.0)
+        ths.index = pd.date_range(end=pd.Timestamp("2026-05-20"), periods=260, freq="B")
         fresh = ths.copy()
         fresh.loc[pd.Timestamp("2026-05-21"), ["open", "high", "low", "close", "volume"]] = [
             14.70, 15.63, 14.70, 15.41, 265155668,
@@ -499,7 +480,7 @@ class TestGetStockDataCN:
 
     def test_data_source_attribution(self, monkeypatch):
         from data_fetcher import StockDataFetcher
-        df = _make_ohlcv_df(days=60, base_price=10.0)
+        df = _make_ohlcv_df(days=260, base_price=10.0)
 
         def mock_ak_daily(symbol, start_date, end_date, adjust):
             result = df.copy()
@@ -1168,7 +1149,7 @@ class TestSourcePriority:
 
     def test_akshare(self, monkeypatch):
         from data_fetcher import StockDataFetcher
-        df = _make_ohlcv_df(days=60, base_price=10.0)
+        df = _make_ohlcv_df(days=260, base_price=10.0)
 
         def mock_ak_daily(symbol, start_date, end_date, adjust):
             result = df.copy()
@@ -1187,7 +1168,7 @@ class TestSourcePriority:
 
     def test_sina(self, monkeypatch):
         from data_fetcher import StockDataFetcher
-        df = _make_ohlcv_df(days=60, base_price=10.0)
+        df = _make_ohlcv_df(days=260, base_price=10.0)
         sina_json = []
         for idx, row in df.iterrows():
             sina_json.append({

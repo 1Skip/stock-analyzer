@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
 from typing import Any
 
 import pandas as pd
 import requests
+
+from data.periods import PERIOD_DAYS as SHARED_PERIOD_DAYS
+from data.periods import get_period_spec, period_date_range, period_start
+
+
+PERIOD_DAYS = SHARED_PERIOD_DAYS
 
 
 HEADERS = {
@@ -14,11 +19,12 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 
-PERIOD_DAYS = {"1wk": 7, "1mo": 30, "3mo": 90, "6mo": 180, "1y": 365, "2y": 730}
-
-
 def _days(period: str) -> int:
-    return PERIOD_DAYS.get(period, 365)
+    return get_period_spec(period).calendar_days
+
+
+def _provider_minimum_rows(period: str) -> int:
+    return min(10, get_period_spec(period).minimum_rows)
 
 
 def _numeric_ohlcv(df: pd.DataFrame, columns: list[str] | None = None) -> pd.DataFrame:
@@ -78,16 +84,16 @@ class ThsDailyKlineProvider:
                     "turnover_rate": fields[7] if len(fields) > 7 else None,
                 }
             )
-        if len(rows) < 10:
+        if len(rows) < _provider_minimum_rows(period):
             return None
 
         df = pd.DataFrame(rows)
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df, ["open", "high", "low", "close", "volume", "amount", "turnover_rate"])
-        cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=_days(period))
+        cutoff = period_start(period)
         df = df[df.index >= cutoff]
-        if len(df) < 10:
+        if len(df) < _provider_minimum_rows(period):
             return None
         df.attrs["adjust_method"] = "\u524d\u590d\u6743" if adjust == "qfq" else "\u4e0d\u590d\u6743"
         df.attrs["data_provider"] = self.source
@@ -107,9 +113,7 @@ class AkshareDailyKlineProvider:
     def fetch_eastmoney(self, symbol: str, period: str, *, adjust: str = "") -> pd.DataFrame | None:
         if self.ak is None:
             return None
-        days = _days(period)
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        start_date, end_date = period_date_range(period)
         df = self.ak.stock_zh_a_hist(
             symbol=symbol,
             period="daily",
@@ -117,7 +121,7 @@ class AkshareDailyKlineProvider:
             end_date=end_date,
             adjust=adjust,
         )
-        if df is None or getattr(df, "empty", True) or len(df) < 10:
+        if df is None or getattr(df, "empty", True) or len(df) < _provider_minimum_rows(period):
             return None
         df = df.rename(
             columns={
@@ -132,7 +136,7 @@ class AkshareDailyKlineProvider:
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df)
-        if len(df) < 10:
+        if len(df) < _provider_minimum_rows(period):
             return None
         df.attrs["adjust_method"] = "\u524d\u590d\u6743" if adjust == "qfq" else "\u4e0d\u590d\u6743"
         df.attrs["data_provider"] = self.eastmoney_source
@@ -142,21 +146,19 @@ class AkshareDailyKlineProvider:
     def fetch_tencent(self, symbol: str, period: str, *, adjust: str = "") -> pd.DataFrame | None:
         if self.ak is None:
             return None
-        days = _days(period)
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
+        start_date, end_date = period_date_range(period)
         df = self.ak.stock_zh_a_daily(
             symbol=f"{_exchange_prefix(symbol)}{symbol}",
             start_date=start_date,
             end_date=end_date,
             adjust=adjust,
         )
-        if df is None or getattr(df, "empty", True) or len(df) < 10:
+        if df is None or getattr(df, "empty", True) or len(df) < _provider_minimum_rows(period):
             return None
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df)
-        if len(df) < 10:
+        if len(df) < _provider_minimum_rows(period):
             return None
         df.attrs["adjust_method"] = "\u524d\u590d\u6743" if adjust == "qfq" else "\u4e0d\u590d\u6743"
         df.attrs["data_provider"] = self.tencent_source
@@ -183,14 +185,15 @@ class MootdxDailyKlineProvider:
                 factory = Quotes.factory
             client = factory(market="std", timeout=5)
             try:
-                df = client.bars(symbol=str(symbol), frequency=9, offset=800)
+                expected_rows = int(_days(period) * 252 / 365) + 20
+                df = client.bars(symbol=str(symbol), frequency=9, offset=max(800, expected_rows))
             finally:
                 close = getattr(client, "close", None)
                 if callable(close):
                     close()
         except Exception:
             return None
-        if df is None or getattr(df, "empty", True) or len(df) < 10:
+        if df is None or getattr(df, "empty", True) or len(df) < _provider_minimum_rows(period):
             return None
         date_col = "datetime" if "datetime" in df.columns else "date" if "date" in df.columns else None
         if date_col is None:
@@ -204,9 +207,9 @@ class MootdxDailyKlineProvider:
         df["date"] = pd.to_datetime(df[date_col], errors="coerce")
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df[["open", "high", "low", "close", "volume"]].copy())
-        cutoff = pd.Timestamp.now().normalize() - pd.Timedelta(days=_days(period))
+        cutoff = period_start(period)
         df = df[df.index >= cutoff]
-        if len(df) < 10:
+        if len(df) < _provider_minimum_rows(period):
             return None
         df.attrs["adjust_method"] = "\u4e0d\u590d\u6743\uff08mootdx\uff09"
         df.attrs["data_provider"] = self.source
@@ -232,7 +235,7 @@ class SinaDailyKlineProvider:
         if response.status_code != 200 or not response.text.strip():
             return None
         data = json.loads(response.text)
-        if not data or not isinstance(data, list) or len(data) < 10:
+        if not data or not isinstance(data, list) or len(data) < _provider_minimum_rows(period):
             return None
         df = pd.DataFrame(data)
         df.rename(
@@ -242,7 +245,7 @@ class SinaDailyKlineProvider:
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df)
-        if len(df) < 10:
+        if len(df) < _provider_minimum_rows(period):
             return None
         df.attrs["adjust_method"] = "\u672a\u590d\u6743\uff08\u65b0\u6d6a\u8d22\u7ecf\uff09"
         df.attrs["data_provider"] = self.source
@@ -257,14 +260,14 @@ class SinaDailyKlineProvider:
         if response.status_code != 200:
             return None
         data = response.json()
-        if not data or not isinstance(data, list) or len(data) < 10:
+        if not data or not isinstance(data, list) or len(data) < _provider_minimum_rows(period):
             return None
         df = pd.DataFrame(data)
         df = df.rename(columns={"d": "date", "o": "open", "h": "high", "l": "low", "c": "close", "v": "volume"})
         df["date"] = pd.to_datetime(df["date"])
         df.set_index("date", inplace=True)
         df = _numeric_ohlcv(df)
-        return df if len(df) >= 10 else None
+        return df if len(df) >= _provider_minimum_rows(period) else None
 
 
 def is_timeout_error(exc: Exception) -> bool:

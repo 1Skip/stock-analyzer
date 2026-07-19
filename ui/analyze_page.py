@@ -33,6 +33,7 @@ from ui.stock_search import suggest_stock_inputs
 from quality_monitor import build_stock_data_quality_summary
 from stock_quant_evaluator import build_stock_quant_snapshot
 from data_fetcher import StockDataFetcher
+from data.periods import ANALYSIS_PERIOD_CODES, get_period_spec, slice_period, tag_period_coverage
 
 
 def _validate_symbol(sym, mkt):
@@ -392,6 +393,18 @@ def _render_data_quality_summary(data, quote, profile, extended_info):
             st.markdown("\n".join(f"- {html.escape(str(item))}" for item in warnings[:8]))
 
 
+def _render_period_coverage(data, period):
+    coverage = getattr(data, "attrs", {}).get("period_coverage") if data is not None else None
+    if not isinstance(coverage, dict):
+        return
+    actual = f"{coverage.get('actual_start') or '--'} 至 {coverage.get('actual_end') or '--'}"
+    detail = f"{actual} · {coverage.get('rows', 0)} 个交易日"
+    if coverage.get("is_complete"):
+        st.caption(f"{get_period_spec(period).label}实际数据：{detail}")
+    else:
+        st.warning(f"{get_period_spec(period).label}数据覆盖不足：{detail}")
+
+
 def _render_stock_quant_snapshot(data):
     snapshot = build_stock_quant_snapshot(data)
     if snapshot.get("status") == "empty":
@@ -710,6 +723,7 @@ def _clear_analyzed_result():
         "analyzed_period",
         "analyzed_target_key",
         "analyzed_data",
+        "analyzed_chart_data",
         "analyzed_signals",
         "analyzed_quote",
         "analyzed_stock_name",
@@ -937,10 +951,13 @@ def _render_analysis_results(
     profile=None,
     extended_info=None,
     quant_data=None,
+    indicator_data=None,
 ):
     """渲染个股分析结果 — Apple×Tesla 分层布局"""
+    indicator_data = indicator_data if indicator_data is not None else data
     st.markdown('<div id="analysis-results"></div>', unsafe_allow_html=True)
     st.divider()
+    _render_period_coverage(data, period)
 
 
     # ② 核心指标 — 最新价
@@ -985,8 +1002,8 @@ def _render_analysis_results(
     benchmark_data = None
     if market == "CN":
         benchmark_data = get_cached_benchmark_data("000300", period)
-    render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)
-    _render_stock_quant_snapshot(quant_data if quant_data is not None else data)
+    render_decision_dashboard(indicator_data, signals, quote, extended_info, profile, benchmark_data)
+    _render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)
     _render_data_quality_summary(data, quote, profile, extended_info)
 
     _render_stock_profile(profile)
@@ -1000,7 +1017,7 @@ def _render_analysis_results(
         _render_intraday_auto_refresh_fragment(symbol, market, quote)
 
     # ③ 技术指标实时数值卡片
-    _display_indicator_values(data)
+    _display_indicator_values(indicator_data)
 
     st.divider()
 
@@ -1009,7 +1026,7 @@ def _render_analysis_results(
 
     # ⑤ AI 辅助解读（可选）
     if AI_ENABLED:
-        display_ai_analysis_card(data, signals, symbol, stock_name, period)
+        display_ai_analysis_card(indicator_data, signals, symbol, stock_name, period)
 
     # ⑥ 日K图
     st.divider()
@@ -1026,32 +1043,32 @@ def _render_analysis_results(
 
     # ⑧ MACD
     with st.expander("MACD 指标", expanded=False):
-        _render_chart_header("MACD", latest_indicator_values(data, "macd"))
-        fig = plot_macd_chart(data)
+        _render_chart_header("MACD", latest_indicator_values(indicator_data, "macd"))
+        fig = plot_macd_chart(indicator_data)
         st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑨ RSI + KDJ 并排
     with st.expander("RSI & KDJ 指标", expanded=False):
         col_rsi, col_kdj = st.columns(2)
         with col_rsi:
-            _render_chart_header("RSI", latest_indicator_values(data, "rsi"))
-            fig = plot_rsi_chart(data)
+            _render_chart_header("RSI", latest_indicator_values(indicator_data, "rsi"))
+            fig = plot_rsi_chart(indicator_data)
             st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
         with col_kdj:
-            _render_chart_header("KDJ", latest_indicator_values(data, "kdj"))
-            fig = plot_kdj_chart(data)
+            _render_chart_header("KDJ", latest_indicator_values(indicator_data, "kdj"))
+            fig = plot_kdj_chart(indicator_data)
             st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑩ 布林带
     with st.expander("布林带", expanded=False):
-        _render_chart_header("BOLL", latest_indicator_values(data, "boll"))
-        fig = plot_boll_chart(data)
+        _render_chart_header("BOLL", latest_indicator_values(indicator_data, "boll"))
+        fig = plot_boll_chart(indicator_data)
         st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑪ 主力吸货
     with st.expander("主力吸货 指标", expanded=False):
-        _render_chart_header("主力吸货", latest_indicator_values(data, "main_accumulation"))
-        fig = plot_main_accumulation_chart(data)
+        _render_chart_header("主力吸货", latest_indicator_values(indicator_data, "main_accumulation"))
+        fig = plot_main_accumulation_chart(indicator_data)
         st.plotly_chart(fig, width="stretch", config={'displayModeBar': False})
 
     # ⑫ 原始数据
@@ -1155,6 +1172,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
 
     info = {'shortName': symbol, 'symbol': symbol}
     data = None
+    chart_data = None
     quote = None
     intraday_data = None
     profile = None
@@ -1176,6 +1194,15 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
             ),
             'quote': executor.submit(get_cached_realtime_quote, symbol, market),
         }
+        if get_period_spec(period).calendar_days > get_period_spec("1y").calendar_days:
+            futures['chart_data'] = executor.submit(
+                get_cached_stock_data,
+                symbol,
+                period,
+                market,
+                'qfq' if market == "CN" else "",
+                stock_data_cache_version(market),
+            )
         if market == "CN":
             futures['intraday'] = executor.submit(get_cached_intraday_data, symbol, market)
             futures['profile'] = executor.submit(get_cached_stock_profile, symbol, market)
@@ -1192,6 +1219,14 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
             data = _load_cached_daily_kline_fallback(symbol, market)
         completed += 1
         _emit_progress(progress_callback, "历史K线完成", 45, done=completed, total=total)
+
+        if 'chart_data' in futures:
+            try:
+                chart_data = futures['chart_data'].result(timeout=20)
+            except Exception:
+                chart_data = None
+            completed += 1
+            _emit_progress(progress_callback, "所选周期K线完成", 49, done=completed, total=total)
 
         try:
             info_result = futures['info'].result(timeout=0.2)
@@ -1271,6 +1306,11 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
     _emit_progress(progress_callback, "计算技术指标", 94)
     data = TechnicalIndicators.calculate_all(data)
     data = _tag_analysis_data(data, symbol, market, period)
+    if chart_data is None or getattr(chart_data, "empty", True):
+        chart_data = data
+    elif chart_data is not data:
+        chart_data = TechnicalIndicators.calculate_all(chart_data)
+    chart_data = _tag_analysis_data(chart_data, symbol, market, period)
     _emit_progress(progress_callback, "生成交易信号", 98)
     signals = TechnicalIndicators.get_signals(data)
 
@@ -1282,6 +1322,7 @@ def _run_stock_analysis_task(symbol, market, period, progress_callback=None):
         "period": period,
         "stock_name": stock_name,
         "data": data,
+        "chart_data": chart_data,
         "signals": signals,
         "quote": quote,
         "intraday_data": intraday_data,
@@ -1457,7 +1498,7 @@ def analyze_stock_page():
         )
 
     with col_period:
-        period_options = ["1wk", "1mo", "3mo", "6mo", "1y", "2y"]
+        period_options = list(ANALYSIS_PERIOD_CODES)
         period_labels = {
             "1wk": "1周 · 短线异动",
             "1mo": "1个月 · 短线择时",
@@ -1465,6 +1506,7 @@ def analyze_stock_page():
             "6mo": "6个月 · 趋势判断",
             "1y": "1年 · 长线布局",
             "2y": "2年 · 历史锚点",
+            "5y": "5年 · 长期走势",
         }
         if st.session_state.get("analyze_period_select") not in period_options:
             st.session_state.analyze_period_select = st.session_state.analyze_period
@@ -1561,6 +1603,9 @@ def analyze_stock_page():
             st.session_state.analyzed_target_key = _analysis_target_key(symbol, market, period)
             target_key = st.session_state.analyzed_target_key
             st.session_state.analyzed_data = data
+            st.session_state.analyzed_chart_data = _tag_analysis_data(
+                task_result.get("chart_data", data), symbol, market, period
+            )
             st.session_state.analyzed_signals = task_result["signals"]
             st.session_state.analyzed_quote = task_result["quote"]
             st.session_state.analyzed_stock_name = task_result["stock_name"]
@@ -1593,9 +1638,11 @@ def analyze_stock_page():
             cached_symbol = st.session_state.get("analyzed_symbol", st.session_state.analyze_symbol)
             cached_market = st.session_state.get("analyzed_market", market)
             cached_period = st.session_state.get("analyzed_period", period)
-            period_days = {'1wk': 7, '1mo': 30, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730}
-            cutoff = cached_data.index[-1] - pd.Timedelta(days=period_days.get(cached_period, 365))
-            display_data = cached_data[cached_data.index >= cutoff] if len(cached_data[cached_data.index >= cutoff]) >= 10 else cached_data
+            cached_chart_data = st.session_state.get("analyzed_chart_data")
+            if cached_chart_data is None:
+                cached_chart_data = cached_data
+            display_data = slice_period(cached_chart_data, cached_period)
+            tag_period_coverage(display_data, cached_period, end=cached_chart_data.index.max())
             _render_analysis_results(
                 display_data,
                 st.session_state.get("analyzed_signals", {}),
@@ -1608,6 +1655,7 @@ def analyze_stock_page():
                 profile=st.session_state.get("analyzed_profile"),
                 extended_info=st.session_state.get("analyzed_extended_info"),
                 quant_data=cached_data,
+                indicator_data=cached_data,
             )
 
     # 锚点滚动

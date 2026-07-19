@@ -199,10 +199,10 @@ def test_analyze_page_renders_stock_quant_snapshot_after_decision_dashboard():
     assert "def _render_stock_quant_snapshot" in source
     assert "个股量化评分" in source
     assert "quant_data=cached_data" in source
-    assert "_render_stock_quant_snapshot(quant_data if quant_data is not None else data)" in source
-    decision_index = source.index("render_decision_dashboard(data, signals, quote, extended_info, profile, benchmark_data)")
+    assert "_render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)" in source
+    decision_index = source.index("render_decision_dashboard(indicator_data, signals, quote, extended_info, profile, benchmark_data)")
     quant_index = source.index(
-        "_render_stock_quant_snapshot(quant_data if quant_data is not None else data)",
+        "_render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)",
         decision_index,
     )
     quality_index = source.index("_render_data_quality_summary(data, quote, profile, extended_info)", quant_index)
