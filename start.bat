@@ -86,7 +86,7 @@ if not errorlevel 1 (
     powershell -NoProfile -Command "if (Get-CimInstance Win32_Process | Where-Object { $_.Name -like 'python*' -and $_.CommandLine -like '*main.py --schedule*' }) { exit 0 } else { exit 1 }" >nul 2>nul
     if errorlevel 1 (
         echo [INFO] Starting scheduler in background...
-        start "Stock Analyzer Scheduler" /MIN cmd /c ""%PY%" main.py --schedule 1>>scheduler.out.log 2>>scheduler.err.log"
+        powershell -NoProfile -Command "$workDir = (Get-Location).Path; $python = (Resolve-Path '%PY%').Path; $command = [char]34 + $python + [char]34 + ' main.py --schedule 1>>scheduler.out.log 2>>scheduler.err.log'; Start-Process -FilePath $env:ComSpec -ArgumentList '/d','/c',$command -WorkingDirectory $workDir -WindowStyle Hidden"
     ) else (
         echo [INFO] Scheduler already appears to be running.
     )

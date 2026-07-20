@@ -53,8 +53,11 @@ def test_local_install_entrypoints_require_python_311():
         assert "Python 3.10 or newer" not in source
 
 
-def test_windows_launcher_starts_scheduler_with_real_log_redirection():
+def test_windows_launcher_starts_scheduler_hidden_with_real_log_redirection():
     windows_launcher = (ROOT / "start.bat").read_text(encoding="utf-8")
 
     assert "main.py --schedule 1>>scheduler.out.log 2>>scheduler.err.log" in windows_launcher
     assert "main.py --schedule 1^>^>scheduler.out.log 2^>^>scheduler.err.log" not in windows_launcher
+    assert "Start-Process" in windows_launcher
+    assert "-WindowStyle Hidden" in windows_launcher
+    assert 'start "Stock Analyzer Scheduler"' not in windows_launcher
