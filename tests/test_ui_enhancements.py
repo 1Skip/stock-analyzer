@@ -199,14 +199,15 @@ def test_analyze_page_renders_stock_quant_snapshot_after_decision_dashboard():
     assert "def _render_stock_quant_snapshot" in source
     assert "个股量化评分" in source
     assert "quant_data=cached_data" in source
-    assert "_render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)" in source
+    assert "_render_stock_quant_snapshot(quant_frame, snapshot=quant_snapshot)" in source
+    assert "_render_analysis_signal_validation(signal_review)" in source
+    assert "_render_value_investing_snapshot(profile, extended_info, quote, quant_frame)" in source
     decision_index = source.index("render_decision_dashboard(indicator_data, signals, quote, extended_info, profile, benchmark_data)")
-    quant_index = source.index(
-        "_render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)",
-        decision_index,
-    )
+    signal_index = source.index("_render_analysis_signal_validation(signal_review)", decision_index)
+    value_index = source.index("_render_value_investing_snapshot(profile, extended_info, quote, quant_frame)", signal_index)
+    quant_index = source.index("_render_stock_quant_snapshot(quant_frame, snapshot=quant_snapshot)", value_index)
     quality_index = source.index("_render_data_quality_summary(data, quote, profile, extended_info)", quant_index)
-    assert decision_index < quant_index < quality_index
+    assert decision_index < signal_index < value_index < quant_index < quality_index
 
 
 def test_analyze_page_hides_stale_result_when_input_changes():
@@ -779,6 +780,14 @@ def test_recommend_page_manual_trade_form_can_use_history_plans():
     assert "on_change=_queue_manual_trade_search" in source
     assert "_queue_manual_trade_search(plan_options)" in source
     assert "service.evaluate_manual_trade_success_rate(limit=200)" in source
+    assert "service.evaluate_auto_observation_history(limit=5000)" in source
+    assert "def _render_auto_observation_review" in source
+    assert 'with st.expander("模型自动观察仓", expanded=True)' in source
+    assert 'with st.expander("个人实盘胜率", expanded=False)' in source
+    assert "这里只统计你手工录入的真实成交，不代表模型胜率，也不参与模型学习。" in source
+    assert "未进入买入区间不计入胜率" in source
+    assert "learning_readiness" not in source
+    assert 'stock.get("learning_profile_version") == LEARNING_PROFILE_VERSION' in source
     assert "service.evaluate_manual_trade_success_rate(\n            strategy=strategy" not in source
     assert "service.delete_manual_trade_record" in source
     assert "def _manual_trade_record_expander_title" in source

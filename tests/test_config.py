@@ -77,20 +77,21 @@ class TestDefaultConstants:
 
     def test_t1_plan_strategies_default_includes_aggressive(self):
         import config
-        assert config.T1_PLAN_STRATEGIES == ["短线", "短线经典版", "多因子稳健型", "激进突破型"]
+        assert config.T1_PLAN_STRATEGIES == ["短线", "短线经典版", "多因子稳健型", "激进突破型", "实验策略"]
         assert config.T1_PLAN_STRATEGY == "短线"
         assert config.T1_PLAN_SECTORS == ["苹果概念", "特斯拉概念", "电力", "算力租赁"]
+
+    def test_analysis_signal_settlement_defaults_enabled(self):
+        import config
+
+        assert config.ANALYSIS_SIGNAL_SETTLEMENT_ENABLED is True
+        assert config.ANALYSIS_SIGNAL_SETTLEMENT_TIME == "16:05"
+        assert config.ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS == 50
 
     def test_recommend_ranker_default_enabled_without_sorting(self):
         import config
         assert config.RECOMMEND_RANKER_ENABLED is True
         assert config.RECOMMEND_RANKER_SORT is False
-
-    def test_manual_trade_learning_reminder_defaults(self):
-        import config
-        assert config.MANUAL_TRADE_LEARNING_MIN_CLOSED == 30
-        assert config.MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED == 12
-
 
 class TestEnvVarOverride:
     """验证环境变量覆盖"""

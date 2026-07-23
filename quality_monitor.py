@@ -21,6 +21,7 @@ from data.periods import period_for_start_date
 
 _REQUIRED_STOCK_FIELDS = ("symbol", "name", "score", "rating", "latest_price", "indicators", "signals")
 _INDICATOR_FIELDS = ("macd", "macd_signal", "macd_hist", "rsi_6", "rsi_12", "rsi_24", "kdj_k", "kdj_d", "kdj_j")
+T1_OUTCOME_VERSION = "t1_execution_v2"
 
 
 def build_runtime_diagnostics() -> dict[str, Any]:
@@ -116,7 +117,36 @@ def list_plan_history(
             "plan": value,
         })
     rows.sort(key=lambda row: str(row.get("generated_at") or ""), reverse=True)
-    return rows[: max(1, int(limit or 20))]
+    unique_rows = []
+    seen = set()
+    for row in rows:
+        identity = build_plan_history_identity(row.get("plan") or {})
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_rows.append(row)
+    return unique_rows[: max(1, int(limit or 20))]
+
+
+def build_plan_history_identity(plan: dict[str, Any] | None) -> str:
+    """Return the execution identity used to suppress exact plan reruns."""
+    if not isinstance(plan, dict):
+        return ""
+    symbols = sorted({str((stock or {}).get("symbol") or "").strip() for stock in plan.get("recommended") or []})
+    symbols = [symbol for symbol in symbols if symbol]
+    trade_date = str(
+        plan.get("plan_for_trade_date")
+        or plan.get("generated_trade_date")
+        or plan.get("generated_at")
+        or ""
+    )[:10]
+    identity = "|".join([
+        str(plan.get("strategy") or ""),
+        str(plan.get("sector") or ""),
+        trade_date,
+        ",".join(symbols),
+    ])
+    return identity or _history_key(plan)
 
 
 def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[str, Any]:
@@ -125,6 +155,14 @@ def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[st
     total_items = 0
     completed_items = 0
     all_1d_returns: list[float | None] = []
+    status_counts = {
+        "triggered": 0,
+        "not_triggered": 0,
+        "holding": 0,
+        "pending": 0,
+        "skipped": 0,
+        "failed": 0,
+    }
     for review in outcome_reviews:
         plan = review.get("plan") or {}
         result = review.get("outcome") or {}
@@ -140,6 +178,12 @@ def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[st
                 "plans": 0,
                 "total": 0,
                 "completed": 0,
+                "triggered": 0,
+                "not_triggered": 0,
+                "holding": 0,
+                "pending": 0,
+                "skipped": 0,
+                "failed": 0,
                 "returns_1d": [],
             },
         )
@@ -149,6 +193,13 @@ def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[st
         total_items += int(summary.get("total") or 0)
         completed_items += int(summary.get("completed") or 0)
         for item in result.get("items") or []:
+            status = str(item.get("status") or "")
+            if item.get("entry_triggered"):
+                bucket["triggered"] += 1
+                status_counts["triggered"] += 1
+            if status in status_counts and status != "triggered":
+                bucket[status] += 1
+                status_counts[status] += 1
             returns = item.get("returns") or {}
             value = returns.get("1d")
             if value is not None:
@@ -165,6 +216,12 @@ def summarize_history_outcomes(outcome_reviews: list[dict[str, Any]]) -> dict[st
         "plans": len(outcome_reviews),
         "total_items": total_items,
         "completed_items": completed_items,
+        "triggered_items": status_counts["triggered"],
+        "not_triggered_items": status_counts["not_triggered"],
+        "holding_items": status_counts["holding"],
+        "pending_items": status_counts["pending"],
+        "skipped_items": status_counts["skipped"],
+        "failed_items": status_counts["failed"],
         "avg_1d_return_pct": _avg(all_1d_returns),
         "win_rate_1d_pct": _win_rate(all_1d_returns),
         "by_strategy": by_strategy,
@@ -629,31 +686,47 @@ def evaluate_plan_outcomes(
     quote_service: Any,
     horizons: Iterable[int] = (1, 5, 20),
 ) -> dict[str, Any]:
-    """Evaluate stored recommendation results against later K-line closes.
-
-    The method is intentionally read-only. If future bars are not available yet,
-    the item is marked as pending instead of inventing a result.
-    """
+    """Evaluate a saved plan with real T+1 entry and exit constraints."""
     if not isinstance(plan, dict):
         return {"status": "no_plan", "items": [], "summary": {}}
     generated_date = str(plan.get("generated_trade_date") or plan.get("generated_at") or "")[:10]
+    planned_entry_date = str(plan.get("plan_for_trade_date") or "")[:10]
     recommended = plan.get("recommended") or []
     items = []
     for stock in recommended:
-        items.append(_evaluate_stock_outcome(stock, generated_date, quote_service=quote_service, horizons=tuple(horizons)))
+        items.append(
+            _evaluate_stock_outcome(
+                stock,
+                generated_date,
+                planned_entry_date,
+                quote_service=quote_service,
+                horizons=tuple(sorted({max(1, int(value)) for value in horizons})),
+            )
+        )
     completed = [item for item in items if item.get("status") == "completed"]
-    returns_1d = [item.get("returns", {}).get("1d") for item in completed if item.get("returns", {}).get("1d") is not None]
+    returns_1d = [
+        item.get("returns", {}).get("1d")
+        for item in completed
+        if item.get("returns", {}).get("1d") is not None
+    ]
     summary = {
         "total": len(items),
         "completed": len(completed),
-        "pending": len(items) - len(completed),
+        "triggered": sum(1 for item in items if item.get("entry_triggered")),
+        "not_triggered": sum(1 for item in items if item.get("status") == "not_triggered"),
+        "holding": sum(1 for item in items if item.get("status") == "holding"),
+        "pending": sum(1 for item in items if item.get("status") == "pending"),
+        "skipped": sum(1 for item in items if item.get("status") == "skipped"),
+        "failed": sum(1 for item in items if item.get("status") == "failed"),
         "avg_1d_return_pct": _avg(returns_1d),
         "win_rate_1d_pct": _win_rate(returns_1d),
     }
     return {
         "status": "ok" if items else "empty",
+        "version": T1_OUTCOME_VERSION,
         "evaluated_at": datetime.now().isoformat(timespec="seconds"),
         "generated_trade_date": generated_date,
+        "planned_entry_date": planned_entry_date,
         "items": items,
         "summary": summary,
     }
@@ -662,22 +735,43 @@ def evaluate_plan_outcomes(
 def _evaluate_stock_outcome(
     stock: dict[str, Any],
     generated_date: str,
+    planned_entry_date: str,
     *,
     quote_service: Any,
     horizons: tuple[int, ...],
 ) -> dict[str, Any]:
     symbol = str(stock.get("symbol") or "").strip()
-    entry_price = _safe_float(stock.get("latest_price") or stock.get("price"))
+    trade_plan = stock.get("trade_plan") if isinstance(stock.get("trade_plan"), dict) else {}
+    buy_zone_low = _safe_float(trade_plan.get("buy_zone_low"))
+    buy_zone_high = _safe_float(trade_plan.get("buy_zone_high"))
+    stop_loss = _safe_float(trade_plan.get("stop_loss"))
+    take_profit = _safe_float(trade_plan.get("take_profit_1"))
     base = {
         "symbol": symbol,
         "name": stock.get("name") or symbol,
-        "entry_price": entry_price,
+        "entry_triggered": False,
+        "entry_price": None,
+        "entry_date": None,
         "generated_trade_date": generated_date,
+        "planned_entry_date": planned_entry_date,
+        "buy_zone_low": buy_zone_low,
+        "buy_zone_high": buy_zone_high,
+        "stop_loss": stop_loss,
+        "take_profit_1": take_profit,
     }
-    if not symbol or not entry_price:
-        return {**base, "status": "skipped", "reason": "缺少代码或计划价"}
+    if not symbol:
+        return {**base, "status": "skipped", "reason": "缺少股票代码"}
+    if buy_zone_low is None or buy_zone_high is None or buy_zone_low <= 0 or buy_zone_high <= 0:
+        return {**base, "status": "skipped", "reason": "历史计划缺少结构化买入区间"}
+    if buy_zone_low > buy_zone_high:
+        buy_zone_low, buy_zone_high = buy_zone_high, buy_zone_low
+        base["buy_zone_low"] = buy_zone_low
+        base["buy_zone_high"] = buy_zone_high
+    if planned_entry_date and planned_entry_date > datetime.now().date().isoformat():
+        return {**base, "status": "pending", "reason": "等待计划入场日"}
     try:
-        history_period = period_for_start_date(generated_date) if generated_date else "3mo"
+        history_start = generated_date or planned_entry_date
+        history_period = period_for_start_date(history_start) if history_start else "3mo"
         data = quote_service.get_stock_data(symbol, period=history_period, market="CN")
     except Exception as exc:
         return {**base, "status": "failed", "reason": str(exc)}
@@ -689,30 +783,140 @@ def _evaluate_stock_outcome(
         frame["_date"] = frame["date"].astype(str).str[:10]
     else:
         frame["_date"] = frame.index.astype(str).str[:10]
-    close_col = "close" if "close" in frame.columns else "Close" if "Close" in frame.columns else None
-    if close_col is None:
-        return {**base, "status": "failed", "reason": "K线缺少收盘价"}
+    columns = {str(column).lower(): column for column in frame.columns}
+    required_columns = ("open", "high", "low", "close")
+    if any(name not in columns for name in required_columns):
+        return {**base, "status": "failed", "reason": "K线缺少开高低收字段"}
+    frame = frame.sort_values("_date").drop_duplicates("_date", keep="last")
+    coverage_date = planned_entry_date or generated_date
+    first_date = str(frame.iloc[0].get("_date") or "")[:10]
+    try:
+        coverage_gap_days = (
+            datetime.fromisoformat(first_date).date() - datetime.fromisoformat(coverage_date).date()
+        ).days
+    except (TypeError, ValueError):
+        coverage_gap_days = 0
+    if coverage_date and coverage_gap_days > 14:
+        return {**base, "status": "failed", "reason": "K线未覆盖计划入场日，无法确认真实成交"}
+    future = frame[frame["_date"] > generated_date] if generated_date else frame
+    if planned_entry_date:
+        future = future[future["_date"] >= planned_entry_date]
+    if future.empty:
+        return {**base, "status": "pending", "reason": "等待计划入场日K线"}
 
-    future = frame[frame["_date"] > generated_date] if generated_date else frame.tail(max(horizons))
-    if len(future) < min(horizons):
-        return {**base, "status": "pending", "reason": "等待未来交易日数据"}
+    entry_row = future.iloc[0]
+    entry_low = _safe_float(entry_row[columns["low"]])
+    entry_high = _safe_float(entry_row[columns["high"]])
+    entry_open = _safe_float(entry_row[columns["open"]])
+    if entry_low is None or entry_high is None:
+        return {**base, "status": "failed", "reason": "计划入场日K线价格无效"}
+    entry_date = str(entry_row.get("_date") or "")[:10]
+    if entry_high < buy_zone_low or entry_low > buy_zone_high:
+        return {
+            **base,
+            "status": "not_triggered",
+            "entry_date": entry_date,
+            "reason": "计划入场日未进入买入区间",
+        }
+
+    entry_price = _entry_fill_price(entry_open, buy_zone_low, buy_zone_high)
+    base.update({
+        "entry_triggered": True,
+        "entry_price": round(entry_price, 3),
+        "entry_date": entry_date,
+    })
+    exit_rows = future[future["_date"] > entry_date]
 
     returns: dict[str, float | None] = {}
     exit_dates: dict[str, str | None] = {}
-    exit_closes: dict[str, float | None] = {}
+    exit_prices: dict[str, float | None] = {}
+    exit_reasons: dict[str, str | None] = {}
     for horizon in horizons:
         key = f"{horizon}d"
-        if len(future) < horizon:
+        exit_result = _resolve_t1_exit(
+            exit_rows,
+            horizon=horizon,
+            columns=columns,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+        )
+        if exit_result is None:
             returns[key] = None
             exit_dates[key] = None
-            exit_closes[key] = None
+            exit_prices[key] = None
+            exit_reasons[key] = None
             continue
-        exit_row = future.iloc[horizon - 1]
-        close = _safe_float(exit_row[close_col])
-        exit_dates[key] = str(exit_row.get("_date") or "")[:10] or None
-        exit_closes[key] = round(close, 2) if close is not None else None
-        returns[key] = round((close / entry_price - 1) * 100, 2) if close is not None else None
-    return {**base, "status": "completed", "returns": returns, "exit_dates": exit_dates, "exit_closes": exit_closes}
+        exit_price, exit_date, exit_reason = exit_result
+        exit_dates[key] = exit_date
+        exit_prices[key] = round(exit_price, 3)
+        exit_reasons[key] = exit_reason
+        returns[key] = round((exit_price / entry_price - 1) * 100, 2)
+    first_horizon = f"{min(horizons)}d" if horizons else "1d"
+    if returns.get(first_horizon) is None:
+        return {
+            **base,
+            "status": "holding",
+            "reason": "已触发买入，等待下一交易日首次结算",
+            "returns": returns,
+            "exit_dates": exit_dates,
+            "exit_prices": exit_prices,
+            "exit_closes": exit_prices,
+            "exit_reasons": exit_reasons,
+        }
+    return {
+        **base,
+        "status": "completed",
+        "reason": exit_reasons.get(first_horizon) or "按统一持有期结算",
+        "returns": returns,
+        "exit_dates": exit_dates,
+        "exit_prices": exit_prices,
+        "exit_closes": exit_prices,
+        "exit_reasons": exit_reasons,
+    }
+
+
+def _entry_fill_price(open_price: float | None, buy_zone_low: float, buy_zone_high: float) -> float:
+    if open_price is None:
+        return buy_zone_high
+    if open_price < buy_zone_low:
+        return buy_zone_low
+    if open_price > buy_zone_high:
+        return buy_zone_high
+    return open_price
+
+
+def _resolve_t1_exit(
+    rows: Any,
+    *,
+    horizon: int,
+    columns: dict[str, Any],
+    stop_loss: float | None,
+    take_profit: float | None,
+) -> tuple[float, str, str] | None:
+    available = rows.iloc[:horizon]
+    for _, row in available.iterrows():
+        open_price = _safe_float(row[columns["open"]])
+        high = _safe_float(row[columns["high"]])
+        low = _safe_float(row[columns["low"]])
+        exit_date = str(row.get("_date") or "")[:10]
+        if stop_loss is not None and open_price is not None and open_price <= stop_loss:
+            return open_price, exit_date, "止损跳空退出"
+        if take_profit is not None and open_price is not None and open_price >= take_profit:
+            return open_price, exit_date, "止盈跳空退出"
+        stop_hit = stop_loss is not None and low is not None and low <= stop_loss
+        target_hit = take_profit is not None and high is not None and high >= take_profit
+        if stop_hit:
+            reason = "同日同时触及止损和止盈，按保守口径止损" if target_hit else "触及止损退出"
+            return stop_loss, exit_date, reason
+        if target_hit:
+            return take_profit, exit_date, "触及第一止盈位退出"
+    if len(rows) < horizon:
+        return None
+    exit_row = rows.iloc[horizon - 1]
+    close = _safe_float(exit_row[columns["close"]])
+    if close is None:
+        return None
+    return close, str(exit_row.get("_date") or "")[:10], f"持有{horizon}个交易日收盘退出"
 
 
 def _cache_file_summary(cache_dir: Path) -> list[dict[str, Any]]:

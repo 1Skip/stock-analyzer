@@ -22,6 +22,8 @@ from config import (
     T1_PLAN_AUTO_ENABLED, T1_PLAN_SCHEDULE_TIME, T1_PLAN_STRATEGIES,
     T1_PLAN_SECTOR, T1_PLAN_SECTORS, T1_PLAN_NUM_STOCKS, T1_PLAN_PREHEAT_KLINE,
     T1_PLAN_PREHEAT_EXTENDED_INFO, T1_PLAN_STRATEGY_TIMEOUT_SECONDS,
+    ANALYSIS_SIGNAL_SETTLEMENT_ENABLED, ANALYSIS_SIGNAL_SETTLEMENT_TIME,
+    ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS,
 )
 from notification import build_analysis_report, build_t1_plan_report
 from reports.exporter import save_markdown_report
@@ -38,6 +40,7 @@ LOCK_DIR = Path(os.getenv("SCHEDULER_LOCK_DIR", ".cache"))
 SCHEDULER_INSTANCE_LOCK_PATH = LOCK_DIR / "scheduler.instance.lock"
 SCHEDULED_ANALYSIS_LOCK_PATH = LOCK_DIR / "scheduled_analysis.lock"
 T1_PREHEAT_LOCK_PATH = LOCK_DIR / "t1_plan_preheat.lock"
+ANALYSIS_SIGNAL_SETTLEMENT_LOCK_PATH = LOCK_DIR / "analysis_signal_settlement.lock"
 SCHEDULER_STATUS_PATH = Path(os.getenv("SCHEDULER_STATUS_PATH", str(LOCK_DIR / "scheduler_status.json")))
 
 
@@ -398,6 +401,43 @@ def _push_t1_plan_preheat_results(plans: dict) -> None:
         logger.warning("T+1 plan summary build failed: %s", exc, exc_info=True)
 
 
+@_skip_if_locked(ANALYSIS_SIGNAL_SETTLEMENT_LOCK_PATH, "个股分析信号结算")
+def run_analysis_signal_settlement():
+    """Settle frozen individual-analysis signals with later real qfq daily K."""
+    started_at = _status_now()
+    _write_scheduler_status("analysis_signal_settlement", {
+        "status": "running",
+        "started_at": started_at,
+    })
+    try:
+        from analysis_signal_tracker import AnalysisSignalTracker
+
+        result = AnalysisSignalTracker().refresh_history(
+            max_symbols=ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS,
+        )
+        _write_scheduler_status("analysis_signal_settlement", {
+            **result,
+            "started_at": started_at,
+            "finished_at": _status_now(),
+        })
+        logger.info(
+            "个股分析信号结算完成：symbols=%s updated=%s failed=%s",
+            result.get("symbols"),
+            result.get("updated_records"),
+            result.get("failed_symbols"),
+        )
+        return result
+    except Exception as exc:
+        logger.warning("个股分析信号结算失败: %s", exc, exc_info=True)
+        _write_scheduler_status("analysis_signal_settlement", {
+            "status": "failed",
+            "started_at": started_at,
+            "finished_at": _status_now(),
+            "error": str(exc),
+        })
+        return None
+
+
 def _iter_t1_plan_targets() -> list[tuple[str, str]]:
     sectors = T1_PLAN_SECTORS or [T1_PLAN_SECTOR]
     targets: list[tuple[str, str]] = []
@@ -565,6 +605,9 @@ def start_scheduler():
         if T1_PLAN_AUTO_ENABLED:
             schedule.every().day.at(T1_PLAN_SCHEDULE_TIME).do(run_t1_plan_preheat)
             logger.info(f"T+1 推荐计划自动预生成已开启：每日 {T1_PLAN_SCHEDULE_TIME} 执行")
+        if ANALYSIS_SIGNAL_SETTLEMENT_ENABLED:
+            schedule.every().day.at(ANALYSIS_SIGNAL_SETTLEMENT_TIME).do(run_analysis_signal_settlement)
+            logger.info(f"个股分析信号自动结算已开启：每日 {ANALYSIS_SIGNAL_SETTLEMENT_TIME} 执行")
 
         def _shutdown(signum, frame):
             logger.info("收到退出信号，调度器关闭")

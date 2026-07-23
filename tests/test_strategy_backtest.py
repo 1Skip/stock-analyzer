@@ -43,11 +43,21 @@ def test_strategy_backtest_includes_all_current_strategies():
     result = StrategyBacktestAdapter(FakeStrategyHistoryService()).run("1y")
 
     assert [row["strategy"] for row in result["strategies"]] == list(STRATEGIES)
-    assert result["summary"]["strategies_with_plans"] == 4
-    assert result["summary"]["plan_count"] == 4
-    assert result["summary"]["completed_count"] == 4
+    assert result["summary"]["strategies_with_plans"] == len(STRATEGIES)
+    assert result["summary"]["plan_count"] == len(STRATEGIES)
+    assert result["summary"]["completed_count"] == len(STRATEGIES)
     assert all(row["avg_5d_return_pct"] == 2.0 for row in result["strategies"])
     assert all(row["win_rate_20d_pct"] == 0.0 for row in result["strategies"])
+
+
+def test_strategy_backtest_deduplicates_exact_plan_reruns():
+    service = FakeStrategyHistoryService()
+    service.rows.append({**service.rows[0], "generated_at": "later rerun"})
+
+    result = StrategyBacktestAdapter(service).run("1y")
+
+    assert result["summary"]["plan_count"] == len(STRATEGIES)
+    assert result["summary"]["completed_count"] == len(STRATEGIES)
 
 
 def test_strategy_backtest_marks_requested_history_gap():
@@ -86,7 +96,7 @@ def test_backtest_page_uses_strategy_validation_as_primary_view():
 
     source = Path("backtest_ui.py").read_text(encoding="utf-8")
 
-    assert 'st.tabs(["四策略真实验证", "单股信号诊断"])' in source
+    assert 'st.tabs(["五策略真实验证", "单股信号诊断"])' in source
     assert 'st.form_submit_button("验证全部策略"' in source
     assert "StrategyBacktestAdapter().run(period=period)" in source
     assert "def _render_single_stock_signal_diagnostic" in source

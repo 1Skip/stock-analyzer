@@ -3,6 +3,7 @@ import html
 import concurrent.futures
 import io
 import json
+import logging
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -27,13 +28,18 @@ from ui.charts import (
     plot_boll_chart, plot_main_accumulation_chart, plot_intraday_chart, plot_volume_chart,
 )
 from ui.ai_analysis_ui import display_ai_analysis_card
-from ui.decision_dashboard import render_decision_dashboard
+from ui.decision_dashboard import build_decision_snapshot, render_decision_dashboard
 from ui.loading import make_progress_reporter
 from ui.stock_search import suggest_stock_inputs
 from quality_monitor import build_stock_data_quality_summary
 from stock_quant_evaluator import build_stock_quant_snapshot
 from data_fetcher import StockDataFetcher
 from data.periods import ANALYSIS_PERIOD_CODES, get_period_spec, slice_period, tag_period_coverage
+from analysis_signal_tracker import AnalysisSignalTracker
+from value_investing_evaluator import build_value_investing_snapshot
+
+
+logger = logging.getLogger(__name__)
 
 
 def _validate_symbol(sym, mkt):
@@ -405,8 +411,8 @@ def _render_period_coverage(data, period):
         st.warning(f"{get_period_spec(period).label}数据覆盖不足：{detail}")
 
 
-def _render_stock_quant_snapshot(data):
-    snapshot = build_stock_quant_snapshot(data)
+def _render_stock_quant_snapshot(data, snapshot=None):
+    snapshot = snapshot or build_stock_quant_snapshot(data)
     if snapshot.get("status") == "empty":
         return
     with st.expander("个股量化评分", expanded=True):
@@ -480,6 +486,135 @@ def _render_stock_quant_snapshot(data):
         calibration = snapshot.get("calibration") or {}
         st.caption(calibration.get("label") or "规则评分，尚未做收益校准。")
         st.caption(snapshot.get("data_basis") or "基于日K指标，只读展示，不改变交易信号。")
+
+
+def _render_value_investing_snapshot(profile, extended_info, quote, data):
+    price = quote.get("price") if _is_valid_quote(quote) else None
+    if price is None and data is not None and not data.empty:
+        price = data.iloc[-1].get("close")
+    as_of = _quote_date(quote)
+    if not as_of and data is not None and not data.empty:
+        as_of = str(data.index[-1])[:10]
+    snapshot = build_value_investing_snapshot(
+        profile,
+        extended_info,
+        current_price=price,
+        price_as_of=as_of,
+        price_source="页面当前真实行情" if _is_valid_quote(quote) else "1年前复权日K收盘价",
+    )
+    with st.expander("芒格 · 巴菲特 · Codex 估值", expanded=False):
+        if snapshot.get("status") != "ok":
+            st.info(snapshot.get("message") or "关键估值数据不足，当前不可评估。")
+            missing = snapshot.get("missing_evidence") or []
+            if missing:
+                st.caption("缺少：" + "；".join(str(item) for item in missing))
+            return
+        col_score, col_price, col_value, col_margin = st.columns(4)
+        col_score.metric("价值质量分", _format_optional_number(snapshot.get("score"), precision=1))
+        col_price.metric("当前价", _format_optional_number(snapshot.get("current_price")))
+        col_value.metric("基础情景价值", _format_optional_number(snapshot.get("base_value_per_share")))
+        col_margin.metric("基础安全边际", _format_optional_number(snapshot.get("base_margin_of_safety_pct"), "%"))
+        st.caption(
+            f"{snapshot.get('grade_label')}｜价格日期 {snapshot.get('price_as_of') or '--'}｜"
+            f"财务期 {snapshot.get('report_period') or '--'}"
+        )
+        st.dataframe(
+            [
+                {
+                    "情景": item.get("label"),
+                    "每股价值": _format_optional_number(item.get("value_per_share")),
+                    "安全边际": _format_optional_number(item.get("margin_of_safety_pct"), "%"),
+                    "增长假设": _format_optional_number(item.get("growth_pct"), "%"),
+                    "折现率": _format_optional_number(item.get("discount_rate_pct"), "%"),
+                    "永续增长": _format_optional_number(item.get("terminal_growth_pct"), "%"),
+                }
+                for item in snapshot.get("scenarios") or []
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+        st.dataframe(
+            [
+                {
+                    "方法": item.get("name"),
+                    "得分": f"{item.get('score')}/{item.get('max_score')}",
+                    "依据": "；".join(item.get("notes") or []),
+                }
+                for item in snapshot.get("pillars") or []
+            ],
+            width="stretch",
+            hide_index=True,
+        )
+        st.markdown(f"**当前含义：** {snapshot.get('what_is_priced_in')}")
+        st.markdown(f"**筛选结论：** {snapshot.get('action')}")
+        missing = snapshot.get("missing_evidence") or []
+        if missing:
+            st.caption("仍缺证据：" + "；".join(str(item) for item in missing[:8]))
+        st.caption(snapshot.get("source_posture") or "事实、模型输出和假设已分开。")
+
+
+def _signal_validation_rows(summary, scope):
+    rows = []
+    labels = {"technical": "技术信号", "decision": "决策模型"}
+    for model, model_rows in (summary.get("models") or {}).items():
+        for item in model_rows or []:
+            if not item.get("sample_count"):
+                continue
+            rows.append({
+                "范围": scope,
+                "对象": labels.get(model, model),
+                "周期": item.get("horizon"),
+                "样本": item.get("sample_count"),
+                "成功率": _format_optional_number(item.get("success_rate_pct"), "%"),
+                "95%区间": _format_confidence_interval(
+                    item.get("success_rate_ci_low_pct"),
+                    item.get("success_rate_ci_high_pct"),
+                ),
+                "方向收益": _format_optional_number(item.get("avg_directional_return_pct"), "%"),
+                "样本等级": item.get("sample_tier"),
+            })
+    return rows
+
+
+def _render_analysis_signal_validation(review):
+    if not isinstance(review, dict):
+        return
+    symbol_summary = review.get("symbol_summary") or {}
+    global_summary = review.get("global_summary") or {}
+    with st.expander("个股分析真实成功率", expanded=True):
+        current_record = review.get("record") or {}
+        if current_record.get("status") == "not_recorded":
+            st.info(current_record.get("reason") or "本次信号未留档。")
+            return
+        st.caption(
+            f"本次已冻结：日K日期 {current_record.get('data_as_of') or '--'}｜"
+            f"技术方向 {current_record.get('technical_direction') or '--'}｜"
+            f"决策方向 {current_record.get('decision_direction') or '--'}。同一股票同一交易日不会覆盖首份记录。"
+        )
+        rows = _signal_validation_rows(symbol_summary, "当前个股")
+        rows.extend(_signal_validation_rows(global_summary, "全部历史"))
+        if rows:
+            st.dataframe(rows, width="stretch", hide_index=True)
+        else:
+            st.info("信号已经开始自动留档，等待未来1/5/20个交易日真实前复权日K结算后才计算成功率。")
+        buckets = [item for item in (global_summary.get("score_buckets") or []) if item.get("sample_count")]
+        if buckets:
+            st.markdown("#### 量化评分校准")
+            st.dataframe(
+                [
+                    {
+                        "评分段": item.get("score_bucket"),
+                        "5日样本": item.get("sample_count"),
+                        "5日上涨占比": _format_optional_number(item.get("up_rate_5d_pct"), "%"),
+                        "5日平均收益": _format_optional_number(item.get("avg_5d_return_pct"), "%"),
+                        "样本等级": item.get("sample_tier"),
+                    }
+                    for item in buckets
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        st.caption("技术信号、决策模型和量化评分分别验证；可选AI文字解读不计入本成功率。")
 
 
 def _format_confidence_interval(low, high):
@@ -1002,8 +1137,35 @@ def _render_analysis_results(
     benchmark_data = None
     if market == "CN":
         benchmark_data = get_cached_benchmark_data("000300", period)
+    decision_snapshot = {}
+    if signals and "error" not in signals:
+        decision_snapshot = build_decision_snapshot(
+            indicator_data,
+            signals,
+            quote,
+            extended_info,
+            profile,
+        )
     render_decision_dashboard(indicator_data, signals, quote, extended_info, profile, benchmark_data)
-    _render_stock_quant_snapshot(quant_data if quant_data is not None else indicator_data)
+    quant_frame = quant_data if quant_data is not None else indicator_data
+    quant_snapshot = build_stock_quant_snapshot(quant_frame)
+    if market == "CN":
+        try:
+            signal_review = AnalysisSignalTracker().record_and_evaluate(
+                symbol=symbol,
+                name=stock_name,
+                market=market,
+                data=quant_frame,
+                signals=signals,
+                quant_snapshot=quant_snapshot,
+                decision_snapshot=decision_snapshot,
+            )
+            _render_analysis_signal_validation(signal_review)
+        except Exception:
+            logger.warning("个股分析信号留档或结算失败: symbol=%s", symbol, exc_info=True)
+            st.info("个股信号留档或结算失败，本次不生成未经验证的成功率。")
+    _render_value_investing_snapshot(profile, extended_info, quote, quant_frame)
+    _render_stock_quant_snapshot(quant_frame, snapshot=quant_snapshot)
     _render_data_quality_summary(data, quote, profile, extended_info)
 
     _render_stock_profile(profile)

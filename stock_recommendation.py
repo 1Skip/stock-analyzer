@@ -47,6 +47,15 @@ from recommendation_modules.runtime_helpers import (
     safe_extended_info_failure as _safe_extended_info_failure,
     safe_float as _safe_float,
 )
+from experimental_strategy import (
+    EXPERIMENTAL_DEEP_LIMIT,
+    EXPERIMENTAL_STRATEGY_NAME,
+    EXPERIMENTAL_STRATEGY_VERSION,
+    build_experimental_candidate,
+    evaluate_experimental_technical,
+    select_experimental_universe,
+)
+from value_investing_evaluator import build_value_investing_snapshot
 
 # 板块股票定义 - 短线龙头股
 # 评分权重配置
@@ -229,6 +238,7 @@ class StockRecommender:
         self.last_board_ranking_diagnostics = {}
         self.last_aggressive_diagnostics = {}
         self.last_multi_factor_diagnostics = {}
+        self.last_experimental_diagnostics = {}
         self.last_short_term_diagnostics = {}
 
     def _merge_realtime_quote(self, data, fetcher, symbol, market, quote=None):
@@ -3271,6 +3281,169 @@ class StockRecommender:
         diagnostics["result_count"] = len(results)
         self.last_multi_factor_diagnostics = diagnostics
         _emit_progress(progress_callback, "完成", 100, deep_checked=len(stocks), result_count=len(results))
+        return results
+
+    def _analyze_experimental_technical(self, stock, market='CN', fetcher=None):
+        symbol = str((stock or {}).get("code") or "").strip()
+        if not symbol:
+            return None
+        fetcher = fetcher or StockDataFetcher()
+        try:
+            data = self._get_strategy_stock_data(
+                symbol,
+                period='6mo',
+                interval='1d',
+                market=market,
+                fetcher=fetcher,
+            )
+        except Exception:
+            return None
+        technical = evaluate_experimental_technical(data)
+        if not technical.get("passed"):
+            return None
+        return {"stock": dict(stock or {}), "technical": technical}
+
+    def _analyze_experimental_deep(self, item, diagnostics=None):
+        stock = dict((item or {}).get("stock") or {})
+        technical = (item or {}).get("technical") or {}
+        symbol = str(stock.get("code") or "").strip()
+        if not symbol:
+            return None
+        try:
+            profile = self._fundamental_service.get_stock_profile(symbol, "CN") or {}
+        except Exception:
+            profile = {}
+        listing_date = pd.to_datetime(profile.get("listing_date"), errors="coerce")
+        if pd.isna(listing_date) or (pd.Timestamp.now().normalize() - listing_date.normalize()).days < 365 * 5:
+            if isinstance(diagnostics, dict):
+                failures = diagnostics.setdefault("deep_failures", {})
+                failures["上市日期缺失或未满5年"] = failures.get("上市日期缺失或未满5年", 0) + 1
+            return None
+        extended = self._get_multi_factor_extended_info(symbol, "CN")
+        frame = technical.get("frame")
+        price_as_of = None
+        if frame is not None and not getattr(frame, "empty", True):
+            price_as_of = str(frame.index[-1])[:10]
+        latest = technical.get("latest")
+        current_price = latest.get("close") if latest is not None else None
+        valuation = build_value_investing_snapshot(
+            profile,
+            extended,
+            current_price=current_price,
+            price_as_of=price_as_of,
+            price_source="实验策略真实日K收盘价",
+        )
+        risk_blocked, risky_announcements = self._risk_events_blocked(extended.get("risk_events") or {})
+        risk_note = "；".join(risky_announcements[:3]) if risky_announcements else "未发现规则内重大风险事件"
+        result = build_experimental_candidate(
+            stock,
+            technical,
+            valuation,
+            profile=profile,
+            extended_info=extended,
+            risk_blocked=risk_blocked,
+            risk_note=risk_note,
+        )
+        if result is None and isinstance(diagnostics, dict):
+            failures = diagnostics.setdefault("deep_failures", {})
+            if risk_blocked:
+                reason = "重大风险事件"
+            elif valuation.get("status") != "ok":
+                reason = "估值数据不足"
+            elif (valuation.get("base_margin_of_safety_pct") or -999) < 15:
+                reason = "安全边际不足"
+            elif (valuation.get("score") or 0) < 65:
+                reason = "价值质量评分不足"
+            else:
+                reason = "盈利或经营现金流不足"
+            failures[reason] = failures.get(reason, 0) + 1
+        return result
+
+    def get_experimental_recommendations(self, num_stocks=10, progress_callback=None):
+        """实验策略：成熟主板 + 稳定趋势 + 质量价值 + 风险排除。"""
+        diagnostics = {
+            "strategy": EXPERIMENTAL_STRATEGY_NAME,
+            "strategy_version": EXPERIMENTAL_STRATEGY_VERSION,
+            "status": "observation_only",
+        }
+        profile_index = {}
+        try:
+            profile_index = self._fundamental_service.index_cache.get("CN:all:profile_index:v1") or {}
+        except Exception:
+            profile_index = {}
+        if not profile_index:
+            try:
+                payload = self._fundamental_service.index_cache._read()
+                item = payload.get("CN:all:profile_index:v1") if isinstance(payload, dict) else None
+                profile_index = item.get("value") if isinstance(item, dict) else {}
+            except Exception:
+                profile_index = {}
+        if not profile_index:
+            try:
+                profile_index = run_with_timeout(
+                    self._fundamental_service.get_stock_profile_index,
+                    10,
+                ) or {}
+            except Exception:
+                profile_index = {}
+        stocks = get_popular_cn_stocks()
+        universe = select_experimental_universe(
+            stocks,
+            profile_index,
+            allow_missing_listing=True,
+        )
+        diagnostics["raw_pool"] = len(stocks)
+        diagnostics["mature_main_board_pool"] = len(universe)
+        _emit_progress(
+            progress_callback,
+            "实验股票池",
+            25,
+            raw_pool=len(stocks),
+            mature_main_board_pool=len(universe),
+        )
+
+        technical_candidates = []
+        fetcher = StockDataFetcher()
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                executor.submit(self._analyze_experimental_technical, stock, 'CN', fetcher): stock
+                for stock in universe
+            }
+            for future in as_completed(futures):
+                try:
+                    candidate = future.result()
+                except Exception:
+                    candidate = None
+                if candidate:
+                    technical_candidates.append(candidate)
+        technical_candidates.sort(
+            key=lambda item: (
+                (item.get("technical") or {}).get("metrics", {}).get("volatility_20d_pct") or 999,
+                -((item.get("technical") or {}).get("metrics", {}).get("return_20d_pct") or 0),
+            )
+        )
+        shortlist = technical_candidates[:EXPERIMENTAL_DEEP_LIMIT]
+        diagnostics["technical_passed"] = len(technical_candidates)
+        diagnostics["deep_checked"] = len(shortlist)
+        _emit_progress(
+            progress_callback,
+            "稳定趋势轻筛",
+            75,
+            mature_main_board_pool=len(universe),
+            technical_passed=len(technical_candidates),
+            deep_checked=len(shortlist),
+        )
+        results = self._run_strategy_pool(
+            EXPERIMENTAL_STRATEGY_NAME,
+            shortlist,
+            num_stocks,
+            lambda item: self._analyze_experimental_deep(item, diagnostics=diagnostics),
+            progress_callback=progress_callback,
+            progress_stage="质量估值检查",
+        )
+        diagnostics["result_count"] = len(results)
+        self.last_experimental_diagnostics = diagnostics
+        _emit_progress(progress_callback, "完成", 100, deep_checked=len(shortlist), result_count=len(results))
         return results
 
 if __name__ == "__main__":

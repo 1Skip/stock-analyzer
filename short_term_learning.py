@@ -9,6 +9,8 @@ from data.cache import JsonFileCache
 MIN_COMPLETED_SAMPLES = 12
 SCORE_BUCKET_SIZE = 5
 MAX_LEARNING_BONUS = 6.0
+LEARNING_PROFILE_VERSION = "short_term_learning_v2"
+OUTCOME_METHOD_VERSION = "t1_execution_v2"
 
 _OUTCOME_CACHE = JsonFileCache("short_term_learning_outcomes", 86400 * 365)
 
@@ -29,7 +31,7 @@ def build_short_term_learning_profile(
         strategy=strategy,
     )
     profile: dict[str, Any] = {
-        "version": "short_term_learning_v1",
+        "version": LEARNING_PROFILE_VERSION,
         "strategy": strategy,
         "sample_count": len(samples),
         "min_samples": MIN_COMPLETED_SAMPLES,
@@ -89,7 +91,7 @@ def apply_short_term_learning(
         learned_alpha = _safe_float(item.get("alpha_score"))
         if learned_alpha is not None:
             learned_alpha = round(max(0.0, min(100.0, learned_alpha + bonus)), 1)
-        item["learning_profile_version"] = profile.get("version") or "short_term_learning_v1"
+        item["learning_profile_version"] = profile.get("version") or LEARNING_PROFILE_VERSION
         item["learning_strategy"] = profile.get("strategy")
         item["learning_status"] = profile.get("status") or "insufficient_samples"
         item["learning_bonus"] = bonus
@@ -129,7 +131,10 @@ def _collect_completed_short_term_samples(
         plan = row.get("plan") if isinstance(row, dict) else None
         if not isinstance(plan, dict) or str(plan.get("strategy") or "") != strategy:
             continue
-        plan_key = f"{strategy}:{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
+        plan_key = (
+            f"{OUTCOME_METHOD_VERSION}:{strategy}:"
+            f"{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
+        )
         cached = _OUTCOME_CACHE.get(plan_key)
         if cached is not None and isinstance(cached, list):
             for sample in cached:

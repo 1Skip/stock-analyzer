@@ -10,9 +10,16 @@ import pandas as pd
 
 from config import RUNTIME_CACHE_DIR
 from data.periods import assess_period_coverage, get_period_spec, period_start
+from quality_monitor import build_plan_history_identity
+from experimental_strategy import (
+    EXPERIMENTAL_STRATEGY_NAME,
+    build_experimental_validation_gate,
+    sample_tier,
+    wilson_interval,
+)
 
 
-STRATEGIES = ("短线", "短线经典版", "激进突破型", "多因子稳健型")
+STRATEGIES = ("短线", "短线经典版", "激进突破型", "多因子稳健型", EXPERIMENTAL_STRATEGY_NAME)
 HORIZONS = (1, 5, 20)
 
 
@@ -98,6 +105,7 @@ class StrategyBacktestAdapter:
         history = self.service.list_t1_plan_history(limit=5000)
 
         selected: list[tuple[dict[str, Any], dict[str, Any], str]] = []
+        seen_plans = set()
         for row in history:
             plan = row.get("plan") or {}
             strategy = str(plan.get("strategy") or row.get("strategy") or "")
@@ -105,7 +113,11 @@ class StrategyBacktestAdapter:
             parsed_date = pd.to_datetime(trade_date, errors="coerce")
             if strategy not in STRATEGIES or pd.isna(parsed_date):
                 continue
+            identity = build_plan_history_identity(plan)
+            if identity in seen_plans:
+                continue
             if requested_start <= parsed_date.normalize() <= requested_end:
+                seen_plans.add(identity)
                 selected.append((row, plan, trade_date))
 
         buckets: dict[str, dict[str, Any]] = {
@@ -115,6 +127,7 @@ class StrategyBacktestAdapter:
                 "recommended": 0,
                 "completed": 0,
                 "pending": 0,
+                "not_triggered": 0,
                 "returns": defaultdict(list),
                 "dates": [],
             }
@@ -138,6 +151,7 @@ class StrategyBacktestAdapter:
             bucket["dates"].append(trade_date)
             completed_count = 0
             pending_count = 0
+            not_triggered_count = 0
             for item in items:
                 returns = item.get("returns") or {}
                 available = False
@@ -148,6 +162,8 @@ class StrategyBacktestAdapter:
                         available = True
                 if available:
                     completed_count += 1
+                elif item.get("status") == "not_triggered":
+                    not_triggered_count += 1
                 else:
                     pending_count += 1
                 detail_rows.append(
@@ -166,6 +182,7 @@ class StrategyBacktestAdapter:
                 )
             bucket["completed"] += completed_count
             bucket["pending"] += pending_count
+            bucket["not_triggered"] += not_triggered_count
             plan_rows.append(
                 {
                     "strategy": strategy,
@@ -174,6 +191,7 @@ class StrategyBacktestAdapter:
                     "recommended": len(items),
                     "completed": completed_count,
                     "pending": pending_count,
+                    "not_triggered": not_triggered_count,
                 }
             )
 
@@ -185,17 +203,23 @@ class StrategyBacktestAdapter:
             row = dict(bucket)
             row["actual_start"] = min(dates) if dates else None
             row["actual_end"] = max(dates) if dates else None
+            row["distinct_plan_dates"] = len(set(dates))
             for horizon in HORIZONS:
                 values = returns[horizon]
                 row[f"samples_{horizon}d"] = len(values)
+                row[f"wins_{horizon}d"] = sum(value > 0 for value in values)
                 row[f"avg_{horizon}d_return_pct"] = _average(values)
                 row[f"win_rate_{horizon}d_pct"] = _win_rate(values)
+                ci_low, ci_high = wilson_interval(row[f"wins_{horizon}d"], len(values))
+                row[f"win_rate_{horizon}d_ci_low_pct"] = ci_low
+                row[f"win_rate_{horizon}d_ci_high_pct"] = ci_high
+            row["sample_tier"] = sample_tier(row["samples_1d"])
             if row["plans"] == 0:
                 row["conclusion"] = "无历史计划"
             elif row["completed"] == 0:
                 row["conclusion"] = "等待后续数据"
-            elif row["completed"] < 12:
-                row["conclusion"] = "样本不足"
+            elif row["samples_1d"] < 30:
+                row["conclusion"] = "仅观察"
             elif row["avg_1d_return_pct"] is not None and row["avg_1d_return_pct"] < 0:
                 row["conclusion"] = "近期偏弱"
             elif (
@@ -207,6 +231,9 @@ class StrategyBacktestAdapter:
                 row["conclusion"] = "近期占优"
             else:
                 row["conclusion"] = "表现一般"
+            if strategy == EXPERIMENTAL_STRATEGY_NAME:
+                row["validation_gate"] = build_experimental_validation_gate(row)
+                row["conclusion"] = row["validation_gate"]["label"]
             strategy_rows.append(row)
 
         all_dates = [trade_date for _, _, trade_date in selected]
@@ -232,5 +259,5 @@ class StrategyBacktestAdapter:
                 "recommended_count": sum(row["recommended"] for row in strategy_rows),
                 "completed_count": sum(row["completed"] for row in strategy_rows),
             },
-            "source": "已保存的真实T+1推荐计划 + 后续真实日K收盘价",
+            "source": "已保存的真实T+1推荐计划 + 买入区间触发 + 后续真实日K",
         }

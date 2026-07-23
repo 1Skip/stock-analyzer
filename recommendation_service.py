@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import concurrent.futures
 from datetime import datetime, timedelta
+import hashlib
 from typing import Any, Callable
 import time
 import requests
@@ -10,10 +11,9 @@ import logging
 
 from config import (
     CACHE_TTL_RECOMMENDATION_RESULTS,
-    MANUAL_TRADE_LEARNING_MIN_CLOSED,
-    MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED,
     RECOMMEND_RANKER_ENABLED,
     RECOMMEND_RANKER_SORT,
+    T1_PLAN_STRATEGIES,
     T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
     T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS,
     T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS,
@@ -30,7 +30,9 @@ from indicator_context import (
     prepare_indicator_frame,
 )
 from quality_monitor import (
+    T1_OUTCOME_VERSION,
     attach_recommendation_explanations,
+    build_plan_history_identity,
     evaluate_plan_outcomes,
     list_plan_history,
     list_manual_trade_records,
@@ -45,10 +47,11 @@ from recommend_ranker import enrich_recommendations_with_alpha
 from short_term_learning import apply_short_term_learning, build_short_term_learning_profile
 from stock_recommendation import StockRecommender
 from trade_plan import enrich_recommendations_with_trade_plan
+from experimental_strategy import EXPERIMENTAL_STRATEGY_NAME, EXPERIMENTAL_STRATEGY_VERSION
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
-SELECTION_DATA_VERSION = "short_term_hot_board_constituents_v2"
+SELECTION_DATA_VERSION = "short_term_hot_board_constituents_v2_t1_execution_v2"
 logger = logging.getLogger(__name__)
 DISPLAY_ENRICHMENT_TIMEOUT_SECONDS = 6
 
@@ -132,7 +135,8 @@ class RecommendationService:
             CACHE_TTL_RECOMMENDATION_RESULTS,
         )
         self.plan_cache = JsonFileCache("recommendation_t1_plans", 86400 * 14)
-        self.plan_history_cache = JsonFileCache("recommendation_t1_plan_history", 86400 * 120)
+        self.plan_history_cache = JsonFileCache("recommendation_t1_plan_history", 86400 * 365 * 3)
+        self.observation_cache = JsonFileCache("recommendation_auto_observations", 86400 * 365 * 3)
         self.strategy_review_cache = JsonFileCache("recommendation_strategy_reviews", 86400 * 120)
         self.manual_trade_cache = JsonFileCache("recommendation_manual_trade_records", 86400 * 365 * 3)
 
@@ -165,6 +169,8 @@ class RecommendationService:
         result["sector"] = sector
         result["num_stocks"] = num_stocks
         result["selection_data_version"] = SELECTION_DATA_VERSION
+        if strategy == EXPERIMENTAL_STRATEGY_NAME:
+            result["strategy_version"] = EXPERIMENTAL_STRATEGY_VERSION
         self.result_cache.set(cache_key, result)
         return result
 
@@ -229,6 +235,8 @@ class RecommendationService:
             return None
         cached = dict(cached)
         if str(strategy or "") in ("短线", "短线经典版") and cached.get("selection_data_version") != SELECTION_DATA_VERSION:
+            return None
+        if str(strategy or "") == EXPERIMENTAL_STRATEGY_NAME and cached.get("strategy_version") != EXPERIMENTAL_STRATEGY_VERSION:
             return None
         recommended = cached.get("recommended")
         if isinstance(recommended, list):
@@ -328,6 +336,92 @@ class RecommendationService:
             "summary": summarize_history_outcomes(reviews),
         }
 
+    def evaluate_auto_observation_history(
+        self,
+        *,
+        strategy: str | None = None,
+        sector: str | None = None,
+        limit: int = 5000,
+    ) -> dict[str, Any]:
+        """Update and summarize the automatic real T+1 observation account."""
+        rows = self.list_t1_plan_history(strategy=strategy, sector=sector, limit=limit)
+        if strategy is None:
+            current_strategies = {str(value) for value in T1_PLAN_STRATEGIES}
+            rows = [
+                row
+                for row in rows
+                if str(((row.get("plan") or {}).get("strategy") or row.get("strategy") or ""))
+                in current_strategies
+            ]
+        entries = [
+            (row, row.get("plan") or {}, self._observation_cache_key(row.get("plan") or {}))
+            for row in rows
+        ]
+        get_many = getattr(self.observation_cache, "get_many", None)
+        cached_outcomes = (
+            get_many([cache_key for _, _, cache_key in entries])
+            if callable(get_many)
+            else {cache_key: self.observation_cache.get(cache_key) for _, _, cache_key in entries}
+        )
+        outcome_quote_service = self.quote_service
+        try:
+            from strategy_backtest import _StrategyOutcomeQuoteService
+
+            outcome_quote_service = _StrategyOutcomeQuoteService(self.quote_service)
+        except Exception:
+            logger.debug("自动观察仓本地K线复用初始化失败，回退行情服务", exc_info=True)
+        reviews = []
+        details = []
+        cache_updates = {}
+        for row, plan, cache_key in entries:
+            outcome = cached_outcomes.get(cache_key)
+            if self._observation_needs_refresh(outcome):
+                outcome = evaluate_plan_outcomes(plan, quote_service=outcome_quote_service, horizons=(1,))
+                cache_updates[cache_key] = outcome
+            reviews.append({"plan": plan, "outcome": outcome})
+            for item in (outcome or {}).get("items") or []:
+                returns = item.get("returns") or {}
+                exit_dates = item.get("exit_dates") or {}
+                exit_prices = item.get("exit_prices") or item.get("exit_closes") or {}
+                exit_reasons = item.get("exit_reasons") or {}
+                details.append({
+                    "strategy": plan.get("strategy") or row.get("strategy") or "--",
+                    "sector": plan.get("sector") or row.get("sector") or "--",
+                    "plan_for_trade_date": plan.get("plan_for_trade_date") or row.get("plan_for_trade_date"),
+                    "symbol": item.get("symbol"),
+                    "name": item.get("name"),
+                    "status": item.get("status"),
+                    "entry_date": item.get("entry_date"),
+                    "entry_price": item.get("entry_price"),
+                    "exit_date_1d": exit_dates.get("1d"),
+                    "exit_price_1d": exit_prices.get("1d"),
+                    "return_1d_pct": returns.get("1d"),
+                    "exit_reason_1d": exit_reasons.get("1d") or item.get("reason") or "",
+                })
+        if cache_updates:
+            set_many = getattr(self.observation_cache, "set_many", None)
+            if callable(set_many):
+                set_many(cache_updates)
+            else:
+                for cache_key, outcome in cache_updates.items():
+                    self.observation_cache.set(cache_key, outcome)
+        details.sort(
+            key=lambda item: (
+                str(item.get("plan_for_trade_date") or ""),
+                str(item.get("symbol") or ""),
+            ),
+            reverse=True,
+        )
+        return {
+            "version": T1_OUTCOME_VERSION,
+            "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+            "history": rows,
+            "reviews": reviews,
+            "details": details,
+            "summary": summarize_history_outcomes(reviews),
+            "source": "已保存的真实T+1推荐计划 + 后续真实日K",
+        }
+
     def record_manual_trade_outcome(
         self,
         plan: dict[str, Any] | None,
@@ -370,14 +464,13 @@ class RecommendationService:
             symbol=symbol,
             limit=limit,
         )
-        all_records = list_manual_trade_records(self.manual_trade_cache, limit=max(1000, int(limit or 200)))
         summary = summarize_manual_trade_records(records)
-        global_summary = summarize_manual_trade_records(all_records)
-        summary["learning_readiness"] = self._manual_trade_learning_readiness(summary, global_summary)
         return {
             "records": records,
             "summary": summary,
-            "global_summary": global_summary,
+            "global_summary": summarize_manual_trade_records(
+                list_manual_trade_records(self.manual_trade_cache, limit=max(1000, int(limit or 200)))
+            ),
         }
 
     def delete_manual_trade_record(self, record_key: str) -> dict[str, Any]:
@@ -622,6 +715,15 @@ class RecommendationService:
                 )
                 title = f"{sector} 多因子稳健型"
             diagnostics = self.recommender.last_multi_factor_diagnostics
+        elif strategy == EXPERIMENTAL_STRATEGY_NAME:
+            if sector != "全部":
+                raise ValueError("实验策略仅支持全部板块")
+            recommended = self.recommender.get_experimental_recommendations(
+                num_stocks,
+                progress_callback=progress_callback,
+            )
+            title = EXPERIMENTAL_STRATEGY_NAME
+            diagnostics = self.recommender.last_experimental_diagnostics
         else:
             raise ValueError(f"不支持的推荐策略：{strategy}")
 
@@ -696,32 +798,20 @@ class RecommendationService:
         return None
 
     @staticmethod
-    def _manual_trade_learning_readiness(
-        scoped_summary: dict[str, Any],
-        global_summary: dict[str, Any],
-    ) -> dict[str, Any]:
-        global_closed = int(global_summary.get("closed_records") or 0)
-        scoped_closed = int(scoped_summary.get("closed_records") or 0)
-        min_total = int(MANUAL_TRADE_LEARNING_MIN_CLOSED or 30)
-        min_strategy = int(MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED or 12)
-        missing_total = max(0, min_total - global_closed)
-        missing_strategy = max(0, min_strategy - scoped_closed)
-        ready = missing_total == 0 and missing_strategy == 0
-        return {
-            "ready": ready,
-            "status": "ready" if ready else "collecting",
-            "global_closed_records": global_closed,
-            "scoped_closed_records": scoped_closed,
-            "min_closed_records": min_total,
-            "min_strategy_closed_records": min_strategy,
-            "missing_closed_records": missing_total,
-            "missing_strategy_closed_records": missing_strategy,
-            "message": (
-                "实盘样本已达到提醒门槛，可以评估是否接入实盘反馈学习层。"
-                if ready
-                else f"实盘样本继续积累：总已卖出 {global_closed}/{min_total}，当前策略/板块 {scoped_closed}/{min_strategy}。"
-            ),
-        }
+    def _observation_cache_key(plan: dict[str, Any]) -> str:
+        identity = build_plan_history_identity(plan)
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        return f"{T1_OUTCOME_VERSION}:{digest}"
+
+    @staticmethod
+    def _observation_needs_refresh(outcome: Any) -> bool:
+        if not isinstance(outcome, dict) or outcome.get("version") != T1_OUTCOME_VERSION:
+            return True
+        items = outcome.get("items") or []
+        if items and all(item.get("status") in {"completed", "not_triggered", "skipped"} for item in items):
+            return False
+        evaluated_date = str(outcome.get("evaluated_at") or "")[:10]
+        return evaluated_date != datetime.now().date().isoformat()
 
     def _refresh_final_quotes(self, recommended: list[dict[str, Any]] | None, *, enrich_display: bool = True) -> None:
         if not recommended:

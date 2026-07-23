@@ -10,6 +10,7 @@ import pytest
 def scheduler_defaults(monkeypatch, tmp_path):
     """调度单元测试默认关闭日报，并隔离本地运行状态。"""
     monkeypatch.setattr("scheduler.DAILY_REPORT_ENABLED", False)
+    monkeypatch.setattr("scheduler.ANALYSIS_SIGNAL_SETTLEMENT_ENABLED", False)
     monkeypatch.setattr("scheduler._load_watchlist_from_file", lambda: [])
     monkeypatch.setattr("scheduler.SCHEDULER_STATUS_PATH", tmp_path / "scheduler_status.json")
 
@@ -71,6 +72,14 @@ class TestT1PlanSchedule:
             ("短线经典版", "算力租赁"),
             ("多因子稳健型", "全部"),
         ]
+
+    def test_t1_targets_add_experimental_as_independent_full_market_strategy(self, monkeypatch):
+        import scheduler
+
+        monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGIES", ["短线", "实验策略"])
+        monkeypatch.setattr(scheduler, "T1_PLAN_SECTORS", ["电力"])
+
+        assert scheduler._iter_t1_plan_targets() == [("短线", "全部"), ("实验策略", "全部")]
 
     def test_t1_plan_preheat_calls_configured_targets_without_realtime_entry_check(self, monkeypatch):
         fake_service = MagicMock()
@@ -184,6 +193,49 @@ class TestT1PlanSchedule:
 
 class TestRunScheduledAnalysis:
 
+    def test_analysis_signal_settlement_runs_tracker_and_writes_status(self, monkeypatch, tmp_path):
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        tracker = MagicMock()
+        tracker.refresh_history.return_value = {
+            "status": "success",
+            "symbols": 3,
+            "updated_records": 2,
+            "failed_symbols": 0,
+            "summary": {"total_snapshots": 4},
+        }
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr(scheduler, "ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS", 50)
+        monkeypatch.setattr("analysis_signal_tracker.AnalysisSignalTracker", lambda: tracker)
+
+        result = scheduler.run_analysis_signal_settlement()
+
+        tracker.refresh_history.assert_called_once_with(max_symbols=50)
+        assert result["updated_records"] == 2
+        status = json.loads(status_path.read_text(encoding="utf-8"))["analysis_signal_settlement"]
+        assert status["status"] == "success"
+        assert status["symbols"] == 3
+        assert status["updated_records"] == 2
+        assert status["finished_at"]
+
+    def test_analysis_signal_settlement_failure_is_recorded(self, monkeypatch, tmp_path):
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        tracker = MagicMock()
+        tracker.refresh_history.side_effect = RuntimeError("source unavailable")
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr("analysis_signal_tracker.AnalysisSignalTracker", lambda: tracker)
+
+        result = scheduler.run_analysis_signal_settlement()
+
+        assert result is None
+        status = json.loads(status_path.read_text(encoding="utf-8"))["analysis_signal_settlement"]
+        assert status["status"] == "failed"
+        assert status["error"] == "source unavailable"
+        assert status["finished_at"]
+
     def test_no_watchlist_and_no_daily_report_sends_nothing(self):
         from scheduler import run_scheduled_analysis
 
@@ -284,6 +336,26 @@ class TestRunScheduledAnalysis:
             at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
             assert "15:30" in at_calls
             assert "15:45" in at_calls
+
+    def test_analysis_signal_settlement_schedule_setup(self):
+        with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
+             patch("scheduler.T1_PLAN_AUTO_ENABLED", False), \
+             patch("scheduler.ANALYSIS_SIGNAL_SETTLEMENT_ENABLED", True), \
+             patch("scheduler.ANALYSIS_SIGNAL_SETTLEMENT_TIME", "16:05"), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
+             patch("scheduler.schedule") as mock_schedule, \
+             patch("scheduler.signal.signal"), \
+             patch("scheduler.time.sleep", side_effect=StopIteration):
+            from scheduler import start_scheduler
+
+            try:
+                start_scheduler()
+            except StopIteration:
+                pass
+
+            at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
+            assert "16:05" in at_calls
 
     def test_start_scheduler_skips_when_instance_lock_exists(self):
         with patch("scheduler._acquire_pid_lock", return_value=None), \

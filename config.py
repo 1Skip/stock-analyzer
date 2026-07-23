@@ -93,10 +93,6 @@ DAILY_REPORT_DIR = os.getenv("DAILY_REPORT_DIR", "reports/history")
 RECOMMEND_RANKER_ENABLED = os.getenv("RECOMMEND_RANKER_ENABLED", "true").lower() == "true"
 RECOMMEND_RANKER_SORT = os.getenv("RECOMMEND_RANKER_SORT", "false").lower() == "true"
 
-# 手工成交记录只做样本提醒，不自动改变推荐策略。
-MANUAL_TRADE_LEARNING_MIN_CLOSED = int(os.getenv("MANUAL_TRADE_LEARNING_MIN_CLOSED", "30"))
-MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED = int(os.getenv("MANUAL_TRADE_LEARNING_MIN_STRATEGY_CLOSED", "12"))
-
 # ============================================================
 # 配色方案
 # ============================================================
@@ -192,7 +188,7 @@ T1_PLAN_AUTO_ENABLED = os.getenv("T1_PLAN_AUTO_ENABLED", "true").lower() == "tru
 T1_PLAN_SCHEDULE_TIME = os.getenv("T1_PLAN_SCHEDULE_TIME", "15:45")
 _T1_PLAN_STRATEGIES_RAW = os.getenv(
     "T1_PLAN_STRATEGIES",
-    os.getenv("T1_PLAN_STRATEGY", "短线,短线经典版,多因子稳健型,激进突破型"),
+    os.getenv("T1_PLAN_STRATEGY", "短线,短线经典版,多因子稳健型,激进突破型,实验策略"),
 )
 T1_PLAN_STRATEGIES = [item.strip() for item in _T1_PLAN_STRATEGIES_RAW.split(",") if item.strip()]
 T1_PLAN_STRATEGY = T1_PLAN_STRATEGIES[0] if T1_PLAN_STRATEGIES else "多因子稳健型"
@@ -209,6 +205,11 @@ T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS = int(os.getenv("T1_PLAN_PREHEAT_EXTEN
 T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS", "20"))
 T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP = os.getenv("T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP", "false").lower() == "true"
 T1_PLAN_STRATEGY_TIMEOUT_SECONDS = float(os.getenv("T1_PLAN_STRATEGY_TIMEOUT_SECONDS", "300"))
+
+# 个股分析信号只冻结当时结论，收盘后再用真实前复权日K自动结算。
+ANALYSIS_SIGNAL_SETTLEMENT_ENABLED = os.getenv("ANALYSIS_SIGNAL_SETTLEMENT_ENABLED", "true").lower() == "true"
+ANALYSIS_SIGNAL_SETTLEMENT_TIME = os.getenv("ANALYSIS_SIGNAL_SETTLEMENT_TIME", "16:05")
+ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS = int(os.getenv("ANALYSIS_SIGNAL_SETTLEMENT_MAX_SYMBOLS", "50"))
 
 # API 服务
 

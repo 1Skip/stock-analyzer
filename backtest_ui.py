@@ -336,12 +336,12 @@ def _render_strategy_backtest_result(result):
 
     st.markdown(
         "**样本概览：** "
-        f"{summary.get('strategies_with_plans', 0)}/4 个策略 · "
+        f"{summary.get('strategies_with_plans', 0)}/{summary.get('strategy_count', 5)} 个策略 · "
         f"{summary.get('plan_count', 0)} 份历史计划 · "
         f"{summary.get('recommended_count', 0)} 个推荐样本 · "
         f"{summary.get('completed_count', 0)} 个已完成样本"
     )
-    st.caption("T+1策略主看1日胜率和1日均收益；5日、20日用于观察持有延续性。")
+    st.caption("少于30个已结算样本只观察，30-99个可参考，100个以上才适合横向比较；5日、20日用于观察延续性。")
 
     rows = []
     for item in result.get("strategies") or []:
@@ -350,16 +350,46 @@ def _render_strategy_backtest_result(result):
                 "策略": item.get("strategy"),
                 "计划": item.get("plans", 0),
                 "已完成": item.get("completed", 0),
+                "未触发": item.get("not_triggered", 0),
                 "1日胜率": _format_rate(item.get("win_rate_1d_pct")),
+                "1日胜率95%区间": (
+                    f"{_format_rate(item.get('win_rate_1d_ci_low_pct'))} ~ "
+                    f"{_format_rate(item.get('win_rate_1d_ci_high_pct'))}"
+                    if item.get("win_rate_1d_ci_low_pct") is not None
+                    else "--"
+                ),
                 "1日均收益": _format_metric(item.get("avg_1d_return_pct")),
                 "5日胜率": _format_rate(item.get("win_rate_5d_pct")),
                 "5日均收益": _format_metric(item.get("avg_5d_return_pct")),
                 "20日均收益": _format_metric(item.get("avg_20d_return_pct")),
+                "样本等级": (item.get("sample_tier") or {}).get("label"),
                 "结论": item.get("conclusion"),
             }
         )
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     st.caption(f"数据来源：{result.get('source')}")
+
+    experimental = next(
+        (item for item in (result.get("strategies") or []) if item.get("strategy") == "实验策略"),
+        None,
+    )
+    gate = (experimental or {}).get("validation_gate") or {}
+    if gate:
+        with st.expander("实验策略转正 / 淘汰门槛", expanded=True):
+            st.markdown(f"**{gate.get('label')}**：{gate.get('message')}")
+            st.dataframe(
+                [
+                    {"门槛": label, "是否通过": "是" if passed else "否"}
+                    for label, passed in (gate.get("criteria") or {}).items()
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                f"胜率95%区间：{_format_rate(gate.get('win_rate_ci_low_pct'))} ~ "
+                f"{_format_rate(gate.get('win_rate_ci_high_pct'))}；"
+                f"扣估算成本后1日均收益：{_format_metric(gate.get('net_avg_1d_return_pct'))}。"
+            )
 
     with st.expander("查看策略历史明细", expanded=False):
         details = result.get("details") or []
@@ -404,13 +434,13 @@ def _render_strategy_backtest():
     elif result:
         st.caption("周期已改变，点击「验证全部策略」生成对应结果。")
     else:
-        st.info("当前尚未生成四策略验证结果。")
+        st.info("当前尚未生成五策略验证结果。")
 
 
 def backtest_page():
-    """四策略验证为主，单股技术信号诊断为辅。"""
+    """Five-strategy validation plus the existing single-stock diagnostic."""
     st.header("回测验证")
-    strategy_tab, signal_tab = st.tabs(["四策略真实验证", "单股信号诊断"])
+    strategy_tab, signal_tab = st.tabs(["五策略真实验证", "单股信号诊断"])
     with strategy_tab:
         _render_strategy_backtest()
     with signal_tab:

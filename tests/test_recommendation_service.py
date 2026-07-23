@@ -53,7 +53,7 @@ class FakeQuoteServiceWithFuture(FakeQuoteService):
         import pandas as pd
 
         return pd.DataFrame({
-            "date": ["2099-05-18", "2099-05-19", "2099-05-20", "2099-05-21", "2099-05-22", "2099-05-25"],
+            "date": ["2026-05-15", "2026-05-18", "2026-05-19", "2026-05-20", "2026-05-21", "2026-05-22"],
             "open": [9.8, 10.2, 10.5, 10.4, 10.6, 10.8],
             "high": [10.2, 10.8, 11.0, 10.7, 11.1, 11.3],
             "low": [9.7, 10.0, 10.4, 10.1, 10.5, 10.7],
@@ -83,6 +83,7 @@ class FakeRecommender:
     def __init__(self):
         self.last_aggressive_diagnostics = {"strategy": "激进突破型"}
         self.last_multi_factor_diagnostics = {"strategy": "多因子稳健型"}
+        self.last_experimental_diagnostics = {"strategy": "实验策略", "status": "observation_only"}
         self.called = []
 
     def get_aggressive_breakout_recommendations(self, num_stocks, progress_callback=None):
@@ -108,6 +109,12 @@ class FakeRecommender:
     def get_multi_factor_recommendations(self, num_stocks, progress_callback=None):
         self.called.append(("multi", num_stocks, bool(progress_callback)))
         return [_stock("002002", "多因子稳健型")]
+
+    def get_experimental_recommendations(self, num_stocks, progress_callback=None):
+        self.called.append(("experimental", num_stocks, bool(progress_callback)))
+        stock = _stock("002008", "实验策略")
+        stock["strategy_version"] = "quality_value_timing_v1"
+        return [stock]
 
 
 class TwoStockRecommender(FakeRecommender):
@@ -151,6 +158,34 @@ def test_recommendation_service_routes_aggressive_without_changing_strategy():
     assert result["diagnostics"]["strategy"] == "激进突破型"
     assert result["diagnostics"]["alpha_ranker"]["enabled"] is True
     assert result["diagnostics"]["alpha_ranker"]["sorted"] is False
+
+
+def test_recommendation_service_routes_independent_experimental_strategy():
+    recommender = FakeRecommender()
+    service = RecommendationService(
+        recommender=recommender,
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    result = service.run("实验策略", "全部", 5, progress_callback=lambda *_: None)
+
+    assert recommender.called == [("experimental", 5, True)]
+    assert result["title"] == "实验策略"
+    assert result["strategy_version"] == "quality_value_timing_v1"
+    assert result["recommended"][0]["strategy"] == "实验策略"
+    assert result["diagnostics"]["status"] == "observation_only"
+
+
+def test_recommendation_service_rejects_experimental_sector_route():
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+
+    with pytest.raises(ValueError, match="实验策略仅支持全部板块"):
+        service.run("实验策略", "电力", 5)
 
 
 def test_recommendation_service_keeps_short_term_available():
@@ -424,6 +459,14 @@ def test_t1_plan_history_is_saved_and_read_only():
     service.plan_history_cache = FakeCache()
 
     plan = service.run_t1_plan("多因子稳健型", "全部", 5)
+    plan["generated_trade_date"] = "2026-05-15"
+    plan["plan_for_trade_date"] = "2026-05-18"
+    plan["recommended"][0]["trade_plan"].update({
+        "buy_zone_low": 9.5,
+        "buy_zone_high": 10.5,
+        "stop_loss": 9.0,
+        "take_profit_1": 12.0,
+    })
     history = service.list_t1_plan_history(strategy="多因子稳健型", sector="全部")
     review = service.evaluate_t1_plan_history(strategy="多因子稳健型", sector="全部")
 
@@ -433,10 +476,11 @@ def test_t1_plan_history_is_saved_and_read_only():
     assert review["summary"]["plans"] == 1
     assert review["summary"]["completed_items"] == 1
     item = review["reviews"][0]["outcome"]["items"][0]
-    assert item["entry_price"] == 10.5
-    assert item["exit_dates"]["1d"] == "2099-05-18"
-    assert item["exit_closes"]["1d"] == 10.0
-    assert item["returns"]["1d"] == -4.76
+    assert item["entry_price"] == 10.2
+    assert item["entry_date"] == "2026-05-18"
+    assert item["exit_dates"]["1d"] == "2026-05-19"
+    assert item["exit_prices"]["1d"] == 10.8
+    assert item["returns"]["1d"] == 5.88
     assert recommender.called == [("multi", 5, False)]
 
 
@@ -657,7 +701,7 @@ def test_manual_trade_holding_record_can_be_edited_to_closed():
     assert review["summary"]["success_rate_pct"] == 100
 
 
-def test_manual_trade_outcome_alerts_when_samples_are_enough():
+def test_manual_trade_outcomes_never_claim_model_learning_readiness():
     service = RecommendationService(
         recommender=FakeRecommender(),
         quote_service=FakeQuoteServiceWithFuture(),
@@ -682,12 +726,68 @@ def test_manual_trade_outcome_alerts_when_samples_are_enough():
         )
 
     review = service.evaluate_manual_trade_success_rate(strategy="多因子稳健型", sector="全部")
-    readiness = review["summary"]["learning_readiness"]
+    assert review["summary"]["closed_records"] == 30
+    assert "learning_readiness" not in review["summary"]
 
-    assert readiness["ready"] is True
-    assert readiness["global_closed_records"] == 30
-    assert readiness["scoped_closed_records"] == 30
-    assert "实盘样本已达到提醒门槛" in readiness["message"]
+
+def test_auto_observation_history_persists_terminal_results(monkeypatch):
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteServiceWithFuture(),
+        result_cache=FakeCache(),
+    )
+    service.plan_history_cache = FakeCache()
+    service.observation_cache = FakeCache()
+    plan = {
+        "generated_at": "2026-06-01T15:45:00",
+        "generated_trade_date": "2026-06-01",
+        "plan_for_trade_date": "2026-06-02",
+        "strategy": "短线",
+        "sector": "全部",
+        "recommended": [{"symbol": "000001", "name": "平安银行"}],
+    }
+    service.plan_history_cache.set("plan", plan)
+    service.plan_history_cache.set(
+        "removed-long-plan",
+        {
+            **plan,
+            "strategy": "长线",
+            "recommended": [{"symbol": "000002", "name": "万科A"}],
+        },
+    )
+    calls = []
+
+    def fake_evaluate(saved_plan, *, quote_service, horizons):
+        calls.append((saved_plan, horizons))
+        return {
+            "version": "t1_execution_v2",
+            "evaluated_at": "2026-07-22T15:00:00",
+            "items": [
+                {
+                    "symbol": "000001",
+                    "name": "平安银行",
+                    "status": "completed",
+                    "entry_triggered": True,
+                    "entry_date": "2026-06-02",
+                    "entry_price": 10.0,
+                    "returns": {"1d": 2.0},
+                    "exit_dates": {"1d": "2026-06-03"},
+                    "exit_prices": {"1d": 10.2},
+                    "exit_reasons": {"1d": "持有1个交易日收盘退出"},
+                }
+            ],
+            "summary": {"total": 1, "completed": 1},
+        }
+
+    monkeypatch.setattr("recommendation_service.evaluate_plan_outcomes", fake_evaluate)
+
+    first = service.evaluate_auto_observation_history()
+    second = service.evaluate_auto_observation_history()
+
+    assert len(calls) == 1
+    assert first["summary"]["plans"] == 1
+    assert first["summary"]["completed_items"] == 1
+    assert second["details"][0]["return_1d_pct"] == 2.0
 
 
 def test_manual_trade_outcome_rejects_non_recommended_symbol():

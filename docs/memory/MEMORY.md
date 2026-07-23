@@ -1,6 +1,7 @@
 ﻿# 项目 Memory 索引
 
 
+- [Bug fixes & context 2026-07-22](bug_fixes_and_context_2026-07-22.md) — 修正模型胜率和个人实盘口径，新增自动观察仓、第五个实验策略、个股分析不可变信号结算，以及芒格/巴菲特/Codex 筛选级估值。
 - [Bug fixes & context 2026-07-20](bug_fixes_and_context_2026-07-20.md) — Windows 开机自启时将本地调度器改为隐藏后台进程，保留日志、PID 锁和 15:30/15:45 任务，避免额外显示空白调度终端。
 - [Bug fixes & context 2026-07-19](bug_fixes_and_context_2026-07-19.md) — 统一个股分析与回测自然周期，补齐 5 年真实历史与覆盖提示；回测主入口改为四策略已保存 T+1 计划的真实结果验证；修复 Windows 一键启动调度器的重定向参数并隔离调度测试状态。
 - [Bug fixes & context 2026-07-16](bug_fixes_and_context_2026-07-16.md) — 修复 A 股涨跌颜色/箭头方向、回测超额收益显示和日报 T+1 历史回看为空；隔离测试历史缓存并完成真实缓存清理与页面验证。
