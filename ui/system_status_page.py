@@ -86,7 +86,14 @@ def build_status_diagnostics(status: dict[str, Any], cache_rows: list[dict[str, 
     if not status:
         diagnostics.append("暂无调度状态文件：无法仅凭页面判断日报或 T+1 预热是否已运行。")
     else:
-        for section_name in ("daily_report", "scheduled_analysis", "t1_preheat"):
+        for section_name in (
+            "daily_report",
+            "scheduled_analysis",
+            "t1_preheat",
+            "paper_trading",
+            "broker_reconciliation",
+            "portfolio_backtest",
+        ):
             section = status.get(section_name)
             if not isinstance(section, dict):
                 diagnostics.append(f"{section_name}: 暂无状态记录。")

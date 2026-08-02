@@ -66,8 +66,15 @@ def test_stock_pool_wrappers_respect_overridden_predicates(monkeypatch):
     assert [item["code"] for item in recommender._get_strategy_popular_cn_stocks()] == ["688001"]
 
 
-def test_board_constituent_fallback_records_source_diagnostics(monkeypatch):
+def test_board_constituent_fallback_records_source_diagnostics(monkeypatch, tmp_path):
+    from data.cache import JsonFileCache
+
     recommender = StockRecommender()
+    recommender._board_ranking_cache = JsonFileCache(
+        "board_rankings_contract_constituents",
+        86400,
+        cache_dir=tmp_path,
+    )
 
     def industry_source(symbol):
         raise RuntimeError("industry unavailable")
@@ -95,8 +102,15 @@ def test_board_constituent_fallback_records_source_diagnostics(monkeypatch):
     assert diagnostics["fallback_errors"] == ["东方财富行业板块成分: RuntimeError"]
 
 
-def test_short_term_hot_board_diagnostics_keep_successful_fallback(monkeypatch):
+def test_short_term_hot_board_diagnostics_keep_successful_fallback(monkeypatch, tmp_path):
+    from data.cache import JsonFileCache
+
     recommender = StockRecommender()
+    recommender._board_ranking_cache = JsonFileCache(
+        "board_rankings_contract_hot_boards",
+        86400,
+        cache_dir=tmp_path,
+    )
     monkeypatch.setattr(recommender, "get_hot_sectors_cn", lambda limit: (_ for _ in ()).throw(RuntimeError()))
     monkeypatch.setattr(
         recommender,
@@ -173,11 +187,20 @@ def test_multi_factor_same_input_same_output_contract(monkeypatch):
         diagnostics["shortlisted"] = len(shortlist)
         return shortlist
 
-    def run_strategy_pool(strategy, stocks, num_stocks, analyzer, progress_callback=None, progress_stage=None):
+    def run_strategy_pool(
+        strategy,
+        stocks,
+        num_stocks,
+        analyzer,
+        progress_callback=None,
+        progress_stage=None,
+        max_workers=None,
+    ):
         assert strategy == "多因子稳健型"
         assert stocks == shortlist
         assert num_stocks == 2
         assert progress_stage == "深度检查"
+        assert max_workers > 5
         return expected
 
     monkeypatch.setattr(recommender, "_shortlist_multi_factor_candidates", shortlist_candidates)

@@ -1142,6 +1142,57 @@ class TestGetShortTermRecommendations:
         assert calls
         assert calls == [8, 8, 3, 3]
 
+    def test_short_term_hot_boards_reuse_fresh_real_cache(self, recommender, monkeypatch):
+        recommender._board_ranking_cache.set(
+            "sectors",
+            [{"板块": "电力设备", "涨跌幅": 2.1, "数据源": "真实行业热榜"}],
+        )
+        recommender._board_ranking_cache.set(
+            "concepts",
+            [{"板块": "机器人", "涨跌幅": 3.2, "数据源": "真实概念热榜"}],
+        )
+        monkeypatch.setattr(
+            recommender,
+            "get_hot_sectors_cn",
+            lambda limit=30: pytest.fail("有效行业缓存不应重复联网"),
+        )
+        monkeypatch.setattr(
+            recommender,
+            "get_hot_concepts_cn",
+            lambda limit=30: pytest.fail("有效概念缓存不应重复联网"),
+        )
+
+        rows = recommender._get_short_term_hot_board_rows(limit=2)
+
+        assert [row["name"] for row in rows] == ["机器人", "电力设备"]
+        assert recommender.last_board_ranking_diagnostics["short_term_hot_boards"]["status"] == "cache"
+
+    def test_board_constituents_reuse_fresh_real_cache(self, recommender, monkeypatch):
+        cached = [{"code": "002938", "name": "鹏鼎控股"}]
+        recommender._board_ranking_cache.set("ths_board_constituents:PCB", cached)
+        monkeypatch.setattr(
+            recommender,
+            "_get_ths_board_constituent_stocks",
+            lambda *args, **kwargs: pytest.fail("有效成分股缓存不应重复联网"),
+        )
+
+        result = recommender._get_board_constituent_stocks("PCB")
+
+        assert result == cached
+        assert recommender.last_board_ranking_diagnostics["board_constituents:PCB"]["status"] == "cache"
+
+    def test_ths_board_code_reuses_fresh_real_cache(self, recommender, monkeypatch):
+        recommender._board_ranking_cache.set(
+            "ths_board_code_map:concept",
+            [{"name": "PCB", "code": "301152"}],
+        )
+        monkeypatch.setattr(
+            "stock_recommendation.run_with_timeout",
+            lambda *args, **kwargs: pytest.fail("有效板块代码缓存不应重复联网"),
+        )
+
+        assert recommender._resolve_ths_board_code("PCB", "concept") == "301152"
+
     def test_all_candidate_pool_falls_back_to_hot_board_leader(self, recommender, monkeypatch):
         class DummyFetcher:
             def resolve_stock_input(self, text, market="CN"):
@@ -1197,6 +1248,59 @@ class TestGetShortTermRecommendations:
         )
 
         assert recommender.get_short_term_recommendations(num_stocks=5) == []
+
+    def test_all_defers_context_until_technical_and_pattern_filters_pass(self, recommender, monkeypatch):
+        candidates = [
+            {"code": "002001", "name": "通过股", "short_term_sectors": ["PCB"]},
+            {"code": "002002", "name": "未通过股", "short_term_sectors": ["PCB"]},
+        ]
+        calls = []
+        context_calls = []
+
+        class FakeFetcher:
+            def get_batch_realtime_quotes(self, symbols, market="CN"):
+                assert symbols == ["002001", "002002"]
+                return {symbol: {"price": 10.0} for symbol in symbols}
+
+        def analyze(
+            self,
+            code,
+            market="CN",
+            include_all_pattern=False,
+            include_context=True,
+            fetcher=None,
+            realtime_quote=None,
+            context=None,
+        ):
+            calls.append((code, include_context, context))
+            result = _mock_short_analysis(code)
+            if code == "002002":
+                result["strategy_checks"]["回调幅度"] = False
+            if include_context:
+                result["score"] = 91
+                result["profile"] = (context or {}).get("profile") or {}
+            return result
+
+        monkeypatch.setattr(recommender, "_get_short_term_all_candidate_stocks", lambda limit=80: candidates)
+        monkeypatch.setattr(recommender, "_get_short_term_hot_board_rows", lambda limit=6: [{"name": "PCB"}])
+        monkeypatch.setattr("stock_recommendation.StockDataFetcher", FakeFetcher)
+        monkeypatch.setattr("stock_recommendation.StockRecommender._analyze_short_term", analyze)
+        monkeypatch.setattr(
+            recommender,
+            "_build_short_term_context",
+            lambda symbol, market="CN": context_calls.append(symbol) or {"profile": {"symbol": symbol}},
+        )
+
+        result = recommender.get_short_term_recommendations(num_stocks=5)
+
+        assert [item["symbol"] for item in result] == ["002001"]
+        assert result[0]["score"] == 91
+        assert context_calls == ["002001"]
+        assert sorted((code, include_context) for code, include_context, _ in calls) == [
+            ("002001", False),
+            ("002001", True),
+            ("002002", False),
+        ]
 
     def test_classic_short_term_skips_pullback_reversal_pattern(self, recommender, monkeypatch):
         failed = _mock_short_analysis('002938')

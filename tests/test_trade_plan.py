@@ -55,3 +55,25 @@ def test_trade_plan_includes_risk_announcement_invalid_condition():
     plan = build_trade_plan_for_stock(stock, strategy="短线")
 
     assert any("减持风险" in item for item in plan["invalid_conditions"])
+
+
+def test_experimental_strategy_uses_its_own_execution_levels():
+    stock = _stock()
+    stock["strategy"] = "实验策略"
+    stock["strategy_execution_levels"] = {
+        "buy_zone_low": 9.75,
+        "buy_zone_high": 10.15,
+        "stop_loss": 9.50,
+        "take_profit_1": 10.55,
+        "max_holding_days": 5,
+        "price_source": "信号日真实前复权日K",
+    }
+
+    plan = build_trade_plan_for_stock(stock, strategy="实验策略", sector="全部")
+
+    assert plan["buy_zone_low"] == 9.75
+    assert plan["buy_zone_high"] == 10.15
+    assert plan["stop_loss"] == 9.5
+    assert plan["take_profit_1"] == 10.55
+    assert plan["max_holding_days"] == 5
+    assert plan["current_action"] == "仅限模拟账户观察"

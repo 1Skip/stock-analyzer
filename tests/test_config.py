@@ -80,6 +80,14 @@ class TestDefaultConstants:
         assert config.T1_PLAN_STRATEGIES == ["短线", "短线经典版", "多因子稳健型", "激进突破型", "实验策略"]
         assert config.T1_PLAN_STRATEGY == "短线"
         assert config.T1_PLAN_SECTORS == ["苹果概念", "特斯拉概念", "电力", "算力租赁"]
+        assert config.T1_PLAN_STRATEGY_TIMEOUT_SECONDS == 1200
+        assert config.T1_PLAN_PREHEAT_JOB_TIMEOUT_SECONDS == 7200
+
+    def test_corporate_action_defaults_are_positive(self):
+        import config
+
+        assert config.CACHE_TTL_CORPORATE_ACTIONS > 0
+        assert config.CORPORATE_ACTION_FETCH_TIMEOUT_SECONDS > 0
 
     def test_analysis_signal_settlement_defaults_enabled(self):
         import config

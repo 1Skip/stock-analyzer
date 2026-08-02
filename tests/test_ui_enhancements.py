@@ -592,6 +592,15 @@ def test_recommend_page_shows_multi_factor_diagnostics():
     assert 'st.session_state.rec_results.get("diagnostics")' in source
 
 
+def test_recommend_page_explains_experimental_cash_regime_and_date_fallback():
+    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
+
+    assert "实验策略当前保持现金，未生成明日买入候选" in source
+    assert "最新数据日" in source
+    assert "已回退到最近完整数据日" in source
+    assert "市场广度未通过时不生成候选" in source
+
+
 def test_recommend_page_uses_real_stage_progress():
     from pathlib import Path
 
@@ -713,14 +722,30 @@ def test_recommend_page_limits_sector_options_by_strategy():
     assert _sector_options_for_strategy("短线经典版") == ["全部", "苹果概念", "特斯拉概念", "电力", "算力租赁"]
 
 
-def test_recommend_page_skips_empty_t1_cache_autoload():
-    from pathlib import Path
+def test_recommend_page_only_loads_explainable_empty_t1_plan():
+    from ui.recommend_page import _is_displayable_t1_plan
 
-    source = Path("ui/recommend_page.py").read_text(encoding="utf-8")
-
-    assert "def _has_recommendations" in source
-    assert "and _has_recommendations(latest_result)" in source
-    assert "读取到的 T+1 推荐计划缓存为空，已跳过展示" in source
+    assert _is_displayable_t1_plan({"strategy": "短线", "recommended": []}) is False
+    assert (
+        _is_displayable_t1_plan(
+            {
+                "strategy": "实验策略",
+                "recommended": [],
+                "diagnostics": {"status": "cash_regime"},
+            }
+        )
+        is True
+    )
+    assert (
+        _is_displayable_t1_plan(
+            {
+                "strategy": "实验策略",
+                "recommended": [],
+                "diagnostics": {"status": "strategy_paused"},
+            }
+        )
+        is True
+    )
 
 
 def test_recommend_page_hides_internal_t1_diagnostics():

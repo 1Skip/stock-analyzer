@@ -48,14 +48,15 @@ from recommendation_modules.runtime_helpers import (
     safe_float as _safe_float,
 )
 from experimental_strategy import (
-    EXPERIMENTAL_DEEP_LIMIT,
+    EXPERIMENTAL_RULE_ID,
     EXPERIMENTAL_STRATEGY_NAME,
     EXPERIMENTAL_STRATEGY_VERSION,
-    build_experimental_candidate,
-    evaluate_experimental_technical,
-    select_experimental_universe,
+    build_market_regime_snapshot,
+    build_price_candidate,
+    resolve_experimental_strategy_selection,
 )
-from value_investing_evaluator import build_value_investing_snapshot
+from candidate_strategy import evaluate_candidate_at, prepare_candidate_frame
+from config import MULTI_FACTOR_DEEP_MAX_WORKERS
 
 # 板块股票定义 - 短线龙头股
 # 评分权重配置
@@ -317,9 +318,26 @@ class StockRecommender:
             max_workers=max_workers,
         )
 
+    def preheat_strategy_kline_cache(
+        self,
+        stocks=None,
+        periods=("1y", "6mo", "3mo"),
+        interval="1d",
+        market="CN",
+        max_workers=32,
+    ):
+        return strategy_cache.preheat_strategy_kline_cache(
+            self,
+            stocks=stocks,
+            periods=periods,
+            interval=interval,
+            market=market,
+            max_workers=max_workers,
+        )
+
     def _build_indicators_dict(self, latest):
         """从最新一行数据构建标准化指标字典"""
-        return {
+        indicators = {
             'macd': round(latest['macd'], 3),
             'macd_signal': round(latest['macd_signal'], 3),
             'macd_hist': round(latest['macd_hist'], 3),
@@ -337,6 +355,12 @@ class StockRecommender:
             'accumulation_risk': round(latest.get('accumulation_risk', 0), 2),
             'accumulation_trend': round(latest.get('accumulation_trend', 0), 2),
         }
+        for period in (5, 10, 20, 30, 60):
+            key = f"ma{period}"
+            value = latest.get(key)
+            if value is not None and pd.notna(value):
+                indicators[key] = round(value, 2)
+        return indicators
 
     def get_hot_stocks_cn(self, limit=20):
         stocks = self._get_main_board_popular_cn_stocks(max(limit, 30))
@@ -1196,11 +1220,27 @@ class StockRecommender:
 
     def _get_board_constituent_stocks(self, board_name, board_code=None, board_category=None):
         diagnostic_key = f"board_constituents:{board_name}"
-        if not board_name or ak is None:
+        if not board_name:
             self.last_board_ranking_diagnostics[diagnostic_key] = {
                 "status": "unavailable",
                 "count": 0,
-                "reason": "板块名称为空或板块数据组件不可用",
+                "reason": "板块名称为空",
+            }
+            return []
+        cache_key = f"ths_board_constituents:{board_name}"
+        cached = self._board_ranking_cache.get(cache_key)
+        if isinstance(cached, list) and cached:
+            self.last_board_ranking_diagnostics[diagnostic_key] = {
+                "status": "cache",
+                "count": len(cached),
+                "reason": "复用24小时内已成功获取的真实板块成分缓存",
+            }
+            return cached
+        if ak is None:
+            self.last_board_ranking_diagnostics[diagnostic_key] = {
+                "status": "unavailable",
+                "count": 0,
+                "reason": "板块数据组件不可用，且本地无可用缓存",
             }
             return []
 
@@ -1210,7 +1250,7 @@ class StockRecommender:
             board_category=board_category,
         )
         if ths_stocks:
-            self._board_ranking_cache.set(f"ths_board_constituents:{board_name}", ths_stocks)
+            self._board_ranking_cache.set(cache_key, ths_stocks)
             self.last_board_ranking_diagnostics[diagnostic_key] = {
                 "status": "fresh",
                 "count": len(ths_stocks),
@@ -1236,7 +1276,7 @@ class StockRecommender:
                 continue
             stocks = self._normalize_board_constituents(df)
             if stocks:
-                self._board_ranking_cache.set(f"ths_board_constituents:{board_name}", stocks)
+                self._board_ranking_cache.set(cache_key, stocks)
                 self.last_board_ranking_diagnostics[diagnostic_key] = {
                     "status": "fresh",
                     "count": len(stocks),
@@ -1244,7 +1284,7 @@ class StockRecommender:
                     "fallback_errors": failures,
                 }
                 return stocks
-        cached = self._board_ranking_cache.get(f"ths_board_constituents:{board_name}")
+        cached = self._board_ranking_cache.get(cache_key)
         if isinstance(cached, list) and cached:
             self.last_board_ranking_diagnostics[diagnostic_key] = {
                 "status": "cache",
@@ -1293,6 +1333,12 @@ class StockRecommender:
         fetcher = ak.stock_board_industry_name_ths if board_type == "industry" else ak.stock_board_concept_name_ths
         df = None
         cache_key = f"ths_board_code_map:{board_type}"
+        cached_rows = self._board_ranking_cache.get(cache_key)
+        if isinstance(cached_rows, list) and cached_rows:
+            df = pd.DataFrame(cached_rows)
+            cached_code = self._find_ths_board_code(df, board_name)
+            if cached_code:
+                return cached_code
         try:
             df = run_with_timeout(
                 lambda: hot_stocks._call_without_proxy_env(fetcher),
@@ -1301,9 +1347,12 @@ class StockRecommender:
             if df is not None and not getattr(df, "empty", True):
                 self._board_ranking_cache.set(cache_key, df.to_dict("records"))
         except Exception:
-            cached_rows = self._board_ranking_cache.get(cache_key)
             if isinstance(cached_rows, list) and cached_rows:
                 df = pd.DataFrame(cached_rows)
+        return self._find_ths_board_code(df, board_name)
+
+    @staticmethod
+    def _find_ths_board_code(df, board_name):
         if df is None or getattr(df, "empty", True):
             return ""
         name_col = "name" if "name" in df.columns else None
@@ -1703,6 +1752,10 @@ class StockRecommender:
         """
         results = []
         candidates = self._get_short_term_all_candidate_stocks(80)
+        shared_fetcher, realtime_quotes, staged_context = self._prepare_short_term_batch_inputs(
+            candidates,
+            require_context=True,
+        )
         diagnostics = {
             "strategy": "短线",
             "sector": "全部",
@@ -1721,10 +1774,21 @@ class StockRecommender:
 
         def analyze_one(stock):
             try:
-                try:
-                    analysis = self._analyze_short_term(stock['code'], market='CN', include_all_pattern=True)
-                except TypeError:
-                    analysis = self._analyze_short_term(stock['code'], market='CN')
+                symbol = stock["code"]
+                if staged_context:
+                    analysis = self._analyze_short_term(
+                        symbol,
+                        market="CN",
+                        include_all_pattern=True,
+                        include_context=False,
+                        fetcher=shared_fetcher,
+                        realtime_quote=realtime_quotes.get(symbol),
+                    )
+                else:
+                    try:
+                        analysis = self._analyze_short_term(symbol, market='CN', include_all_pattern=True)
+                    except TypeError:
+                        analysis = self._analyze_short_term(symbol, market='CN')
                 candidate_sectors = stock.get("short_term_sectors") or []
                 if not analysis:
                     return None, "K线/指标数据不足", False, False
@@ -1739,6 +1803,19 @@ class StockRecommender:
                         if not (analysis.get("strategy_checks") or {}).get(key)
                     ]
                     return None, "形态条件未过:" + "、".join(missing[:2]), True, False
+                if staged_context:
+                    prefetched_context = self._build_short_term_context(symbol, "CN")
+                    analysis = self._analyze_short_term(
+                        symbol,
+                        market="CN",
+                        include_all_pattern=True,
+                        include_context=True,
+                        fetcher=shared_fetcher,
+                        realtime_quote=realtime_quotes.get(symbol),
+                        context=prefetched_context,
+                    )
+                    if not analysis:
+                        return None, "K线/指标数据不足", True, False
                 analysis['name'] = stock['name']
                 analysis['sector'] = "、".join(candidate_sectors)
                 hot_board_matched = stock.get("short_term_source") != "market_ranking_fallback"
@@ -1786,6 +1863,7 @@ class StockRecommender:
         """
         results = []
         candidates = self._get_classic_short_term_candidate_stocks(80)
+        shared_fetcher, realtime_quotes, batch_supported = self._prepare_short_term_batch_inputs(candidates)
         diagnostics = {
             "strategy": "短线经典版",
             "sector": "全部",
@@ -1807,7 +1885,16 @@ class StockRecommender:
 
         def analyze_one(stock):
             try:
-                analysis = self._analyze_short_term(stock['code'], market='CN', include_context=False)
+                if batch_supported:
+                    analysis = self._analyze_short_term(
+                        stock["code"],
+                        market="CN",
+                        include_context=False,
+                        fetcher=shared_fetcher,
+                        realtime_quote=realtime_quotes.get(stock["code"]),
+                    )
+                else:
+                    analysis = self._analyze_short_term(stock['code'], market='CN', include_context=False)
                 if not analysis:
                     return None, "K线/指标数据不足", False
                 if not self._short_term_technical_filter_passes(analysis):
@@ -1866,6 +1953,7 @@ class StockRecommender:
             sector_stocks = self._get_main_board_sector_stocks(sector_name)
 
         results = []
+        shared_fetcher, realtime_quotes, batch_supported = self._prepare_short_term_batch_inputs(sector_stocks)
         diagnostics = {
             "strategy": "短线经典版",
             "sector": sector_name,
@@ -1887,7 +1975,16 @@ class StockRecommender:
 
         def analyze_one(stock):
             try:
-                analysis = self._analyze_short_term(stock["code"], market="CN", include_context=False)
+                if batch_supported:
+                    analysis = self._analyze_short_term(
+                        stock["code"],
+                        market="CN",
+                        include_context=False,
+                        fetcher=shared_fetcher,
+                        realtime_quote=realtime_quotes.get(stock["code"]),
+                    )
+                else:
+                    analysis = self._analyze_short_term(stock["code"], market="CN", include_context=False)
                 if not analysis:
                     return None, "K线/指标数据不足", False
                 if not self._short_term_technical_filter_passes(analysis):
@@ -2079,11 +2176,41 @@ class StockRecommender:
         if delta:
             analysis["score"] = max(0, min(100, round((analysis.get("score") or 0) + delta, 1)))
 
-    def _analyze_short_term(self, symbol, market='CN', include_all_pattern=False, include_context=True):
+    def _prepare_short_term_batch_inputs(self, stocks, *, require_context=False):
+        try:
+            analysis_parameters = inspect.signature(self._analyze_short_term).parameters
+        except (TypeError, ValueError):
+            return None, {}, False
+        required = {"fetcher", "realtime_quote"}
+        if require_context:
+            required.update({"include_context", "context"})
+        if not required.issubset(analysis_parameters):
+            return None, {}, False
+
+        fetcher = StockDataFetcher()
+        try:
+            quotes = fetcher.get_batch_realtime_quotes(
+                [stock.get("code") for stock in stocks],
+                market="CN",
+            )
+        except Exception:
+            quotes = {}
+        return fetcher, quotes, True
+
+    def _analyze_short_term(
+        self,
+        symbol,
+        market='CN',
+        include_all_pattern=False,
+        include_context=True,
+        fetcher=None,
+        realtime_quote=None,
+        context=None,
+    ):
         """
         短线分析 - 使用更短的周期和更敏感的指标权重
         """
-        fetcher = StockDataFetcher()
+        fetcher = fetcher or StockDataFetcher()
         try:
             data = self._get_strategy_stock_data(symbol, period='1y', interval='1d', market=market, fetcher=fetcher)
         except Exception:
@@ -2098,7 +2225,7 @@ class StockRecommender:
             _log_short_term_skip(symbol, "数据不足", market=market, rows=len(data))
             return None
 
-        data = self._merge_realtime_quote(data, fetcher, symbol, market)
+        data = self._merge_realtime_quote(data, fetcher, symbol, market, quote=realtime_quote)
 
         try:
             df = TechnicalIndicators.calculate_all(data)
@@ -2120,11 +2247,11 @@ class StockRecommender:
 
         # 短线评分：使用短线权重 + 波动率加成
         score = _score_from_signals(signals, latest, _SHORT_TERM_WEIGHTS)
-        context = {}
+        resolved_context = {}
         strategy_details = dict(technical_details)
         if include_context:
-            context = self._build_short_term_context(symbol, market)
-            context_delta, context_checks, context_details = self._score_short_term_context(context)
+            resolved_context = context if isinstance(context, dict) else self._build_short_term_context(symbol, market)
+            context_delta, context_checks, context_details = self._score_short_term_context(resolved_context)
             score += context_delta
             strategy_checks.update(context_checks)
             strategy_details.update(context_details)
@@ -2148,8 +2275,8 @@ class StockRecommender:
             'strategy': '短线',
             'strategy_checks': strategy_checks,
             'strategy_details': strategy_details,
-            'profile': context.get("profile") or {},
-            'extended_info': context.get("extended_info") or {},
+            'profile': resolved_context.get("profile") or {},
+            'extended_info': resolved_context.get("extended_info") or {},
             'indicators': self._build_indicators_dict(latest)
         }
 
@@ -2394,26 +2521,44 @@ class StockRecommender:
     def _get_short_term_hot_board_rows(self, limit=10):
         failures = []
 
-        sector_rows = []
-        concept_rows = []
-        try:
-            sector_rows = self.get_hot_sectors_cn(limit=limit) or []
-        except Exception as exc:
-            failures.append(f"行业板块: {type(exc).__name__}")
-            logger.debug("Short-term industry board ranking failed", exc_info=True)
-        try:
-            concept_rows = self.get_hot_concepts_cn(limit=limit) or []
-        except Exception as exc:
-            failures.append(f"概念板块: {type(exc).__name__}")
-            logger.debug("Short-term concept board ranking failed", exc_info=True)
+        cached_sectors = self._board_ranking_cache.get("sectors")
+        cached_concepts = self._board_ranking_cache.get("concepts")
+        sector_rows = cached_sectors if isinstance(cached_sectors, list) and cached_sectors else []
+        concept_rows = cached_concepts if isinstance(cached_concepts, list) and cached_concepts else []
+        cache_sources = []
+        if sector_rows:
+            cache_sources.append("industry")
+        else:
+            try:
+                sector_rows = self.get_hot_sectors_cn(limit=limit) or []
+            except Exception as exc:
+                failures.append(f"行业板块: {type(exc).__name__}")
+                logger.debug("Short-term industry board ranking failed", exc_info=True)
+        if concept_rows:
+            cache_sources.append("concept")
+        else:
+            try:
+                concept_rows = self.get_hot_concepts_cn(limit=limit) or []
+            except Exception as exc:
+                failures.append(f"概念板块: {type(exc).__name__}")
+                logger.debug("Short-term concept board ranking failed", exc_info=True)
         names = board_rankings.merge_short_term_hot_board_rows(sector_rows, concept_rows, limit=limit)
         self.last_board_ranking_diagnostics["short_term_hot_boards"] = {
-            "status": "fresh" if names else "unavailable",
+            "status": (
+                "cache"
+                if names and len(cache_sources) == 2
+                else "mixed"
+                if names and cache_sources
+                else "fresh"
+                if names
+                else "unavailable"
+            ),
             "count": len(names[:limit]),
             "source_counts": {
                 "industry": len(sector_rows),
                 "concept": len(concept_rows),
             },
+            "cache_sources": cache_sources,
             "fallback_errors": failures,
         }
         return names[:limit]
@@ -3173,7 +3318,16 @@ class StockRecommender:
             else:
                 item["missing"] = item.get("missing", 0) + 1
 
-    def _run_strategy_pool(self, strategy_name, stocks, num_stocks, analyzer, progress_callback=None, progress_stage=None):
+    def _run_strategy_pool(
+        self,
+        strategy_name,
+        stocks,
+        num_stocks,
+        analyzer,
+        progress_callback=None,
+        progress_stage=None,
+        max_workers=5,
+    ):
         results = []
         completed = 0
         total = len(stocks or [])
@@ -3184,7 +3338,7 @@ class StockRecommender:
             except Exception:
                 return None
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=max(1, int(max_workers or 1))) as executor:
             futures = {executor.submit(analyze_one, s): s for s in stocks}
             for future in as_completed(futures):
                 completed += 1
@@ -3247,6 +3401,7 @@ class StockRecommender:
             lambda stock: self._analyze_multi_factor(stock['code'], stock=stock, diagnostics=diagnostics),
             progress_callback=progress_callback,
             progress_stage="深度检查",
+            max_workers=MULTI_FACTOR_DEEP_MAX_WORKERS,
         )
         diagnostics["result_count"] = len(results)
         self.last_multi_factor_diagnostics = diagnostics
@@ -3277,13 +3432,20 @@ class StockRecommender:
             lambda stock: self._analyze_multi_factor(stock['code'], stock=stock, sector_name=sector_name, diagnostics=diagnostics),
             progress_callback=progress_callback,
             progress_stage="深度检查",
+            max_workers=MULTI_FACTOR_DEEP_MAX_WORKERS,
         )
         diagnostics["result_count"] = len(results)
         self.last_multi_factor_diagnostics = diagnostics
         _emit_progress(progress_callback, "完成", 100, deep_checked=len(stocks), result_count=len(results))
         return results
 
-    def _analyze_experimental_technical(self, stock, market='CN', fetcher=None):
+    def _analyze_experimental_technical(
+        self,
+        stock,
+        market='CN',
+        fetcher=None,
+        rule_id=EXPERIMENTAL_RULE_ID,
+    ):
         symbol = str((stock or {}).get("code") or "").strip()
         if not symbol:
             return None
@@ -3291,159 +3453,132 @@ class StockRecommender:
         try:
             data = self._get_strategy_stock_data(
                 symbol,
-                period='6mo',
+                period='1y',
                 interval='1d',
                 market=market,
                 fetcher=fetcher,
             )
         except Exception:
             return None
-        technical = evaluate_experimental_technical(data)
-        if not technical.get("passed"):
+        frame = prepare_candidate_frame(data)
+        if frame.empty or len(frame) < 80:
             return None
-        return {"stock": dict(stock or {}), "technical": technical}
-
-    def _analyze_experimental_deep(self, item, diagnostics=None):
-        stock = dict((item or {}).get("stock") or {})
-        technical = (item or {}).get("technical") or {}
-        symbol = str(stock.get("code") or "").strip()
-        if not symbol:
-            return None
+        evaluation = evaluate_candidate_at(frame, rule_id=rule_id)
         try:
-            profile = self._fundamental_service.get_stock_profile(symbol, "CN") or {}
+            display_frame = TechnicalIndicators.calculate_all(data.copy())
+            if display_frame is not None and not display_frame.empty:
+                evaluation["display_indicators"] = self._build_indicators_dict(display_frame.iloc[-1])
         except Exception:
-            profile = {}
-        listing_date = pd.to_datetime(profile.get("listing_date"), errors="coerce")
-        if pd.isna(listing_date) or (pd.Timestamp.now().normalize() - listing_date.normalize()).days < 365 * 5:
-            if isinstance(diagnostics, dict):
-                failures = diagnostics.setdefault("deep_failures", {})
-                failures["上市日期缺失或未满5年"] = failures.get("上市日期缺失或未满5年", 0) + 1
-            return None
-        extended = self._get_multi_factor_extended_info(symbol, "CN")
-        frame = technical.get("frame")
-        price_as_of = None
-        if frame is not None and not getattr(frame, "empty", True):
-            price_as_of = str(frame.index[-1])[:10]
-        latest = technical.get("latest")
-        current_price = latest.get("close") if latest is not None else None
-        valuation = build_value_investing_snapshot(
-            profile,
-            extended,
-            current_price=current_price,
-            price_as_of=price_as_of,
-            price_source="实验策略真实日K收盘价",
-        )
-        risk_blocked, risky_announcements = self._risk_events_blocked(extended.get("risk_events") or {})
-        risk_note = "；".join(risky_announcements[:3]) if risky_announcements else "未发现规则内重大风险事件"
-        result = build_experimental_candidate(
-            stock,
-            technical,
-            valuation,
-            profile=profile,
-            extended_info=extended,
-            risk_blocked=risk_blocked,
-            risk_note=risk_note,
-        )
-        if result is None and isinstance(diagnostics, dict):
-            failures = diagnostics.setdefault("deep_failures", {})
-            if risk_blocked:
-                reason = "重大风险事件"
-            elif valuation.get("status") != "ok":
-                reason = "估值数据不足"
-            elif (valuation.get("base_margin_of_safety_pct") or -999) < 15:
-                reason = "安全边际不足"
-            elif (valuation.get("score") or 0) < 65:
-                reason = "价值质量评分不足"
-            else:
-                reason = "盈利或经营现金流不足"
-            failures[reason] = failures.get(reason, 0) + 1
-        return result
+            evaluation["display_indicators"] = {}
+        return {
+            "stock": dict(stock or {}),
+            "evaluation": evaluation,
+            "source": frame.attrs.get("data_source") or "策略K线本地真实缓存",
+        }
 
     def get_experimental_recommendations(self, num_stocks=10, progress_callback=None):
-        """实验策略：成熟主板 + 稳定趋势 + 质量价值 + 风险排除。"""
+        """Active immutable rule + market regime + paper-only validation."""
+        selection = resolve_experimental_strategy_selection()
+        active_rule_id = selection.get("rule_id")
+        active_version = selection.get("strategy_version")
         diagnostics = {
             "strategy": EXPERIMENTAL_STRATEGY_NAME,
-            "strategy_version": EXPERIMENTAL_STRATEGY_VERSION,
+            "strategy_version": active_version,
+            "strategy_rule_id": active_rule_id,
+            "strategy_control": selection,
             "status": "observation_only",
         }
-        profile_index = {}
-        try:
-            profile_index = self._fundamental_service.index_cache.get("CN:all:profile_index:v1") or {}
-        except Exception:
-            profile_index = {}
-        if not profile_index:
-            try:
-                payload = self._fundamental_service.index_cache._read()
-                item = payload.get("CN:all:profile_index:v1") if isinstance(payload, dict) else None
-                profile_index = item.get("value") if isinstance(item, dict) else {}
-            except Exception:
-                profile_index = {}
-        if not profile_index:
-            try:
-                profile_index = run_with_timeout(
-                    self._fundamental_service.get_stock_profile_index,
-                    10,
-                ) or {}
-            except Exception:
-                profile_index = {}
-        stocks = get_popular_cn_stocks()
-        universe = select_experimental_universe(
-            stocks,
-            profile_index,
-            allow_missing_listing=True,
-        )
+        if not active_rule_id or not active_version:
+            diagnostics["status"] = "strategy_paused"
+            diagnostics["result_count"] = 0
+            self.last_experimental_diagnostics = diagnostics
+            _emit_progress(progress_callback, "完成", 100, result_count=0)
+            return []
+        stocks = self._get_strategy_popular_cn_stocks()
+        universe = [
+            stock
+            for stock in strategy_pool.main_board_stocks(
+                stocks,
+                predicate=self._is_main_board,
+            )
+            if "退" not in str(stock.get("name") or "")
+        ]
         diagnostics["raw_pool"] = len(stocks)
-        diagnostics["mature_main_board_pool"] = len(universe)
+        diagnostics["main_board_pool"] = len(universe)
         _emit_progress(
             progress_callback,
             "实验股票池",
             25,
             raw_pool=len(stocks),
-            mature_main_board_pool=len(universe),
+            main_board_pool=len(universe),
         )
 
-        technical_candidates = []
+        technical_rows = []
         fetcher = StockDataFetcher()
-        with ThreadPoolExecutor(max_workers=8) as executor:
+        with ThreadPoolExecutor(max_workers=12) as executor:
             futures = {
-                executor.submit(self._analyze_experimental_technical, stock, 'CN', fetcher): stock
+                executor.submit(
+                    self._analyze_experimental_technical,
+                    stock,
+                    'CN',
+                    fetcher,
+                    active_rule_id,
+                ): stock
                 for stock in universe
             }
             for future in as_completed(futures):
                 try:
-                    candidate = future.result()
+                    row = future.result()
                 except Exception:
-                    candidate = None
-                if candidate:
-                    technical_candidates.append(candidate)
-        technical_candidates.sort(
-            key=lambda item: (
-                (item.get("technical") or {}).get("metrics", {}).get("volatility_20d_pct") or 999,
-                -((item.get("technical") or {}).get("metrics", {}).get("return_20d_pct") or 0),
+                    row = None
+                if row:
+                    technical_rows.append(row)
+        market_regime = build_market_regime_snapshot(technical_rows)
+        regime_date = str(market_regime.get("as_of_date") or "")
+        signal_rows = [
+            row
+            for row in technical_rows
+            if (row.get("evaluation") or {}).get("passed")
+            and (
+                not regime_date
+                or str((row.get("evaluation") or {}).get("as_of_date") or "")[:10]
+                == regime_date
             )
-        )
-        shortlist = technical_candidates[:EXPERIMENTAL_DEEP_LIMIT]
-        diagnostics["technical_passed"] = len(technical_candidates)
-        diagnostics["deep_checked"] = len(shortlist)
+        ]
+        diagnostics["kline_valid"] = len(technical_rows)
+        diagnostics["technical_passed"] = len(signal_rows)
+        diagnostics["market_regime"] = market_regime
         _emit_progress(
             progress_callback,
-            "稳定趋势轻筛",
+            "市场广度与回撤信号",
             75,
-            mature_main_board_pool=len(universe),
-            technical_passed=len(technical_candidates),
-            deep_checked=len(shortlist),
+            main_board_pool=len(universe),
+            kline_valid=len(technical_rows),
+            technical_passed=len(signal_rows),
+            market_regime=market_regime.get("status"),
         )
-        results = self._run_strategy_pool(
-            EXPERIMENTAL_STRATEGY_NAME,
-            shortlist,
-            num_stocks,
-            lambda item: self._analyze_experimental_deep(item, diagnostics=diagnostics),
-            progress_callback=progress_callback,
-            progress_stage="质量估值检查",
-        )
+        if not market_regime.get("passed"):
+            diagnostics["status"] = "cash_regime"
+            diagnostics["result_count"] = 0
+            self.last_experimental_diagnostics = diagnostics
+            _emit_progress(progress_callback, "完成", 100, result_count=0, market_regime="cash")
+            return []
+
+        results = []
+        for row in signal_rows:
+            candidate = build_price_candidate(
+                row.get("stock") or {},
+                row.get("evaluation") or {},
+                rule_id=active_rule_id,
+                strategy_version=active_version,
+            )
+            if candidate:
+                results.append(candidate)
+        results.sort(key=lambda item: (-float(item.get("score") or 0), str(item.get("symbol") or "")))
+        results = results[: max(0, int(num_stocks or 0))]
         diagnostics["result_count"] = len(results)
         self.last_experimental_diagnostics = diagnostics
-        _emit_progress(progress_callback, "完成", 100, deep_checked=len(shortlist), result_count=len(results))
+        _emit_progress(progress_callback, "完成", 100, result_count=len(results), market_regime="risk_on")
         return results
 
 if __name__ == "__main__":

@@ -20,6 +20,7 @@ from ui.hot_stocks_page import hot_stocks_page
 from ui.recommend_page import recommended_stocks_page
 from ui.report_history_page import report_history_page
 from ui.system_status_page import render_system_status_page
+from ui.trading_workbench import render_trading_workbench_page
 from ui.committee_status import render_committee_status_card
 from ui.sidebar import (
     display_data_source_selector,
@@ -86,6 +87,8 @@ def _render_selected_page(page):
         report_history_page()
     elif page == "系统状态":
         render_system_status_page()
+    elif page == "交易工作台":
+        render_trading_workbench_page()
 
 
 def _render_main_page(page):
@@ -106,6 +109,7 @@ def main():
         "股票对比",
         "回测验证",
         "历史日报",
+        "交易工作台",
         "系统状态",
     ]
     nav_emoji = {
@@ -115,6 +119,7 @@ def main():
         "股票对比": "📊",
         "回测验证": "⏱️",
         "历史日报": "📄",
+        "交易工作台": "🧾",
         "系统状态": "🛠️",
     }
 

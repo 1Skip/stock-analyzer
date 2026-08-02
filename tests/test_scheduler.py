@@ -11,6 +11,10 @@ def scheduler_defaults(monkeypatch, tmp_path):
     """调度单元测试默认关闭日报，并隔离本地运行状态。"""
     monkeypatch.setattr("scheduler.DAILY_REPORT_ENABLED", False)
     monkeypatch.setattr("scheduler.ANALYSIS_SIGNAL_SETTLEMENT_ENABLED", False)
+    monkeypatch.setattr("scheduler.PAPER_TRADING_ENABLED", False)
+    monkeypatch.setattr("scheduler.BROKER_RECONCILIATION_ENABLED", False)
+    monkeypatch.setattr("scheduler.PORTFOLIO_BACKTEST_AUTO_ENABLED", False)
+    monkeypatch.setattr("scheduler.T1_PLAN_MULTI_FACTOR_TIMEOUT_SECONDS", 0)
     monkeypatch.setattr("scheduler._load_watchlist_from_file", lambda: [])
     monkeypatch.setattr("scheduler.SCHEDULER_STATUS_PATH", tmp_path / "scheduler_status.json")
 
@@ -23,6 +27,56 @@ class TestSchedulerImport:
         assert callable(run_scheduled_analysis)
         assert callable(run_t1_plan_preheat)
         assert callable(start_scheduler)
+
+    def test_success_status_clears_stale_error(self):
+        import scheduler
+
+        scheduler.SCHEDULER_STATUS_PATH.write_text(
+            json.dumps(
+                {
+                    "t1_preheat": {
+                        "status": "failed",
+                        "error": "旧错误",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        scheduler._write_scheduler_status(
+            "t1_preheat",
+            {"status": "success", "finished_at": "2026-07-26T17:00:00"},
+        )
+
+        saved = json.loads(
+            scheduler.SCHEDULER_STATUS_PATH.read_text(encoding="utf-8")
+        )
+        assert saved["t1_preheat"]["status"] == "success"
+        assert "error" not in saved["t1_preheat"]
+
+    def test_running_status_clears_stale_finished_at(self):
+        import scheduler
+
+        scheduler.SCHEDULER_STATUS_PATH.write_text(
+            json.dumps({
+                "t1_preheat": {
+                    "status": "success",
+                    "finished_at": "2026-07-26T17:00:00",
+                }
+            }),
+            encoding="utf-8",
+        )
+
+        scheduler._write_scheduler_status(
+            "t1_preheat",
+            {"status": "running", "started_at": "2026-08-02T10:20:17"},
+        )
+
+        saved = json.loads(
+            scheduler.SCHEDULER_STATUS_PATH.read_text(encoding="utf-8")
+        )
+        assert saved["t1_preheat"]["status"] == "running"
+        assert "finished_at" not in saved["t1_preheat"]
 
 
 class TestT1PlanSchedule:
@@ -89,6 +143,14 @@ class TestT1PlanSchedule:
             "recommended": [{"symbol": "002001"}],
             "generation_metrics": {"elapsed_seconds": 1.2},
         }
+        fake_service.preheat_t1_kline_cache.return_value = {
+            "status": "ok",
+            "total": 80,
+            "refreshed": 80,
+            "cached": 0,
+            "failed": 0,
+            "periods": ["1y", "6mo", "3mo"],
+        }
         monkeypatch.setattr("scheduler.T1_PLAN_STRATEGIES", ["短线", "短线经典版", "多因子稳健型", "激进突破型"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTORS", ["苹果概念", "特斯拉概念", "电力", "算力租赁"])
         monkeypatch.setattr("scheduler.T1_PLAN_SECTOR", "苹果概念")
@@ -107,12 +169,14 @@ class TestT1PlanSchedule:
         assert plans["短线经典版:电力"]["recommended"][0]["symbol"] == "002001"
         assert plans["多因子稳健型:全部"]["recommended"][0]["symbol"] == "002001"
         assert plans["激进突破型:全部"]["recommended"][0]["symbol"] == "002001"
+        fake_service.preheat_t1_kline_cache.assert_called_once_with()
         for call in fake_service.run_t1_plan.call_args_list:
             assert call.args[2:3] == (5,)
             assert call.kwargs == {
                 "trigger": "scheduler",
-                "preheat_kline": True,
+                "preheat_kline": False,
                 "preheat_extended_info": True,
+                "preheated_kline_status": fake_service.preheat_t1_kline_cache.return_value,
             }
         fake_service.check_entry_plan.assert_not_called()
 
@@ -128,6 +192,14 @@ class TestT1PlanSchedule:
             "recommended": [{"symbol": "002001"}, {"symbol": "002002"}],
             "generation_metrics": {"elapsed_seconds": 1.2},
             "cache_key": "t1:short:all:5",
+        }
+        fake_service.preheat_t1_kline_cache.return_value = {
+            "status": "ok",
+            "total": 80,
+            "refreshed": 20,
+            "cached": 60,
+            "failed": 0,
+            "periods": ["1y", "6mo", "3mo"],
         }
         monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
         monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGIES", ["短线"])
@@ -146,12 +218,14 @@ class TestT1PlanSchedule:
             "全部",
             5,
             trigger="scheduler",
-            preheat_kline=True,
+            preheat_kline=False,
             preheat_extended_info=True,
+            preheated_kline_status=fake_service.preheat_t1_kline_cache.return_value,
         )
         status = json.loads(status_path.read_text(encoding="utf-8"))
         target = status["t1_preheat"]["targets"]["短线:全部"]
         assert status["t1_preheat"]["status"] == "success"
+        assert status["t1_preheat"]["kline_cache"]["cached"] == 60
         assert target["recommended_count"] == 2
         assert target["cache_key"] == "t1:short:all:5"
 
@@ -173,6 +247,7 @@ class TestT1PlanSchedule:
                 return None
 
         monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGY_TIMEOUT_SECONDS", 1)
+        monkeypatch.setattr(scheduler, "T1_PLAN_MULTI_FACTOR_TIMEOUT_SECONDS", 1)
         monkeypatch.setattr(scheduler, "T1_PLAN_PREHEAT_KLINE", True)
         monkeypatch.setattr(scheduler, "T1_PLAN_PREHEAT_EXTENDED_INFO", True)
         monkeypatch.setattr(scheduler.subprocess, "Popen", lambda *args, **kwargs: SlowProcess())
@@ -189,6 +264,69 @@ class TestT1PlanSchedule:
         assert plan["recommended"] == []
         assert plan["generation_metrics"]["realtime_used_for_selection"] is False
         assert plan["generation_metrics"]["scan_scope_changed"] is False
+
+    def test_t1_worker_runs_strategy_in_same_process_for_memory_reuse(self, monkeypatch):
+        import scheduler
+
+        fake_service = MagicMock()
+        fake_service.run_t1_plan.return_value = {
+            "status": "success",
+            "strategy": "短线",
+            "sector": "全部",
+            "recommended": [],
+        }
+        timer = MagicMock()
+        monkeypatch.setenv(scheduler.T1_PREHEAT_WORKER_ENV, "1")
+        monkeypatch.setattr(scheduler, "T1_PLAN_STRATEGY_TIMEOUT_SECONDS", 30)
+        monkeypatch.setattr(scheduler.threading, "Timer", MagicMock(return_value=timer))
+        popen = MagicMock(side_effect=AssertionError("worker 内不应为每个策略重复创建子进程"))
+        monkeypatch.setattr(scheduler.subprocess, "Popen", popen)
+
+        result = scheduler._run_t1_plan_strategy_with_timeout(
+            fake_service,
+            "短线",
+            "全部",
+            5,
+            preheated_kline_status={"status": "ok"},
+        )
+
+        assert result["status"] == "success"
+        fake_service.run_t1_plan.assert_called_once()
+        timer.start.assert_called_once_with()
+        timer.cancel.assert_called_once_with()
+        popen.assert_not_called()
+
+    def test_async_t1_launcher_starts_worker_without_waiting(self, monkeypatch, tmp_path):
+        import scheduler
+
+        class RunningProcess:
+            pid = 24680
+            returncode = None
+
+            def poll(self):
+                return None
+
+            def communicate(self, *args, **kwargs):
+                raise AssertionError("调度主循环不应等待 T+1 worker")
+
+        process = RunningProcess()
+        popen = MagicMock(return_value=process)
+        monkeypatch.setattr(scheduler, "_t1_preheat_process", None)
+        monkeypatch.setattr(scheduler, "_t1_preheat_started_at", None)
+        monkeypatch.setattr(scheduler.subprocess, "Popen", popen)
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", tmp_path / "scheduler_status.json")
+
+        result = scheduler.launch_t1_plan_preheat()
+
+        assert result == {"status": "started", "worker_pid": 24680}
+        env = popen.call_args.kwargs["env"]
+        assert env[scheduler.T1_PREHEAT_WORKER_ENV] == "1"
+        assert "os._exit" in popen.call_args.args[0][2]
+        assert popen.call_args.kwargs["stdout"] is None
+        assert popen.call_args.kwargs["stderr"] is None
+        status = json.loads(scheduler.SCHEDULER_STATUS_PATH.read_text(encoding="utf-8"))
+        assert status["t1_preheat"]["status"] == "queued"
+        assert status["t1_preheat"]["worker_pid"] == 24680
 
 
 class TestRunScheduledAnalysis:
@@ -235,6 +373,99 @@ class TestRunScheduledAnalysis:
         assert status["status"] == "failed"
         assert status["error"] == "source unavailable"
         assert status["finished_at"]
+
+    def test_paper_trading_reconciliation_runs_and_writes_status(self, monkeypatch, tmp_path):
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        service = MagicMock()
+        service.reconcile.return_value = {
+            "status": "ok",
+            "as_of_date": "2026-07-25",
+            "buy_orders": {"filled": 1},
+            "position_exits": {"filled": 0},
+            "summary": {
+                "equity": 1_000_000,
+                "open_positions": 1,
+                "pending_orders": 0,
+                "closed_trades": 0,
+            },
+        }
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr("paper_trading.PaperTradingService", lambda: service)
+
+        result = scheduler.run_paper_trading_reconciliation()
+
+        service.reconcile.assert_called_once_with()
+        assert result["summary"]["open_positions"] == 1
+        status = json.loads(status_path.read_text(encoding="utf-8"))["paper_trading"]
+        assert status["status"] == "ok"
+        assert status["equity"] == 1_000_000
+        assert status["finished_at"]
+
+    def test_broker_reconciliation_is_read_only_and_writes_status(self, monkeypatch, tmp_path):
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        adapter = MagicMock()
+        adapter.readiness.return_value = {
+            "mode": "qmt_read_only",
+            "read_only": True,
+            "live_order_enabled": False,
+        }
+        adapter.query_snapshot.return_value = {
+            "status": "ok",
+            "asset": {"cash": 100_000},
+            "positions": [{"stock_code": "600001.SH"}],
+            "orders": [],
+            "trades": [],
+        }
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr("broker_execution.build_broker_adapter", lambda: adapter)
+
+        result = scheduler.run_broker_reconciliation()
+
+        adapter.query_snapshot.assert_called_once_with()
+        assert result["status"] == "ok"
+        status = json.loads(status_path.read_text(encoding="utf-8"))["broker_reconciliation"]
+        assert status["status"] == "success"
+        assert status["read_only"] is True
+        assert status["positions"] == 1
+
+    def test_portfolio_backtest_job_persists_result_and_status(self, monkeypatch, tmp_path):
+        import deployment_readiness
+        import scheduler
+
+        status_path = tmp_path / "scheduler_status.json"
+        output_path = tmp_path / "portfolio.json"
+        adapter = MagicMock()
+        adapter.run.return_value = {
+            "portfolio": {
+                "status": "ok",
+                "metrics": {
+                    "closed_trades": 12,
+                    "total_return_pct": 2.5,
+                    "excess_return_pct": 1.2,
+                    "max_drawdown_pct": -3.0,
+                },
+                "data_quality": {"plans_replayed": 20},
+                "risk": {"block_new_entries": False},
+                "audit": {"valid": True},
+                "reconciliation": {"status": "ok"},
+            }
+        }
+        monkeypatch.setattr(scheduler, "SCHEDULER_STATUS_PATH", status_path)
+        monkeypatch.setattr(deployment_readiness, "DEFAULT_PORTFOLIO_PATH", output_path)
+        monkeypatch.setattr("strategy_backtest.StrategyBacktestAdapter", lambda: adapter)
+
+        result = scheduler.run_portfolio_backtest_validation()
+
+        adapter.run.assert_called_once_with(period=scheduler.PORTFOLIO_BACKTEST_PERIOD)
+        assert result["status"] == "ok"
+        assert json.loads(output_path.read_text(encoding="utf-8"))["metrics"]["closed_trades"] == 12
+        status = json.loads(status_path.read_text(encoding="utf-8"))["portfolio_backtest"]
+        assert status["status"] == "success"
+        assert status["plans_replayed"] == 20
 
     def test_no_watchlist_and_no_daily_report_sends_nothing(self):
         from scheduler import run_scheduled_analysis
@@ -318,6 +549,8 @@ class TestRunScheduledAnalysis:
             mock_schedule.every.return_value.day.at.assert_called_with("15:30")
 
     def test_t1_preheat_schedule_setup_enabled_by_default(self):
+        import scheduler
+
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
              patch("scheduler.SCHEDULE_TIME", "15:30"), \
              patch("scheduler.T1_PLAN_SCHEDULE_TIME", "15:45"), \
@@ -336,6 +569,11 @@ class TestRunScheduledAnalysis:
             at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
             assert "15:30" in at_calls
             assert "15:45" in at_calls
+            callbacks = [
+                call.args[0]
+                for call in mock_schedule.every.return_value.day.at.return_value.do.call_args_list
+            ]
+            assert scheduler.launch_t1_plan_preheat in callbacks
 
     def test_analysis_signal_settlement_schedule_setup(self):
         with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
@@ -356,6 +594,49 @@ class TestRunScheduledAnalysis:
 
             at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
             assert "16:05" in at_calls
+
+    def test_paper_trading_schedule_setup(self):
+        with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
+             patch("scheduler.T1_PLAN_AUTO_ENABLED", False), \
+             patch("scheduler.PAPER_TRADING_ENABLED", True), \
+             patch("scheduler.PAPER_TRADING_RECONCILE_TIME", "16:10"), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
+             patch("scheduler.schedule") as mock_schedule, \
+             patch("scheduler.signal.signal"), \
+             patch("scheduler.time.sleep", side_effect=StopIteration):
+            from scheduler import start_scheduler
+
+            try:
+                start_scheduler()
+            except StopIteration:
+                pass
+
+            at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
+            assert "16:10" in at_calls
+
+    def test_portfolio_and_broker_schedule_setup(self):
+        with patch("scheduler.SCHEDULE_RUN_IMMEDIATELY", False), \
+             patch("scheduler.T1_PLAN_AUTO_ENABLED", False), \
+             patch("scheduler.BROKER_RECONCILIATION_ENABLED", True), \
+             patch("scheduler.BROKER_RECONCILIATION_TIME", "16:15"), \
+             patch("scheduler.PORTFOLIO_BACKTEST_AUTO_ENABLED", True), \
+             patch("scheduler.PORTFOLIO_BACKTEST_SCHEDULE_TIME", "16:20"), \
+             patch("scheduler._acquire_pid_lock", return_value=1), \
+             patch("scheduler._release_pid_lock"), \
+             patch("scheduler.schedule") as mock_schedule, \
+             patch("scheduler.signal.signal"), \
+             patch("scheduler.time.sleep", side_effect=StopIteration):
+            from scheduler import start_scheduler
+
+            try:
+                start_scheduler()
+            except StopIteration:
+                pass
+
+            at_calls = [call.args[0] for call in mock_schedule.every.return_value.day.at.call_args_list]
+            assert "16:15" in at_calls
+            assert "16:20" in at_calls
 
     def test_start_scheduler_skips_when_instance_lock_exists(self):
         with patch("scheduler._acquire_pid_lock", return_value=None), \

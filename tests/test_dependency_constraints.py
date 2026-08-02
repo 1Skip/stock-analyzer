@@ -61,3 +61,16 @@ def test_windows_launcher_starts_scheduler_hidden_with_real_log_redirection():
     assert "Start-Process" in windows_launcher
     assert "-WindowStyle Hidden" in windows_launcher
     assert 'start "Stock Analyzer Scheduler"' not in windows_launcher
+
+
+def test_windows_launcher_reuses_healthy_web_server_before_installing_dependencies():
+    windows_launcher = (ROOT / "start.bat").read_text(encoding="utf-8")
+
+    health_check = "http://127.0.0.1:%APP_PORT%/_stcore/health"
+    dependency_install = "Installing dependencies"
+    assert "Invoke-WebRequest" in windows_launcher
+    assert health_check in windows_launcher
+    assert "$response.StatusCode -eq 200" in windows_launcher
+    assert "$response.Content.Trim() -eq 'ok'" in windows_launcher
+    assert "Stock Analyzer is already running. Opening existing page..." in windows_launcher
+    assert windows_launcher.index(health_check) < windows_launcher.index(dependency_install)

@@ -5,6 +5,7 @@ pandas>=2.2
 numpy>=2.1
 requests>=2.31
 akshare>=1.14
+baostock>=0.9.3
 pywencai>=0.13.1
 beautifulsoup4>=4.12
 MyTT>=2.9

@@ -368,6 +368,7 @@ def _render_strategy_backtest_result(result):
         )
     st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
     st.caption(f"数据来源：{result.get('source')}")
+    _render_portfolio_backtest_result(result.get("portfolio") or {})
 
     experimental = next(
         (item for item in (result.get("strategies") or []) if item.get("strategy") == "实验策略"),
@@ -410,6 +411,78 @@ def _render_strategy_backtest_result(result):
                 for item in details
             ]
             st.dataframe(pd.DataFrame(detail_rows), width="stretch", hide_index=True)
+
+
+def _render_portfolio_backtest_result(portfolio):
+    st.markdown("### 组合级账户回测")
+    if portfolio.get("status") != "ok":
+        st.info(
+            f"{portfolio.get('message') or '当前真实计划不足以进行组合级重放'}。"
+            "不会使用模拟推荐或补造行情。"
+        )
+        errors = (portfolio.get("data_quality") or {}).get("errors") or []
+        if errors:
+            st.caption("数据缺口：" + "；".join(str(item) for item in errors[:5]))
+        return
+
+    metrics = portfolio.get("metrics") or {}
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
+    col1.metric("组合收益", _format_metric(metrics.get("total_return_pct")))
+    col2.metric("基准收益", _format_metric(metrics.get("benchmark_return_pct")))
+    col3.metric("超额收益", _format_metric(metrics.get("excess_return_pct")))
+    col4.metric("最大回撤", _format_metric(metrics.get("max_drawdown_pct")))
+    col5.metric("换手率", f"{metrics.get('turnover_ratio', 0):.2f}x")
+    col6.metric("扣费胜率", _format_rate(metrics.get("win_rate_pct")))
+    st.caption(
+        f"共享现金账户 · 峰值持仓 {metrics.get('peak_positions', 0)} · "
+        f"已结交易 {metrics.get('closed_trades', 0)} · "
+        f"费用 {metrics.get('fees', 0):,.2f} 元 · "
+        f"期末权益 {metrics.get('ending_equity', 0):,.2f} 元"
+    )
+
+    curve = pd.DataFrame(portfolio.get("equity_curve") or [])
+    if not curve.empty and {"date", "equity"}.issubset(curve.columns):
+        chart = curve[["date", "equity"]].copy()
+        chart["date"] = pd.to_datetime(chart["date"], errors="coerce")
+        chart = chart.dropna(subset=["date"]).set_index("date")
+        st.line_chart(chart, height=280)
+
+    attribution = portfolio.get("attribution") or []
+    if attribution:
+        st.markdown("#### 策略与行业归因")
+        st.dataframe(pd.DataFrame(attribution), width="stretch", hide_index=True)
+
+    risk = portfolio.get("risk") or {}
+    if risk.get("automatic_breaches"):
+        st.error("组合回测触发硬风控：" + "；".join(risk["automatic_breaches"]))
+    quality = portfolio.get("data_quality") or {}
+    corporate_action_quality = quality.get("corporate_actions") or {}
+    st.caption(
+        f"重放 {quality.get('plans_replayed', 0)}/{quality.get('plans_received', 0)} 份计划，"
+        f"使用 {quality.get('symbols_with_kline', 0)} 只股票未复权真实日K，"
+        f"公司行为数据状态 {corporate_action_quality.get('status') or '--'}，"
+        f"已记录 {corporate_action_quality.get('events_recorded', 0)} 条。"
+        "当前股票池仍有幸存者偏差。"
+    )
+    if corporate_action_quality.get("errors"):
+        st.warning(
+            "公司行为数据缺口："
+            + "；".join(str(item) for item in corporate_action_quality["errors"][:5])
+        )
+    with st.expander("组合订单、成交与日终对账", expanded=False):
+        reconciliation = portfolio.get("reconciliation") or {}
+        st.caption(
+            f"对账状态：{reconciliation.get('status') or '--'} · "
+            f"现金差额：{reconciliation.get('cash_difference')} · "
+            f"审计链：{'通过' if (portfolio.get('audit') or {}).get('valid') else '失败'}"
+        )
+        orders = portfolio.get("orders") or []
+        if orders:
+            st.dataframe(pd.DataFrame(orders), width="stretch", hide_index=True)
+        corporate_actions = portfolio.get("corporate_actions") or []
+        if corporate_actions:
+            st.markdown("#### 公司行为流水")
+            st.dataframe(pd.DataFrame(corporate_actions), width="stretch", hide_index=True)
 
 
 def _render_strategy_backtest():

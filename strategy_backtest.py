@@ -85,7 +85,7 @@ def _win_rate(values: list[float]) -> float | None:
 class StrategyBacktestAdapter:
     """Aggregate actual saved strategy selections against later real closes."""
 
-    def __init__(self, service: Any | None = None):
+    def __init__(self, service: Any | None = None, benchmark_loader: Any | None = None):
         if service is None:
             from recommendation_service import RecommendationService
 
@@ -97,6 +97,7 @@ class StrategyBacktestAdapter:
             if fallback_quote_service is not None
             else None
         )
+        self.benchmark_loader = benchmark_loader
 
     def run(self, period: str = "1y") -> dict[str, Any]:
         spec = get_period_spec(period)
@@ -243,6 +244,10 @@ class StrategyBacktestAdapter:
             else None
         )
         coverage = assess_period_coverage(coverage_frame, period, end=requested_end)
+        portfolio = self._run_portfolio_backtest(
+            [plan for _, plan, _ in selected],
+            period=period,
+        )
         return {
             "period": period,
             "period_label": spec.label,
@@ -259,5 +264,64 @@ class StrategyBacktestAdapter:
                 "recommended_count": sum(row["recommended"] for row in strategy_rows),
                 "completed_count": sum(row["completed"] for row in strategy_rows),
             },
+            "portfolio": portfolio,
             "source": "已保存的真实T+1推荐计划 + 买入区间触发 + 后续真实日K",
         }
+
+    def _run_portfolio_backtest(
+        self,
+        plans: list[dict[str, Any]],
+        *,
+        period: str,
+    ) -> dict[str, Any]:
+        from portfolio_backtest import PortfolioBacktestEngine
+
+        if self.outcome_quote_service is None:
+            return PortfolioBacktestEngine._empty_result(
+                "当前服务没有真实日K读取接口",
+                ["无法构建组合级回测价格输入"],
+            )
+        executable = [
+            plan
+            for plan in plans
+            if any(
+                isinstance(stock, dict) and isinstance(stock.get("trade_plan"), dict)
+                for stock in plan.get("recommended") or []
+            )
+        ]
+        frames = {}
+        for plan in executable:
+            for stock in plan.get("recommended") or []:
+                symbol = str((stock or {}).get("symbol") or "").strip()
+                if not symbol or symbol in frames:
+                    continue
+                try:
+                    frame = self.outcome_quote_service.get_stock_data(
+                        symbol,
+                        period=period,
+                        market="CN",
+                    )
+                except Exception:
+                    frame = None
+                if frame is not None and not getattr(frame, "empty", True):
+                    frames[symbol] = frame
+        benchmark = None
+        if executable and frames:
+            loader = self.benchmark_loader
+            if loader is None:
+                try:
+                    from ui.cached_data import get_cached_benchmark_data
+
+                    loader = get_cached_benchmark_data
+                except Exception:
+                    loader = None
+            if loader is not None:
+                try:
+                    benchmark = loader("000300", period)
+                except Exception:
+                    benchmark = None
+        return PortfolioBacktestEngine().run(
+            executable,
+            frames,
+            benchmark=benchmark,
+        )

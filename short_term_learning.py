@@ -1,6 +1,9 @@
 """Short-term recommendation learning from real T+1 plan outcomes."""
 from __future__ import annotations
 
+import hashlib
+import json
+from datetime import date
 from typing import Any
 
 from data.cache import JsonFileCache
@@ -11,8 +14,10 @@ SCORE_BUCKET_SIZE = 5
 MAX_LEARNING_BONUS = 6.0
 LEARNING_PROFILE_VERSION = "short_term_learning_v2"
 OUTCOME_METHOD_VERSION = "t1_execution_v2"
+PROFILE_CACHE_TTL_SECONDS = 15 * 60
 
 _OUTCOME_CACHE = JsonFileCache("short_term_learning_outcomes", 86400 * 365)
+_PROFILE_CACHE = JsonFileCache("short_term_learning_profiles", PROFILE_CACHE_TTL_SECONDS)
 
 
 def build_short_term_learning_profile(
@@ -21,9 +26,19 @@ def build_short_term_learning_profile(
     quote_service: Any,
     evaluate_plan_outcomes: Any,
     strategy: str = "短线",
+    use_profile_cache: bool = False,
 ) -> dict[str, Any]:
     """Build a read-only strategy-specific learning profile from completed outcomes."""
     strategy = str(strategy or "短线")
+    profile_cache_key = _profile_cache_key(rows, strategy)
+    if use_profile_cache:
+        cached_profile = _PROFILE_CACHE.get(profile_cache_key)
+        if (
+            isinstance(cached_profile, dict)
+            and cached_profile.get("version") == LEARNING_PROFILE_VERSION
+            and cached_profile.get("strategy") == strategy
+        ):
+            return dict(cached_profile)
     samples = _collect_completed_short_term_samples(
         rows,
         quote_service,
@@ -43,7 +58,7 @@ def build_short_term_learning_profile(
         "note": f"{strategy}真实回测完成样本不足，暂不启用动态评分门槛。",
     }
     if not samples:
-        return profile
+        return _store_profile_cache(profile_cache_key, profile, use_profile_cache)
 
     returns = [sample["return_1d"] for sample in samples]
     profile["baseline_avg_1d_return_pct"] = _avg(returns)
@@ -51,7 +66,7 @@ def build_short_term_learning_profile(
     bucket_stats = _bucket_samples(samples)
     profile["bucket_stats"] = bucket_stats
     if len(samples) < MIN_COMPLETED_SAMPLES:
-        return profile
+        return _store_profile_cache(profile_cache_key, profile, use_profile_cache)
 
     threshold = _choose_score_threshold(bucket_stats)
     if threshold is None:
@@ -59,10 +74,50 @@ def build_short_term_learning_profile(
             f"{strategy}真实回测样本已积累，但未发现优于基准的稳定分数段，"
             "暂不启用动态评分门槛。"
         )
-        return profile
+        return _store_profile_cache(profile_cache_key, profile, use_profile_cache)
     profile["status"] = "active"
     profile["score_threshold"] = threshold
     profile["note"] = f"{strategy}动态门槛来自真实 T+1 历史回测：score >= {threshold}。"
+    return _store_profile_cache(profile_cache_key, profile, use_profile_cache)
+
+
+def _profile_cache_key(rows: list[dict[str, Any]] | None, strategy: str) -> str:
+    as_of_date = date.today().isoformat()
+    historical_plans = []
+    for row in rows or []:
+        plan = row.get("plan") if isinstance(row, dict) else None
+        if not isinstance(plan, dict) or str(plan.get("strategy") or "") != strategy:
+            continue
+        generated_date = str(
+            plan.get("generated_at")
+            or (row.get("generated_at") if isinstance(row, dict) else "")
+            or plan.get("generated_trade_date")
+            or ""
+        )[:10]
+        if generated_date and generated_date >= as_of_date:
+            continue
+        historical_plans.append(plan)
+    serialized = json.dumps(
+        historical_plans,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    fingerprint = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+    return (
+        f"{LEARNING_PROFILE_VERSION}:{OUTCOME_METHOD_VERSION}:"
+        f"{strategy}:{as_of_date}:{fingerprint}"
+    )
+
+
+def _store_profile_cache(
+    cache_key: str,
+    profile: dict[str, Any],
+    enabled: bool,
+) -> dict[str, Any]:
+    if enabled:
+        _PROFILE_CACHE.set(cache_key, profile)
     return profile
 
 
@@ -131,6 +186,8 @@ def _collect_completed_short_term_samples(
         plan = row.get("plan") if isinstance(row, dict) else None
         if not isinstance(plan, dict) or str(plan.get("strategy") or "") != strategy:
             continue
+        if not _plan_ready_for_one_day_settlement(plan):
+            continue
         plan_key = (
             f"{OUTCOME_METHOD_VERSION}:{strategy}:"
             f"{plan.get('generated_at')}:{plan.get('sector') or '全部'}"
@@ -164,6 +221,24 @@ def _collect_completed_short_term_samples(
         if plan_samples:
             _OUTCOME_CACHE.set(plan_key, plan_samples)
     return samples
+
+
+def _plan_ready_for_one_day_settlement(
+    plan: dict[str, Any],
+    *,
+    as_of_date: str | None = None,
+) -> bool:
+    """Return whether a T+1 plan can already have a one-day exit observation."""
+    current_date = str(as_of_date or date.today().isoformat())[:10]
+    entry_date = str(plan.get("plan_for_trade_date") or "")[:10]
+    if entry_date:
+        return entry_date < current_date
+    generated_date = str(
+        plan.get("generated_trade_date")
+        or plan.get("generated_at")
+        or ""
+    )[:10]
+    return bool(generated_date and generated_date < current_date)
 
 
 def _bucket_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:

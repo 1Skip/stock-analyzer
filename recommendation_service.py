@@ -13,7 +13,10 @@ from config import (
     CACHE_TTL_RECOMMENDATION_RESULTS,
     RECOMMEND_RANKER_ENABLED,
     RECOMMEND_RANKER_SORT,
+    PAPER_TRADING_ENABLED,
+    PAPER_TRADING_STRATEGIES,
     T1_PLAN_STRATEGIES,
+    T1_PLAN_PREHEAT_KLINE_MAX_WORKERS,
     T1_PLAN_PREHEAT_EXTENDED_INFO_DEEP,
     T1_PLAN_PREHEAT_EXTENDED_INFO_MAX_SYMBOLS,
     T1_PLAN_PREHEAT_EXTENDED_INFO_TIMEOUT_SECONDS,
@@ -47,7 +50,12 @@ from recommend_ranker import enrich_recommendations_with_alpha
 from short_term_learning import apply_short_term_learning, build_short_term_learning_profile
 from stock_recommendation import StockRecommender
 from trade_plan import enrich_recommendations_with_trade_plan
-from experimental_strategy import EXPERIMENTAL_STRATEGY_NAME, EXPERIMENTAL_STRATEGY_VERSION
+from experimental_strategy import (
+    EXPERIMENTAL_RULE_ID,
+    EXPERIMENTAL_STRATEGY_NAME,
+    EXPERIMENTAL_STRATEGY_VERSION,
+    resolve_experimental_strategy_selection,
+)
 
 
 ProgressCallback = Callable[[str, int, dict[str, Any] | None], None]
@@ -170,7 +178,19 @@ class RecommendationService:
         result["num_stocks"] = num_stocks
         result["selection_data_version"] = SELECTION_DATA_VERSION
         if strategy == EXPERIMENTAL_STRATEGY_NAME:
-            result["strategy_version"] = EXPERIMENTAL_STRATEGY_VERSION
+            diagnostics = (
+                result.get("diagnostics")
+                if isinstance(result.get("diagnostics"), dict)
+                else {}
+            )
+            result["strategy_version"] = diagnostics.get(
+                "strategy_version",
+                EXPERIMENTAL_STRATEGY_VERSION,
+            )
+            result["strategy_rule_id"] = diagnostics.get(
+                "strategy_rule_id",
+                EXPERIMENTAL_RULE_ID,
+            )
         self.result_cache.set(cache_key, result)
         return result
 
@@ -188,6 +208,7 @@ class RecommendationService:
         trigger: str = "manual",
         preheat_kline: bool = False,
         preheat_extended_info: bool = False,
+        preheated_kline_status: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate and persist a T+1 plan without changing strategy rules."""
         started = time.perf_counter()
@@ -196,7 +217,9 @@ class RecommendationService:
             "kline_cache": "not_requested",
             "extended_info_cache": "not_requested",
         }
-        if preheat_kline:
+        if isinstance(preheated_kline_status, dict):
+            preheat_status["kline_cache"] = dict(preheated_kline_status)
+        elif preheat_kline:
             preheat_status["kline_cache"] = self._preheat_kline_cache()
 
         result = self.run(
@@ -225,6 +248,10 @@ class RecommendationService:
         })
         self.plan_cache.set(self._plan_cache_key(strategy, sector, num_stocks), plan)
         plan["history_key"] = save_plan_history(self.plan_history_cache, plan)
+        if PAPER_TRADING_ENABLED and strategy in PAPER_TRADING_STRATEGIES:
+            plan["paper_trading"] = self.sync_paper_trading_plan(plan)
+            self.plan_cache.set(self._plan_cache_key(strategy, sector, num_stocks), plan)
+            save_plan_history(self.plan_history_cache, plan)
         return plan
 
     def latest_t1_plan(self, strategy: str, sector: str, num_stocks: int) -> dict[str, Any] | None:
@@ -236,8 +263,13 @@ class RecommendationService:
         cached = dict(cached)
         if str(strategy or "") in ("短线", "短线经典版") and cached.get("selection_data_version") != SELECTION_DATA_VERSION:
             return None
-        if str(strategy or "") == EXPERIMENTAL_STRATEGY_NAME and cached.get("strategy_version") != EXPERIMENTAL_STRATEGY_VERSION:
-            return None
+        if str(strategy or "") == EXPERIMENTAL_STRATEGY_NAME:
+            selection = resolve_experimental_strategy_selection()
+            if (
+                cached.get("strategy_version") != selection.get("strategy_version")
+                or cached.get("strategy_rule_id") != selection.get("rule_id")
+            ):
+                return None
         recommended = cached.get("recommended")
         if isinstance(recommended, list):
             self._refresh_display_profiles(recommended)
@@ -662,6 +694,30 @@ class RecommendationService:
     def refresh_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
         return self.recommender.refresh_strategy_kline_cache(*args, **kwargs)
 
+    def preheat_strategy_kline_cache(self, *args, **kwargs) -> dict[str, Any]:
+        return self.recommender.preheat_strategy_kline_cache(*args, **kwargs)
+
+    def preheat_t1_kline_cache(self) -> dict[str, Any]:
+        return self._preheat_kline_cache()
+
+    @staticmethod
+    def sync_paper_trading_plan(plan: dict[str, Any] | None) -> dict[str, Any]:
+        from paper_trading import PaperTradingService
+
+        return PaperTradingService().sync_plan(plan)
+
+    @staticmethod
+    def reconcile_paper_trading(*, as_of_date: Any = None) -> dict[str, Any]:
+        from paper_trading import PaperTradingService
+
+        return PaperTradingService().reconcile(as_of_date=as_of_date)
+
+    @staticmethod
+    def get_paper_trading_summary(*, as_of_date: Any = None) -> dict[str, Any]:
+        from paper_trading import PaperTradingService
+
+        return PaperTradingService().get_summary(as_of_date=as_of_date)
+
     def _run_uncached(
         self,
         strategy: str,
@@ -780,11 +836,36 @@ class RecommendationService:
     def _build_short_term_learning_profile(self, strategy: str = "短线") -> dict[str, Any]:
         strategy = str(strategy or "短线")
         rows = self.list_t1_plan_history(strategy=strategy, limit=80)
+        entries = [
+            (plan, self._observation_cache_key(plan))
+            for row in rows
+            for plan in [row.get("plan") if isinstance(row, dict) else None]
+            if isinstance(plan, dict)
+        ]
+        observation_keys = [cache_key for _, cache_key in entries]
+        get_many = getattr(self.observation_cache, "get_many", None)
+        cached_observations = (
+            get_many(observation_keys)
+            if callable(get_many)
+            else {
+                cache_key: self.observation_cache.get(cache_key)
+                for cache_key in observation_keys
+            }
+        )
+
+        def cached_outcome(plan, *, quote_service, horizons):
+            del quote_service, horizons
+            outcome = cached_observations.get(self._observation_cache_key(plan))
+            if isinstance(outcome, dict):
+                return outcome
+            return {"status": "not_cached", "items": [], "summary": {}}
+
         return build_short_term_learning_profile(
             rows,
             quote_service=self.quote_service,
-            evaluate_plan_outcomes=evaluate_plan_outcomes,
+            evaluate_plan_outcomes=cached_outcome,
             strategy=strategy,
+            use_profile_cache=True,
         )
 
     @staticmethod
@@ -927,12 +1008,19 @@ class RecommendationService:
 
     def _preheat_kline_cache(self) -> dict[str, Any]:
         try:
-            result = self.refresh_strategy_kline_cache()
+            result = self.preheat_strategy_kline_cache(
+                periods=("1y", "6mo", "3mo"),
+                max_workers=T1_PLAN_PREHEAT_KLINE_MAX_WORKERS,
+            )
+            failed = int(result.get("failed", 0) or 0)
+            completed = int(result.get("refreshed", 0) or 0) + int(result.get("cached", 0) or 0)
             return {
-                "status": "ok",
+                "status": "ok" if not failed else ("partial" if completed else "failed"),
                 "total": result.get("total", 0),
                 "refreshed": result.get("refreshed", 0),
-                "failed": result.get("failed", 0),
+                "cached": result.get("cached", 0),
+                "failed": failed,
+                "periods": result.get("periods", []),
             }
         except Exception as exc:
             return {"status": "failed", "error": str(exc)}

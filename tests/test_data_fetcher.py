@@ -384,6 +384,8 @@ class TestGetStockDataCN:
         # 禁用离线缓存
         monkeypatch.setattr('data_fetcher.StockDataFetcher._save_offline_cache',
                             lambda self, s, d, **kwargs: None)
+        monkeypatch.setattr('data_fetcher.StockDataFetcher._load_offline_cache',
+                            lambda self, s, **kwargs: None)
 
         fetcher = StockDataFetcher()
         fetcher.set_preferred_source('akshare')

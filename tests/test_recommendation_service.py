@@ -2,6 +2,8 @@
 
 import pytest
 
+from experimental_strategy import EXPERIMENTAL_STRATEGY_VERSION
+
 
 class FakeCache:
     def __init__(self):
@@ -113,7 +115,7 @@ class FakeRecommender:
     def get_experimental_recommendations(self, num_stocks, progress_callback=None):
         self.called.append(("experimental", num_stocks, bool(progress_callback)))
         stock = _stock("002008", "实验策略")
-        stock["strategy_version"] = "quality_value_timing_v1"
+        stock["strategy_version"] = EXPERIMENTAL_STRATEGY_VERSION
         return [stock]
 
 
@@ -172,7 +174,7 @@ def test_recommendation_service_routes_independent_experimental_strategy():
 
     assert recommender.called == [("experimental", 5, True)]
     assert result["title"] == "实验策略"
-    assert result["strategy_version"] == "quality_value_timing_v1"
+    assert result["strategy_version"] == EXPERIMENTAL_STRATEGY_VERSION
     assert result["recommended"][0]["strategy"] == "实验策略"
     assert result["diagnostics"]["status"] == "observation_only"
 
@@ -421,6 +423,58 @@ def test_recommendation_service_applies_short_term_learning_without_touching_agg
     assert short_result["diagnostics"]["short_term_learning"]["status"] == "active"
     assert short_result["recommended"][0]["learning_score_threshold"] == 70
     assert "short_term_learning" not in aggressive_result["diagnostics"]
+
+
+def test_short_term_learning_profile_reads_observation_cache_without_live_evaluation(monkeypatch):
+    import recommendation_service as module
+
+    service = module.RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_history_cache = FakeCache()
+    service.observation_cache = FakeCache()
+    plan = {
+        "generated_at": "2026-06-01T15:45:00",
+        "generated_trade_date": "2026-06-01",
+        "plan_for_trade_date": "2026-06-02",
+        "strategy": "短线",
+        "sector": "全部",
+        "recommended": [{"symbol": "000001", "name": "平安银行", "score": 82}],
+    }
+    cached_outcome = {
+        "version": "t1_execution_v2",
+        "items": [
+            {
+                "symbol": "000001",
+                "status": "completed",
+                "returns": {"1d": 1.2},
+            }
+        ],
+    }
+    service.plan_history_cache.set("plan", plan)
+    service.observation_cache.set(service._observation_cache_key(plan), cached_outcome)
+
+    def fail_live_evaluation(*args, **kwargs):
+        raise AssertionError("生成策略时不应现场访问行情补算学习样本")
+
+    def fake_build(rows, *, quote_service, evaluate_plan_outcomes, strategy, use_profile_cache):
+        assert strategy == "短线"
+        assert use_profile_cache is True
+        outcome = evaluate_plan_outcomes(
+            rows[0]["plan"],
+            quote_service=quote_service,
+            horizons=(1,),
+        )
+        return {"strategy": strategy, "outcome": outcome}
+
+    monkeypatch.setattr(module, "evaluate_plan_outcomes", fail_live_evaluation)
+    monkeypatch.setattr(module, "build_short_term_learning_profile", fake_build)
+
+    profile = service._build_short_term_learning_profile("短线")
+
+    assert profile["outcome"] == cached_outcome
 
 
 def test_recommendation_service_persists_t1_plan_without_changing_strategy(monkeypatch):
@@ -890,6 +944,65 @@ def test_t1_plan_records_preheat_and_elapsed_metrics_without_changing_strategy(m
     assert plan["generation_metrics"]["elapsed_ms"] >= 0
     assert plan["data_status"]["preheat"]["kline_cache"]["status"] == "ok"
     assert plan["data_status"]["preheat"]["extended_info_cache"]["status"] == "ok"
+
+
+def test_experimental_t1_plan_syncs_to_unified_paper_account(monkeypatch):
+    import recommendation_service as module
+
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+    synced = []
+    monkeypatch.setattr(module, "PAPER_TRADING_ENABLED", True)
+    monkeypatch.setattr(
+        service,
+        "sync_paper_trading_plan",
+        lambda plan: synced.append(plan) or {"status": "ok", "created_orders": 1},
+    )
+
+    plan = service.run_t1_plan("实验策略", "全部", 5)
+
+    assert synced == [plan]
+    assert plan["paper_trading"]["status"] == "ok"
+    assert plan["paper_trading"]["created_orders"] == 1
+
+
+def test_t1_plan_reuses_shared_kline_preheat_status_without_refreshing_again(monkeypatch):
+    service = RecommendationService(
+        recommender=FakeRecommender(),
+        quote_service=FakeQuoteService(),
+        result_cache=FakeCache(),
+    )
+    service.plan_cache = FakeCache()
+    service.plan_history_cache = FakeCache()
+    monkeypatch.setattr(
+        service,
+        "_preheat_kline_cache",
+        lambda: (_ for _ in ()).throw(AssertionError("不应重复预热K线")),
+    )
+    shared_status = {
+        "status": "ok",
+        "total": 80,
+        "refreshed": 20,
+        "cached": 60,
+        "failed": 0,
+        "periods": ["1y", "6mo", "3mo"],
+    }
+
+    plan = service.run_t1_plan(
+        "多因子稳健型",
+        "全部",
+        5,
+        trigger="scheduler",
+        preheat_kline=False,
+        preheated_kline_status=shared_status,
+    )
+
+    assert plan["data_status"]["preheat"]["kline_cache"] == shared_status
 
 
 def test_preheat_extended_info_cache_is_shallow_and_bounded(monkeypatch):

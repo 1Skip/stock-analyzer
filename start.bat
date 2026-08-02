@@ -4,11 +4,19 @@ setlocal
 cd /d "%~dp0"
 set "APP_PORT=8501"
 set "APP_URL=http://localhost:%APP_PORT%"
+set "APP_HEALTH_URL=http://127.0.0.1:%APP_PORT%/_stcore/health"
 
 echo ======================================
 echo      Stock Analyzer Web Launcher
 echo ======================================
 echo.
+
+powershell -NoProfile -Command "try { $response = Invoke-WebRequest -UseBasicParsing -Uri '%APP_HEALTH_URL%' -TimeoutSec 2; if ($response.StatusCode -eq 200 -and $response.Content.Trim() -eq 'ok') { exit 0 } } catch {}; exit 1" >nul 2>nul
+if not errorlevel 1 (
+    echo [INFO] Stock Analyzer is already running. Opening existing page...
+    start "" "%APP_URL%"
+    exit /b 0
+)
 
 if not exist ".env" if exist ".env.example" (
     echo [INFO] Local .env not found. Copy .env.example to .env and fill API keys if you want local LLM enabled.

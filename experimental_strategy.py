@@ -7,14 +7,59 @@ from typing import Any
 
 import pandas as pd
 
+from candidate_strategy import (
+    CAPITAL_FLOW_RULE_IDS,
+    CANDIDATE_RULES,
+    REGIME_FILTERED_RULE_IDS,
+    candidate_trade_levels,
+)
 from technical_indicators import TechnicalIndicators
 
 
 EXPERIMENTAL_STRATEGY_NAME = "实验策略"
-EXPERIMENTAL_STRATEGY_VERSION = "quality_value_timing_v1"
+EXPERIMENTAL_STRATEGY_VERSION = (
+    "candidate_rules_v3_20260727:capital_flow_pullback_regime_balanced"
+)
+EXPERIMENTAL_RULE_ID = "capital_flow_pullback_regime_balanced"
 EXPERIMENTAL_UNIVERSE_LIMIT = 180
 EXPERIMENTAL_DEEP_LIMIT = 24
 EXPERIMENTAL_ESTIMATED_COST_PCT = 0.20
+EXPERIMENTAL_MAX_HOLDING_DAYS = 5
+
+
+def resolve_experimental_strategy_selection() -> dict[str, Any]:
+    """Read the active immutable rule selected by the formal paper account."""
+    try:
+        from paper_trading import PaperTradingService
+
+        control = PaperTradingService().get_strategy_control()
+    except Exception:
+        control = {}
+    status = str(control.get("status") or "observing")
+    rule_id = str(control.get("active_rule_id") or EXPERIMENTAL_RULE_ID)
+    version = str(
+        control.get("active_strategy_version") or EXPERIMENTAL_STRATEGY_VERSION
+    )
+    if status == "cash":
+        return {
+            "status": "cash",
+            "rule_id": None,
+            "strategy_version": None,
+            "reason": control.get("reason") or "当前没有通过门槛的活动规则",
+        }
+    if rule_id not in CANDIDATE_RULES or rule_id not in REGIME_FILTERED_RULE_IDS:
+        return {
+            "status": "cash",
+            "rule_id": None,
+            "strategy_version": None,
+            "reason": "活动规则不具备市场环境过滤，已保持现金",
+        }
+    return {
+        "status": status,
+        "rule_id": rule_id,
+        "strategy_version": version,
+        "reason": control.get("reason"),
+    }
 
 
 def select_experimental_universe(
@@ -195,6 +240,219 @@ def build_experimental_candidate(
     }
 
 
+def build_market_regime_snapshot(
+    technical_rows: list[dict[str, Any]] | None,
+    *,
+    min_stocks: int = 500,
+) -> dict[str, Any]:
+    """Measure broad-market trend from point-in-time stock features."""
+    rows = []
+    for item in technical_rows or []:
+        evaluation = item.get("evaluation") if isinstance(item, dict) else None
+        metrics = evaluation.get("metrics") if isinstance(evaluation, dict) else None
+        if not isinstance(metrics, dict):
+            continue
+        close = _number(metrics.get("close"))
+        ma20 = _number(metrics.get("ma20"))
+        ma60 = _number(metrics.get("ma60"))
+        return_20d = _number(metrics.get("return_20d"))
+        if None in (close, ma20, ma60, return_20d):
+            continue
+        rows.append({
+            "close": close,
+            "ma20": ma20,
+            "ma60": ma60,
+            "return_20d": return_20d,
+            "as_of_date": str(evaluation.get("as_of_date") or "")[:10],
+        })
+    input_count = len(rows)
+    dated_rows = [row for row in rows if row["as_of_date"]]
+    date_counts: dict[str, int] = {}
+    for row in dated_rows:
+        date_value = row["as_of_date"]
+        date_counts[date_value] = date_counts.get(date_value, 0) + 1
+    latest_available_date = max(date_counts, default=None)
+    covered_dates = [
+        date_value
+        for date_value, stock_count in date_counts.items()
+        if stock_count >= min_stocks
+    ]
+    as_of_date = max(covered_dates, default=latest_available_date)
+    if as_of_date:
+        rows = [row for row in dated_rows if row["as_of_date"] == as_of_date]
+    latest_date_stocks = date_counts.get(latest_available_date, 0)
+    date_fallback_used = bool(
+        as_of_date
+        and latest_available_date
+        and as_of_date != latest_available_date
+    )
+    stale_or_other_date_stocks = input_count - len(rows)
+    count = len(rows)
+    if not rows:
+        return {
+            "passed": False,
+            "status": "missing",
+            "stocks": 0,
+            "input_stocks": input_count,
+            "as_of_date": as_of_date,
+            "latest_available_date": latest_available_date,
+            "latest_date_stocks": latest_date_stocks,
+            "date_fallback_used": date_fallback_used,
+            "stale_or_other_date_stocks": stale_or_other_date_stocks,
+            "reason": "市场广度数据不足，实验策略保持空仓",
+        }
+    breadth_20 = sum(row["close"] > row["ma20"] for row in rows) / count
+    breadth_60 = sum(row["close"] > row["ma60"] for row in rows) / count
+    median_20 = float(pd.Series([row["return_20d"] for row in rows]).median())
+    checks = {
+        f"有效股票不少于{min_stocks}只": count >= min_stocks,
+        "站上MA20比例不低于55%": breadth_20 >= 0.55,
+        "站上MA60比例不低于50%": breadth_60 >= 0.50,
+        "全市场20日收益中位数为正": median_20 > 0,
+    }
+    passed = all(checks.values())
+    return {
+        "passed": passed,
+        "status": "risk_on" if passed else "cash",
+        "stocks": count,
+        "input_stocks": input_count,
+        "as_of_date": as_of_date,
+        "latest_available_date": latest_available_date,
+        "latest_date_stocks": latest_date_stocks,
+        "date_fallback_used": date_fallback_used,
+        "stale_or_other_date_stocks": stale_or_other_date_stocks,
+        "breadth_above_ma20_pct": round(breadth_20 * 100, 2),
+        "breadth_above_ma60_pct": round(breadth_60 * 100, 2),
+        "median_return_20d_pct": round(median_20 * 100, 2),
+        "checks": checks,
+        "reason": "市场广度允许开观察仓" if passed else "市场广度未通过，实验策略保持现金",
+    }
+
+
+def build_price_candidate(
+    stock: dict[str, Any],
+    evaluation: dict[str, Any],
+    *,
+    rule_id: str = EXPERIMENTAL_RULE_ID,
+    strategy_version: str = EXPERIMENTAL_STRATEGY_VERSION,
+) -> dict[str, Any] | None:
+    """Build the v2 price-only candidate from a passing point-in-time signal."""
+    if not evaluation.get("passed"):
+        return None
+    metrics = evaluation.get("metrics") if isinstance(evaluation.get("metrics"), dict) else {}
+    latest_price = _number(metrics.get("close"))
+    if latest_price is None:
+        return None
+    display_indicators = (
+        evaluation.get("display_indicators")
+        if isinstance(evaluation.get("display_indicators"), dict)
+        else {}
+    )
+    required_display_indicators = (
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "rsi_6",
+        "rsi_12",
+        "rsi_24",
+        "kdj_k",
+        "kdj_d",
+        "kdj_j",
+        "boll_upper",
+        "boll_mid",
+        "boll_lower",
+        "ma5",
+        "ma10",
+        "ma20",
+        "ma30",
+    )
+    if any(_number(display_indicators.get(key)) is None for key in required_display_indicators):
+        return None
+    code = str(stock.get("code") or "").strip()
+    rule = CANDIDATE_RULES[rule_id]
+    levels = candidate_trade_levels(metrics, rule_id=rule_id)
+    score = round(float(evaluation.get("score") or 0), 1)
+    return {
+        "symbol": code,
+        "name": stock.get("name") or code,
+        "sector": None,
+        "board": "沪市主板" if code.startswith("6") else "深市主板",
+        "score": score,
+        "confidence": min(80, max(55, int(round(score)))),
+        "rating": "实验观察候选",
+        "signals": {
+            "趋势条件": "价格站上MA60且MA20高于MA60",
+            "回撤条件": "3日回撤、RSI6和MA20距离均处于预设范围",
+            "市场状态": "只有全市场广度通过时才允许生成候选",
+            "实验纪律": "只进入统一模拟账户，未通过转正门槛前不作为实盘依据",
+        },
+        "latest_price": latest_price,
+        "change_pct": (
+            round(float(metrics["return_1d"]) * 100, 2)
+            if _number(metrics.get("return_1d")) is not None
+            else None
+        ),
+        "strategy": EXPERIMENTAL_STRATEGY_NAME,
+        "strategy_version": strategy_version,
+        "strategy_rule_id": rule_id,
+        "strategy_checks": dict(evaluation.get("checks") or {}),
+        "required_checks": {
+            "沪深主板非ST": True,
+            "市场广度通过": True,
+            "趋势回撤止跌条件通过": True,
+            "20日成交额中位数不少于1亿元": True,
+            **(
+                {
+                    "成交量相对20日中位数增强": True,
+                    "成交额相对20日中位数增强": True,
+                    "换手率及其相对20日中位数增强": True,
+                }
+                if rule_id in CAPITAL_FLOW_RULE_IDS
+                else {}
+            ),
+        },
+        "strategy_details": {
+            "候选规则": rule.label,
+            "60日涨幅": _pct(metrics.get("return_60d")),
+            "3日涨幅": _pct(metrics.get("return_3d")),
+            "RSI2": _format_number(metrics.get("rsi_2")),
+            "RSI6": _format_number(metrics.get("rsi_6")),
+            "20日波动": _pct(metrics.get("volatility_20d")),
+            "成交量强度": _format_ratio(metrics.get("volume_ratio_20d")),
+            "成交额强度": _format_ratio(metrics.get("amount_ratio_20d")),
+            "换手率": _pct(metrics.get("turnover")),
+            "换手率强度": _format_ratio(metrics.get("turnover_ratio_20d")),
+            "执行规则": (
+                f"次日真实价格触发后进入模拟账户，最多持有{EXPERIMENTAL_MAX_HOLDING_DAYS}个交易日"
+            ),
+            "实验纪律": "达到样本、胜率、Wilson区间、净收益和回撤门槛前不转正",
+        },
+        "indicators": {
+            **display_indicators,
+            **{
+                key: round(float(value), 3)
+                for key in (
+                    "ma5",
+                    "ma10",
+                    "ma20",
+                    "ma60",
+                    "rsi_2",
+                    "rsi_6",
+                    "boll_upper",
+                    "boll_mid",
+                    "boll_lower",
+                )
+                if (value := _number(metrics.get(key))) is not None
+            },
+        },
+        "strategy_execution_levels": {
+            **levels,
+            "max_holding_days": EXPERIMENTAL_MAX_HOLDING_DAYS,
+            "price_source": "实验策略信号日真实前复权日K",
+        },
+    }
+
+
 def build_experimental_validation_gate(row: dict[str, Any] | None) -> dict[str, Any]:
     """Return promotion/rejection status from saved real T+1 outcomes."""
     row = row if isinstance(row, dict) else {}
@@ -296,3 +554,18 @@ def _number(value: Any) -> float | None:
         return number if number == number else None
     except (TypeError, ValueError):
         return None
+
+
+def _pct(value: Any) -> str:
+    number = _number(value)
+    return "--" if number is None else f"{number * 100:.2f}%"
+
+
+def _format_number(value: Any) -> str:
+    number = _number(value)
+    return "--" if number is None else f"{number:.2f}"
+
+
+def _format_ratio(value: Any) -> str:
+    number = _number(value)
+    return "--" if number is None else f"{number:.2f}x"

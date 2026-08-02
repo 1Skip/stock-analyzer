@@ -28,6 +28,19 @@ def build_trade_plan_for_stock(stock: dict[str, Any], *, strategy: str = "", sec
     price = _safe_float(stock.get("latest_price") or stock.get("price"))
     if price is None:
         price = _first_number(indicators, ("close", "ma5", "ma10", "ma20", "boll_mid"))
+    execution_levels = (
+        stock.get("strategy_execution_levels")
+        if isinstance(stock.get("strategy_execution_levels"), dict)
+        else None
+    )
+    if execution_levels:
+        return _build_strategy_execution_plan(
+            stock,
+            execution_levels,
+            strategy=strategy,
+            sector=sector,
+            price=price,
+        )
 
     ma5 = _safe_float(indicators.get("ma5"))
     ma10 = _safe_float(indicators.get("ma10"))
@@ -67,6 +80,53 @@ def build_trade_plan_for_stock(stock: dict[str, Any], *, strategy: str = "", sec
     })
     if ma5 is not None and ma10 is not None and ma20 is not None:
         plan["add_condition"] = _add_condition(ma5, ma10, ma20, strategy)
+    return plan
+
+
+def _build_strategy_execution_plan(
+    stock: dict[str, Any],
+    levels: dict[str, Any],
+    *,
+    strategy: str,
+    sector: str,
+    price: float | None,
+) -> dict[str, Any]:
+    buy_low = _safe_float(levels.get("buy_zone_low"))
+    buy_high = _safe_float(levels.get("buy_zone_high"))
+    if buy_low is not None and buy_high is not None and buy_low > buy_high:
+        buy_low, buy_high = buy_high, buy_low
+    stop_loss = _safe_float(levels.get("stop_loss"))
+    take_profit = _safe_float(levels.get("take_profit_1"))
+    max_holding_days = max(1, int(_safe_float(levels.get("max_holding_days")) or 5))
+    plan = {
+        "current_action": "仅限模拟账户观察",
+        "buy_zone": _format_range(buy_low, buy_high),
+        "buy_zone_low": _round_price(buy_low),
+        "buy_zone_high": _round_price(buy_high),
+        "add_condition": "不加仓；同一信号只建立一笔观察仓",
+        "stop_loss": _round_price(stop_loss),
+        "take_profit_1": _round_price(take_profit),
+        "take_profit_2": None,
+        "trim_condition": f"止盈、止损或持有满{max_holding_days}个交易日退出",
+        "position": _position_hint(strategy, stock),
+        "risk_note": "实验策略未通过转正门槛，只进入统一模拟账户",
+        "data_basis": (
+            "买入区间、止损和止盈来自信号日真实前复权日K；"
+            "模拟成交必须由后续真实行情触发。"
+        ),
+        "invalid_conditions": _invalid_conditions(
+            stop_loss,
+            _safe_float((stock.get("indicators") or {}).get("ma20")),
+            _safe_float((stock.get("indicators") or {}).get("ma60")),
+            stock,
+        ),
+        "strategy": strategy or stock.get("strategy") or "",
+        "sector": sector,
+        "max_holding_days": max_holding_days,
+        "price_source": levels.get("price_source") or "策略信号日真实日K",
+    }
+    if price is not None:
+        plan["signal_price"] = _round_price(price)
     return plan
 
 

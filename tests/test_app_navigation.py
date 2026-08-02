@@ -13,6 +13,7 @@ def test_all_sidebar_pages_route_to_renderer():
         "股票对比",
         "回测验证",
         "历史日报",
+        "交易工作台",
         "系统状态",
     ]
 
@@ -33,7 +34,9 @@ def test_app_shell_uses_main_page_container():
     assert "key=\"main_page\"" in source
     assert "render_committee_status_card()" in source
     assert "系统状态" in source
+    assert "交易工作台" in source
     assert "render_system_status_page()" in inspect.getsource(app._render_selected_page)
+    assert "render_trading_workbench_page()" in inspect.getsource(app._render_selected_page)
 
 
 def test_page_switch_does_not_clear_page_cache_state():

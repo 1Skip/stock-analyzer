@@ -17,6 +17,8 @@ def _format_progress_message(strategy, sector, stage, metrics):
         metrics = {**metrics, "result_count": 0}
     label_map = {
         "raw_pool": "股票池",
+        "main_board_pool": "主板股票池",
+        "kline_valid": "有效日K",
         "small_cap_pool": "市值通过",
         "realtime_quotes": "实时价量",
         "technical_passed": "技术突破",
@@ -122,8 +124,16 @@ def _result_matches_request(result, request_key):
     return result_key == request_key
 
 
-def _has_recommendations(result):
-    return bool(isinstance(result, dict) and result.get("recommended"))
+def _is_displayable_t1_plan(result):
+    if not isinstance(result, dict):
+        return False
+    if result.get("recommended"):
+        return True
+    diagnostics = result.get("diagnostics") or {}
+    return (
+        result.get("strategy") == "实验策略"
+        and diagnostics.get("status") in {"cash_regime", "strategy_paused"}
+    )
 
 
 def _render_t1_plan_meta(result):
@@ -231,6 +241,103 @@ def _render_auto_observation_review(observation_review):
                         "结算依据": item.get("exit_reason_1d"),
                     }
                     for item in details[:50]
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+
+
+def _render_paper_trading_summary(summary):
+    if not isinstance(summary, dict):
+        return
+    with st.expander("统一模拟账户", expanded=True):
+        col1, col2, col3, col4, col5 = st.columns(5)
+        col1.metric("账户权益", f"{summary.get('equity', 0):,.2f}")
+        col2.metric("可用现金", f"{summary.get('cash', 0):,.2f}")
+        col3.metric("总收益率", _format_return(summary.get("total_return_pct")))
+        col4.metric("持仓/待成交", f"{summary.get('open_positions', 0)} / {summary.get('pending_orders', 0)}")
+        win_rate = summary.get("win_rate_pct")
+        col5.metric("扣费胜率", f"{win_rate:.2f}%" if win_rate is not None else "--")
+        allowed = "、".join(summary.get("allowed_strategies") or ["实验策略"])
+        control = summary.get("strategy_control") or {}
+        st.caption(
+            f"当前策略白名单：{allowed}；100股整数手、T+1、涨跌停不可成交、"
+            "组合硬风控和交易费用均纳入。成交由后续真实日K区间触发并保留来源，"
+            "属于模拟撮合，不是逐笔真实成交回放。"
+        )
+        st.caption(
+            f"活动规则：{control.get('active_rule_id') or '--'}｜"
+            f"版本：{control.get('active_strategy_version') or '--'}｜"
+            f"状态：{control.get('status') or '--'}。"
+            "结算满30笔且扣费后亏损时自动淘汰；无合格候选则保持现金。"
+        )
+        risk = summary.get("risk") or {}
+        if risk.get("block_new_entries"):
+            st.error(
+                "统一账户已禁止新开仓："
+                + "；".join(risk.get("automatic_breaches") or [risk.get("manual_halt_reason") or "人工停机"])
+            )
+        reconciliation = summary.get("last_reconciliation") or {}
+        if reconciliation and reconciliation.get("status") != "ok":
+            st.error("最近日终对账失败，请到交易工作台检查审计流水。")
+        positions = summary.get("positions") or []
+        if positions:
+            st.markdown("#### 当前持仓")
+            st.dataframe(
+                [
+                    {
+                        "代码": row.get("symbol"),
+                        "名称": row.get("name"),
+                        "数量": row.get("quantity"),
+                        "可卖": row.get("available_quantity"),
+                        "买入日": row.get("buy_date"),
+                        "成本价": row.get("average_price"),
+                        "标记价": row.get("mark_price"),
+                        "未实现盈亏": row.get("unrealized_pnl"),
+                        "止损": row.get("stop_loss"),
+                        "止盈": row.get("take_profit_1"),
+                    }
+                    for row in positions
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        orders = summary.get("orders") or []
+        if orders:
+            st.markdown("#### 最近订单")
+            st.dataframe(
+                [
+                    {
+                        "日期": row.get("trade_date") or row.get("scheduled_date"),
+                        "代码": row.get("symbol"),
+                        "方向": row.get("side"),
+                        "状态": row.get("status"),
+                        "数量": row.get("quantity"),
+                        "成交价": row.get("filled_price"),
+                        "费用": row.get("fee"),
+                        "原因": row.get("reason"),
+                    }
+                    for row in orders[:50]
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        fills = summary.get("recent_fills") or []
+        if fills:
+            st.markdown("#### 真实日K模拟撮合证据")
+            st.dataframe(
+                [
+                    {
+                        "成交日": row.get("trade_date"),
+                        "代码": row.get("symbol"),
+                        "方向": row.get("side"),
+                        "数量": row.get("quantity"),
+                        "成交价": row.get("price"),
+                        "费用": row.get("fee"),
+                        "价格依据": row.get("price_evidence"),
+                        "行情依据": row.get("price_source"),
+                    }
+                    for row in fills[:50]
                 ],
                 width="stretch",
                 hide_index=True,
@@ -910,7 +1017,13 @@ def _render_strategy_checks(stock):
 def display_recommendation_list(recommended, strategy_name, diagnostics=None):
     """显示推荐列表"""
     if not recommended:
-        st.warning(f"暂无{strategy_name}推荐股票")
+        if "实验策略" in strategy_name and (diagnostics or {}).get("status") in {
+            "cash_regime",
+            "strategy_paused",
+        }:
+            st.warning("实验策略当前保持现金，未生成明日买入候选")
+        else:
+            st.warning(f"暂无{strategy_name}推荐股票")
         if "多因子稳健型" in strategy_name:
             _render_multi_factor_diagnostics(diagnostics or {})
             st.info("稳健型采用硬排除 + 评分制：先排除市值不符、短期过热和重大风险，再按技术、财务、连涨3日、主力净流入趋势、15日内涨停打分。上方诊断会显示具体卡点。")
@@ -918,7 +1031,30 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
             _render_aggressive_diagnostics(diagnostics or {})
             st.info("激进突破型采用全市场沪深主板 + 创业板扫描，若暂无结果，上方诊断会显示是技术突破不足还是市值过滤未通过。")
         elif "实验策略" in strategy_name:
-            st.info("实验策略宁可为空也不放宽真实数据、质量估值、安全边际和稳定趋势门槛；当前版本只进入自动观察仓。")
+            regime = (diagnostics or {}).get("market_regime") or {}
+            control = (diagnostics or {}).get("strategy_control") or {}
+            if (diagnostics or {}).get("status") == "strategy_paused":
+                st.info(
+                    f"策略控制器未开放新仓：{control.get('reason') or '没有合格活动规则'}。"
+                    "没有通过离线门槛的替代策略时不会为了凑推荐而自动放宽条件。"
+                )
+                return
+            coverage_note = ""
+            if regime.get("date_fallback_used"):
+                coverage_note = (
+                    f"最新数据日 {regime.get('latest_available_date') or '--'} "
+                    f"仅覆盖 {regime.get('latest_date_stocks', 0)} 只，"
+                    f"已回退到最近完整数据日 {regime.get('as_of_date') or '--'}。"
+                )
+            st.info(
+                f"{coverage_note}实验策略当前保持现金。"
+                f"市场样本 {regime.get('stocks', 0)} 只｜"
+                f"数据日 {regime.get('as_of_date') or '--'}｜"
+                f"站上MA20 {regime.get('breadth_above_ma20_pct', '--')}%｜"
+                f"站上MA60 {regime.get('breadth_above_ma60_pct', '--')}%｜"
+                f"全市场20日收益中位数 {regime.get('median_return_20d_pct', '--')}%。"
+                "市场广度未通过时不生成候选，也不会给统一模拟账户下单。"
+            )
         elif "短线经典版" in strategy_name:
             _render_short_term_diagnostics(diagnostics or {})
             st.info("短线经典版回到原始纯技术短线：只看沪深主板候选池与成交量、MACD、RSI、KDJ、BOLL，不检查热门板块、基本面、财报、资金流、消息面和四项形态硬过滤。上方诊断会显示具体卡点。")
@@ -1008,35 +1144,46 @@ def display_recommendation_list(recommended, strategy_name, diagnostics=None):
 
             _render_strategy_checks(stock)
 
-            ind = stock["indicators"]
-            sig = stock["signals"]
+            ind = stock.get("indicators") if isinstance(stock.get("indicators"), dict) else {}
+            sig = stock.get("signals") if isinstance(stock.get("signals"), dict) else {}
             cols = st.columns(5)
             with cols[0]:
-                macd_hist = ind.get("macd_hist", 0)
-                st.markdown(f"**MACD:** 柱:{macd_hist:.2f} DIF:{ind['macd']:.2f} DEA:{ind['macd_signal']:.2f}")
+                st.markdown(
+                    f"**MACD:** 柱:{_fmt_hit_number(ind.get('macd_hist'))} "
+                    f"DIF:{_fmt_hit_number(ind.get('macd'))} "
+                    f"DEA:{_fmt_hit_number(ind.get('macd_signal'))}"
+                )
                 st.caption(str(sig.get("macd", sig.get("技术形态", "--"))))
             with cols[1]:
-                rsi6 = ind.get("rsi_6", ind.get("rsi", 0))
-                rsi12 = ind.get("rsi_12", 0)
-                rsi24 = ind.get("rsi_24", 0)
-                st.markdown(f"**RSI:** 6:{rsi6:.2f} 12:{rsi12:.2f} 24:{rsi24:.2f}")
+                st.markdown(
+                    f"**RSI:** 6:{_fmt_hit_number(ind.get('rsi_6', ind.get('rsi')))} "
+                    f"12:{_fmt_hit_number(ind.get('rsi_12'))} "
+                    f"24:{_fmt_hit_number(ind.get('rsi_24'))}"
+                )
                 st.caption(str(sig.get("rsi", "--")))
             with cols[2]:
-                st.markdown(f"**KDJ:** K:{ind['kdj_k']:.2f} D:{ind['kdj_d']:.2f} J:{ind['kdj_j']:.2f}")
+                st.markdown(
+                    f"**KDJ:** K:{_fmt_hit_number(ind.get('kdj_k'))} "
+                    f"D:{_fmt_hit_number(ind.get('kdj_d'))} "
+                    f"J:{_fmt_hit_number(ind.get('kdj_j'))}"
+                )
                 st.caption(str(sig.get("kdj", "--")))
             with cols[3]:
-                boll_up = ind.get("boll_upper", 0)
-                boll_mid = ind.get("boll_mid", 0)
-                boll_low = ind.get("boll_lower", 0)
-                st.markdown(f"**布林带:** UP:{boll_up:.2f} MID:{boll_mid:.2f} LOW:{boll_low:.2f}")
+                st.markdown(
+                    f"**布林带:** UP:{_fmt_hit_number(ind.get('boll_upper'))} "
+                    f"MID:{_fmt_hit_number(ind.get('boll_mid'))} "
+                    f"LOW:{_fmt_hit_number(ind.get('boll_lower'))}"
+                )
                 st.caption(str(sig.get("boll", sig.get("卖出纪律", "--"))))
             with cols[4]:
-                ma5 = ind.get("ma5", 0)
-                ma10 = ind.get("ma10", 0)
-                ma20 = ind.get("ma20", 0)
-                ma30 = ind.get("ma30", 0)
-                st.markdown(f"**均线:** MA5:{ma5:.2f} MA10:{ma10:.2f}")
-                st.caption(f"MA20:{ma20:.2f} MA30:{ma30:.2f}")
+                st.markdown(
+                    f"**均线:** MA5:{_fmt_hit_number(ind.get('ma5'))} "
+                    f"MA10:{_fmt_hit_number(ind.get('ma10'))}"
+                )
+                st.caption(
+                    f"MA20:{_fmt_hit_number(ind.get('ma20'))} "
+                    f"MA30:{_fmt_hit_number(ind.get('ma30'))}"
+                )
             if stock.get("display_indicator_context"):
                 st.caption("指标口径：1年前复权日K，公式与个股分析页一致。")
 
@@ -1097,7 +1244,12 @@ def recommended_stocks_page():
     elif strategy == "多因子稳健型":
         st.info("多因子稳健型：先硬性过滤市值300亿以上、短期过热和重大风险事件；再按均线金叉/多头+放量、财务确认、连涨3日、主力净流入趋势≥3000万、既往15日内涨停评分，核心因子至少3/5且综合分≥70进入候选。")
     else:
-        st.warning("实验策略：仅扫描上市满5年的沪深主板，用稳定趋势轻筛，再要求芒格质量、巴菲特所有者收益代理、Codex证据纪律、基础安全边际≥15%且无重大风险事件。达到100个已结算样本及统计门槛前，只观察、不作为实盘依据。")
+        st.warning(
+            "实验策略：使用当时可见的真实前复权日线，同时检查成交量、成交额、"
+            "换手率及其相对20日中位数、价格趋势、回撤止跌和全市场广度。"
+            "候选只进入统一模拟账户；当前规则结算满30笔且扣费后亏损时自动淘汰，"
+            "只切换到通过五年训练和样本外门槛的不可变候选，否则保持现金。"
+        )
 
     sector_options = _sector_options_for_strategy(strategy)
     if st.session_state.rec_sector not in sector_options:
@@ -1152,7 +1304,7 @@ def recommended_stocks_page():
         if (
             latest_result
             and _result_matches_request(latest_result, current_request_key)
-            and _has_recommendations(latest_result)
+            and _is_displayable_t1_plan(latest_result)
         ):
             st.session_state.rec_results = latest_result
             st.session_state.rec_data_loaded = True
@@ -1258,6 +1410,7 @@ def recommended_stocks_page():
 
     manual_trade_history_rows = service.list_t1_plan_history(limit=5000)
     _render_auto_observation_review(st.session_state.rec_auto_observation_review)
+    _render_paper_trading_summary(service.get_paper_trading_summary())
     _render_manual_trade_form(
         st.session_state.rec_results,
         service,
